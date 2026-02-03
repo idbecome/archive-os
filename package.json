@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"node server/index.js\"",
-    "server": "node server/index.js",
+    "dev": "concurrently \"vite\" \"node --watch server/index.js\"",
+    "server": "node --watch server/index.js",
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview"
@@ -19,7 +19,8 @@
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "recharts": "^3.7.0",
-    "sqlite3": "^5.0.2"
+    "sqlite3": "^5.0.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",

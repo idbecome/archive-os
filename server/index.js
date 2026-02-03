@@ -6,6 +6,8 @@ import db from './db.js';
 const app = express();
 const PORT = 5000;
 
+console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
+
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
@@ -169,10 +171,10 @@ app.get('/api/folders', (req, res) => {
 app.post('/api/folders', (req, res) => {
     const { parentId, name, privacy, allowedDepts, allowedUsers, owner } = req.body;
     db.run("INSERT INTO folders (parentId, name, privacy, allowedDepts, allowedUsers, owner) VALUES (?, ?, ?, ?, ?, ?)",
-        [parentId, name, privacy, JSON.stringify(allowedDepts), JSON.stringify(allowedUsers), owner],
+        [parentId, name, privacy, JSON.stringify(allowedDepts || []), JSON.stringify(allowedUsers || []), owner],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
-            res.json({ id: this.lastID });
+            res.json({ success: true, id: this.lastID });
         }
     );
 });
@@ -197,16 +199,42 @@ app.delete('/api/folders/:id', (req, res) => {
 
 // --- DOCUMENTS ---
 app.get('/api/documents', (req, res) => {
-    db.all("SELECT * FROM documents", [], (err, rows) => {
+    const { auditId, stepIndex, folderId } = req.query;
+    let sql = "SELECT * FROM documents";
+    let params = [];
+    let whereClauses = [];
+
+    if (auditId) {
+        whereClauses.push("auditId = ?");
+        params.push(auditId);
+    }
+    if (folderId) {
+        whereClauses.push("folderId = ?");
+        params.push(folderId);
+    }
+
+    if (whereClauses.length > 0) {
+        sql += " WHERE (" + whereClauses.join(" OR ") + ")";
+        if (stepIndex !== undefined) {
+            sql += " AND stepIndex = ?";
+            params.push(stepIndex);
+        }
+    } else if (stepIndex !== undefined) {
+        // Fallback if no auditId/folderId but stepIndex exists (unlikely use case but safe)
+        sql += " WHERE stepIndex = ?";
+        params.push(stepIndex);
+    }
+
+    db.all(sql, params, (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
 });
 
 app.post('/api/documents', (req, res) => {
-    const { id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent } = req.body;
-    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent],
+    const { id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex } = req.body;
+    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });
@@ -241,9 +269,9 @@ app.get('/api/tax-audits', (req, res) => {
 });
 
 app.post('/api/tax-audits', (req, res) => {
-    const { id, title, status, currentStep, steps } = req.body;
-    db.run("INSERT INTO tax_audits (id, title, status, currentStep, steps) VALUES (?, ?, ?, ?, ?)",
-        [id, title, status, currentStep, JSON.stringify(steps)],
+    const { id, title, status, currentStep, steps, letterNumber, startDate } = req.body;
+    db.run("INSERT INTO tax_audits (id, title, status, currentStep, steps, letterNumber, startDate) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [id, title, status, currentStep, JSON.stringify(steps), letterNumber, startDate],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });
@@ -252,9 +280,9 @@ app.post('/api/tax-audits', (req, res) => {
 });
 
 app.put('/api/tax-audits/:id', (req, res) => {
-    const { title, status, currentStep, steps } = req.body;
-    db.run("UPDATE tax_audits SET title = ?, status = ?, currentStep = ?, steps = ? WHERE id = ?",
-        [title, status, currentStep, JSON.stringify(steps), req.params.id],
+    const { title, status, currentStep, steps, letterNumber, startDate } = req.body;
+    db.run("UPDATE tax_audits SET title = ?, status = ?, currentStep = ?, steps = ?, letterNumber = ?, startDate = ? WHERE id = ?",
+        [title, status, currentStep, JSON.stringify(steps), letterNumber, startDate, req.params.id],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });

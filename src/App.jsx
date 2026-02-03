@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from './api';
+import * as XLSX from 'xlsx';
+
 import {
   Package,
   LayoutDashboard,
@@ -151,6 +153,16 @@ const db = {
         body: JSON.stringify(folder)
       });
     } catch (e) { console.error("Gagal membuat folder", e); }
+  },
+
+  async updateFolder(id, data) {
+    try {
+      await fetch(`${API_URL}/folders/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal update folder", e); }
   },
 
   async deleteFolder(id) {
@@ -396,6 +408,33 @@ export default function App() {
   const [docList, setDocList] = useState([]);
   const [folders, setFolders] = useState([]);
   const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [folderHistory, setFolderHistory] = useState([null]);
+  const [historyIndex, setHistoryIndex] = useState(0);
+
+  const navigateFolder = (folderId) => {
+    const newHistory = folderHistory.slice(0, historyIndex + 1);
+    newHistory.push(folderId);
+    setFolderHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+    setCurrentFolderId(folderId);
+  };
+
+  const navigateBack = () => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      setHistoryIndex(newIndex);
+      setCurrentFolderId(folderHistory[newIndex]);
+    }
+  };
+
+  const navigateForward = () => {
+    if (historyIndex < folderHistory.length - 1) {
+      const newIndex = historyIndex + 1;
+      setHistoryIndex(newIndex);
+      setCurrentFolderId(folderHistory[newIndex]);
+    }
+  };
+
 
   // New Features State
   const [taxAudits, setTaxAudits] = useState([]);
@@ -417,6 +456,11 @@ export default function App() {
   }, []);
 
   // --- DATA INITIALIZATION FROM API ---
+  const fetchTaxAudits = async () => {
+    const data = await db.getTaxAudits();
+    setTaxAudits(data);
+  };
+
   useEffect(() => {
     const initData = async () => {
       setIsLoading(true);
@@ -479,7 +523,7 @@ export default function App() {
 
   // Temp State
   const [newOrdner, setNewOrdner] = useState({ noOrdner: '', period: '' });
-  const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '' });
+  const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '', paymentDate: '' });
   const [activeOrdnerId, setActiveOrdnerId] = useState(null);
 
   // --- INITIALIZATION ---
@@ -498,17 +542,6 @@ export default function App() {
       }
     };
     loadPdfJs();
-
-    // 2. Load SheetJS (XLSX) for Excel Import
-    const loadXLSX = async () => {
-      if (!window.XLSX) {
-        const script = document.createElement('script');
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
-        script.async = true;
-        document.body.appendChild(script);
-      }
-    };
-    loadXLSX();
   }, []);
 
   // --- HELPERS ---
@@ -660,7 +693,7 @@ export default function App() {
     setNewInvoice({ invoiceNo: '', vendor: '' });
   };
 
-  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
+  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '' }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
   const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
 
   const handleSaveBox = async () => {
@@ -835,6 +868,8 @@ export default function App() {
     try { await api.createDepartment(name); setDepartments(await api.getDepartments()); setIsModalOpen(false); } catch (e) { alert(e.message); }
   };
 
+  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
+
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -843,26 +878,79 @@ export default function App() {
     reader.onload = async (event) => {
       try {
         const data = new Uint8Array(event.target.result);
-        const workbook = window.XLSX.read(data, { type: 'array' });
+        const workbook = XLSX.read(data, { type: 'array' });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
-        const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
+        const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
         let importedCount = 0;
+        let skippedCount = 0;
+
         for (const row of jsonData) {
           const slotId = parseInt(row['No Slot'] || row['Slot']);
           const boxId = row['No Kardus'] || row['Box ID'];
           const status = row['Status'];
+          // New fields support: Tgl Pembayaran for invoices? 
+          // Simplified import: checks if slot is invalid or occupied
 
           if (slotId && slotId <= TOTAL_SLOTS && boxId) {
             const currentSlot = inventory[slotId - 1];
+
+            // VALIDATION: Skip if slot is not EMPTY (and not just updating same box)
+            if (currentSlot.status !== 'EMPTY' && currentSlot.boxData?.id !== boxId) {
+              console.warn(`Slot ${slotId} is occupied. Skipped.`);
+              skippedCount++;
+              continue;
+            }
+
             const newStatus = status === 'KOSONG' ? 'EMPTY' : 'IMPORTED';
 
             // Create box data if not empty
-            const boxData = newStatus === 'EMPTY' ? null : {
-              id: boxId,
-              ordners: [] // Simplified import
-            };
+            let boxData = null;
+            if (newStatus !== 'EMPTY') {
+              const invNo = row['No Invoice'];
+              const vendor = row['Vendor'];
+              const payDate = row['Tgl Pembayaran'];
+              const ordnerNo = row['No Ordner'];
+              const period = row['Periode'];
+
+              const newInvoice = invNo ? {
+                id: Date.now() + Math.random(),
+                invoiceNo: invNo,
+                vendor: vendor || '-',
+                paymentDate: payDate || ''
+              } : null;
+
+              const existingBox = currentSlot.boxData || { id: boxId, ordners: [] };
+              let ordners = existingBox.ordners || [];
+
+              // Determine target ordner
+              const targetOrdnerName = ordnerNo || 'Imported';
+              const targetPeriod = period || 'Imported';
+
+              let targetOrdner = ordners.find(o => o.noOrdner === targetOrdnerName);
+
+              if (!targetOrdner) {
+                targetOrdner = {
+                  id: Date.now(),
+                  noOrdner: targetOrdnerName,
+                  period: targetPeriod,
+                  invoices: []
+                };
+                ordners.push(targetOrdner);
+              }
+
+              if (newInvoice) {
+                // Avoid duplicates
+                if (!targetOrdner.invoices) targetOrdner.invoices = [];
+                targetOrdner.invoices.push(newInvoice);
+              }
+
+              boxData = {
+                id: boxId,
+                ordners: ordners
+              };
+            }
 
             const updatedSlot = {
               ...currentSlot,
@@ -877,25 +965,91 @@ export default function App() {
           }
         }
         setInventory(await api.getInventory());
-        alert(`Berhasil import ${importedCount} data kardus!`);
-        addLog(currentUser?.name, 'Import Excel', `Import ${importedCount} data`);
+        let msg = `Berhasil import ${importedCount} data kardus!`;
+        if (skippedCount > 0) msg += `\n${skippedCount} slot dilewati karena sudah terisi.`;
+        alert(msg);
+        addLog(currentUser?.name, 'Import Excel', `Import ${importedCount}, Skip ${skippedCount}`);
       } catch (error) {
         console.error("Excel import error:", error);
-        alert("Gagal membaca file Excel. Pastikan format sesuai.");
+        alert(`Gagal membaca file Excel: ${error.message || error}`);
       }
     };
     reader.readAsArrayBuffer(file);
   };
 
+  const handleExportInventory = () => {
+    // Flatten data logic
+    const exportData = [];
+    inventory.forEach(slot => {
+      if (slot.status === 'EMPTY') {
+        exportData.push({
+          "No Slot": slot.id,
+          "Status": "KOSONG",
+          "No Kardus": "-",
+          "No Ordner": "-",
+          "No Invoice": "-",
+          "Vendor": "-",
+          "Tgl Pembayaran": "-"
+        });
+      } else if (slot.boxData) {
+        if (slot.boxData.ordners && slot.boxData.ordners.length > 0) {
+          slot.boxData.ordners.forEach(ord => {
+            if (ord.invoices && ord.invoices.length > 0) {
+              ord.invoices.forEach(inv => {
+                exportData.push({
+                  "No Slot": slot.id,
+                  "Status": slot.status,
+                  "No Kardus": slot.boxData.id,
+                  "No Ordner": ord.noOrdner,
+                  "Periode": ord.period,
+                  "No Invoice": inv.invoiceNo,
+                  "Vendor": inv.vendor,
+                  "Tgl Pembayaran": inv.paymentDate || "-"
+                });
+              });
+            } else {
+              exportData.push({
+                "No Slot": slot.id,
+                "Status": slot.status,
+                "No Kardus": slot.boxData.id,
+                "No Ordner": ord.noOrdner,
+                "Periode": ord.period,
+                "No Invoice": "(Kosong)",
+                "Vendor": "-",
+                "Tgl Pembayaran": "-"
+              });
+            }
+          });
+        } else {
+          exportData.push({
+            "No Slot": slot.id,
+            "Status": slot.status,
+            "No Kardus": slot.boxData.id,
+            "No Ordner": "(Kosong)",
+            "No Invoice": "-",
+            "Vendor": "-",
+            "Tgl Pembayaran": "-"
+          });
+        }
+      }
+    });
+
+    const ws = XLSX.utils.json_to_sheet(exportData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Laporan Detail");
+    XLSX.writeFile(wb, `Laporan_Inventory_${new Date().toISOString().split('T')[0]}.xlsx`);
+    addLog(currentUser?.name, 'Export Excel', 'Download laporan inventory info');
+  };
+
   const downloadTemplate = () => {
     const templateData = [
-      { "No Slot": 1, "No Kardus": "BOX-2024-001", "Status": "TERISI", "Keterangan": "Contoh Data" },
-      { "No Slot": 2, "No Kardus": "BOX-2024-002", "Status": "TERISI", "Keterangan": "" }
+      { "No Slot": 1, "No Kardus": "BOX-2024-001", "Status": "TERISI", "No Ordner": "ORD-001", "Periode": "Jan 2024", "No Invoice": "INV/001", "Vendor": "Vendor A", "Tgl Pembayaran": "2024-01-31" },
+      { "No Slot": 2, "No Kardus": "BOX-2024-002", "Status": "TERISI", "No Ordner": "", "Periode": "", "No Invoice": "", "Vendor": "", "Tgl Pembayaran": "" }
     ];
-    const ws = window.XLSX.utils.json_to_sheet(templateData);
-    const wb = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(wb, ws, "Template");
-    window.XLSX.writeFile(wb, "Template_Import_Arsip.xlsx");
+    const ws = XLSX.utils.json_to_sheet(templateData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Template");
+    XLSX.writeFile(wb, "Template_Import_Arsip.xlsx");
   };
 
   const handleDeleteUser = async (id) => {
@@ -973,6 +1127,7 @@ export default function App() {
 
   const handleProcessDoc = async () => {
     const newDoc = {
+      id: String(Date.now()), // Fix for 'id cannot be null'
       title: uploadForm.title,
       uploadDate: new Date().toISOString(),
       ocrContent: uploadForm.ocrContent,
@@ -981,7 +1136,7 @@ export default function App() {
       previewUrl: uploadForm.previewUrl,
       fileData: uploadForm.fileBase64, // Send Base64
       uploader: currentUser?.name || 'Admin',
-      folder_id: currentFolderId,
+      folderId: currentFolderId,
       version: 1,
       versionsHistory: [],
       locked: false
@@ -1040,6 +1195,29 @@ export default function App() {
     }
   };
 
+  const handleRenameFolder = async (e, folder) => {
+    e.stopPropagation();
+    const newName = prompt("Nama Folder Baru:", folder.name);
+    if (newName && newName !== folder.name) {
+      await db.updateFolder(folder.id, { name: newName });
+      setFolders(await db.getFolders());
+      addLog(currentUser?.name, 'Rename Folder', `${folder.name} -> ${newName}`);
+    }
+  };
+
+  const handleRenameDoc = async (e, doc) => {
+    e.stopPropagation();
+    const newTitle = prompt("Nama File Baru:", doc.title);
+    if (newTitle && newTitle !== doc.title) {
+      try {
+        const updatedDoc = { ...doc, title: newTitle };
+        await api.updateDocument(doc.id, updatedDoc);
+        setDocList(await api.getDocuments());
+        addLog(currentUser?.name, 'Rename File', `${doc.title} -> ${newTitle}`);
+      } catch (err) { alert(err.message); }
+    }
+  };
+
   const handleDeleteFolder = async (e, id) => {
     e.stopPropagation();
     if (window.confirm("Hapus folder ini beserta isinya?")) {
@@ -1078,7 +1256,6 @@ export default function App() {
     />
   );
 
-
   return (
     <div className="h-screen flex flex-col">
       <div className="min-h-screen bg-gray-50 dark:bg-slate-950 text-gray-900 dark:text-slate-200 font-sans transition-colors duration-300">
@@ -1100,7 +1277,7 @@ export default function App() {
                 { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
                 { id: 'inventory', icon: Grid3X3, label: 'Rak Gudang' },
                 { id: 'documents', icon: ScanLine, label: 'Dokumen Digital' },
-                { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Monitoring Pemeriksaan' },
+                { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Pemeriksaan' },
                 { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
                 { id: 'master', icon: Settings, label: 'Master Data' },
               ].map(item => (
@@ -1110,7 +1287,7 @@ export default function App() {
                   className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-indigo-50 dark:bg-indigo-600/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-600/20' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800'}`}
                 >
                   <item.icon size={20} />
-                  {!isSidebarCollapsed && <span>{item.label}</span>}
+                  {!isSidebarCollapsed && <span className="whitespace-nowrap">{item.label}</span>}
                 </button>
               ))}
             </nav>
@@ -1127,9 +1304,21 @@ export default function App() {
               <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
                 <div>
                   <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
-                    {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' : activeTab === 'inventory' ? 'Manajemen Slot' : 'Digital Vault'}
+                    {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' :
+                      activeTab === 'inventory' ? 'Manajemen Slot' :
+                        activeTab === 'documents' ? 'Dokumen Digital' :
+                          activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
+                            activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
+                              activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
                   </h1>
-                  <p className="text-gray-500 dark:text-slate-400">Gudang Arsip Utama • {activeTab === 'documents' ? 'Secure Storage' : 'Lantai 1'}</p>
+                  <p className="text-gray-500 dark:text-slate-400">
+                    {activeTab === 'dashboard' ? 'Gudang Arsip Utama • Lantai 1' :
+                      activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
+                        activeTab === 'documents' ? 'Secure Digital Storage' :
+                          activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
+                            activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
+                              activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
+                  </p>
                 </div>
               </div>
 
@@ -1164,25 +1353,35 @@ export default function App() {
                   folders={folders}
                   currentFolderId={currentFolderId}
                   setCurrentFolderId={setCurrentFolderId}
+                  folderHistory={folderHistory}
+                  historyIndex={historyIndex}
+                  navigateFolder={navigateFolder}
+                  navigateBack={navigateBack}
+                  navigateForward={navigateForward}
                   searchQuery={searchQuery}
                   setSearchQuery={setSearchQuery}
                   handleCreateFolder={handleCreateFolder}
                   handleDeleteFolder={handleDeleteFolder}
+                  handleRenameFolder={handleRenameFolder}
                   handleViewDoc={handleViewDoc}
                   handleEditDoc={handleEditDoc}
                   handleDeleteDoc={handleDeleteDoc}
+                  handleRenameDoc={handleRenameDoc}
                   setUploadForm={setUploadForm}
                   setModalTab={setModalTab}
                   setIsModalOpen={setIsModalOpen}
                   hasPermission={hasPermission}
                   docStats={docStats}
                   getSearchSnippet={getSearchSnippet}
+                  logs={logs}
                 />
               )}
               {activeTab === 'tax-monitoring' && (
                 <TaxMonitoring
                   taxAudits={taxAudits}
+                  onRefresh={fetchTaxAudits}
                   hasPermission={hasPermission}
+                  currentUser={currentUser}
                 />
               )}
               {activeTab === 'tax-summary' && (
@@ -1342,9 +1541,10 @@ export default function App() {
                           {/* Nested Invoice */}
                           {activeOrdnerId === ord.id && (
                             <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
-                              <div className="flex gap-2 items-center mb-2">
-                                <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                              <div className="flex gap-2 items-center mb-2 flex-wrap">
+                                <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
                                 <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
                                   {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
                                 </button>
@@ -1356,6 +1556,7 @@ export default function App() {
                                     <span className="font-mono font-medium">{inv.invoiceNo}</span>
                                     <span className="text-gray-300">|</span>
                                     <span>{inv.vendor}</span>
+                                    {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
                                   </div>
                                   <div className="flex gap-1">
                                     <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
@@ -1419,12 +1620,19 @@ export default function App() {
                   </div>
                 )}
 
-                {/* Row 3: Status & External Actions (Only if stored) */}
+                {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
                 {inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
-                    <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
-                      <Clock size={14} /> Set Dipinjam
-                    </button>
+                    {inventory[selectedSlotId - 1]?.status === 'BORROWED' ? (
+                      <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
+                        <CheckCircle2 size={14} /> Kembalikan (Return)
+                      </button>
+                    ) : (
+                      <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
+                        <Clock size={14} /> Set Dipinjam
+                      </button>
+                    )}
+
                     <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
                       <AlertCircle size={14} /> Set Audit
                     </button>

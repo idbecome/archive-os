@@ -48,7 +48,10 @@ export const api = {
     deleteFolder: (id) => fetchAPI(`/folders/${id}`, { method: 'DELETE' }),
 
     // Documents
-    getDocuments: () => fetchAPI('/documents'),
+    getDocuments: (params) => {
+        const query = params ? '?' + new URLSearchParams(params).toString() : '';
+        return fetchAPI(`/documents${query}`);
+    },
     createDocument: (doc) => fetchAPI('/documents', { method: 'POST', body: JSON.stringify(doc) }),
     updateDocument: (id, doc) => fetchAPI(`/documents/${id}`, { method: 'PUT', body: JSON.stringify(doc) }),
     deleteDocument: (id) => fetchAPI(`/documents/${id}`, { method: 'DELETE' }),
