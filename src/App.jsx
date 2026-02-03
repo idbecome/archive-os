@@ -1,0 +1,1446 @@
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { api } from './api';
+import {
+  Package,
+  LayoutDashboard,
+  Grid3X3,
+  History,
+  Search,
+  Plus,
+  ArrowRight,
+  AlertCircle,
+  CheckCircle2,
+  Clock,
+  X,
+  Sun,
+  Moon,
+  ChevronLeft,
+  ChevronRight,
+  FolderOpen,
+  FileDigit,
+  Trash2,
+  GitCommit,
+  User,
+  ScanLine,
+  FileKey,
+  FileStack,
+  UploadCloud,
+  ShieldCheck,
+  FileSearch,
+  Eye,
+  Edit3,
+  FileText,
+  Image as ImageIcon,
+  Download,
+  FileJson,
+  PieChart,
+  Highlighter,
+  LogOut,
+  ArrowLeftRight,
+  Truck,
+  Save,
+  HardDrive,
+  FileSpreadsheet, // Icon Excel
+  Upload,           // Icon Upload
+  Users,
+  ClipboardCheck,
+  Settings,
+  Percent,
+  FileBarChart,
+  Shield,
+  Printer,
+  Building2
+} from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import Login from './pages/Login';
+import Dashboard from './pages/Dashboard';
+import Inventory from './pages/Inventory';
+import Documents from './pages/Documents';
+import TaxMonitoring from './pages/TaxMonitoring';
+import TaxSummary from './pages/TaxSummary';
+import MasterData from './pages/MasterData';
+
+// --- DATABASE ADAPTER (LAYER DATA) ---
+// Saat migrasi ke MySQL/Firebase, Anda HANYA perlu mengubah isi fungsi di dalam objek ini.
+// --- DATABASE ADAPTER (LAYER DATA) ---
+// Saat migrasi ke MySQL/Firebase, Anda HANYA perlu mengubah isi fungsi di dalam objek ini.
+const API_URL = 'http://localhost:5000/api';
+
+const db = {
+  async getInventory() {
+    try {
+      const response = await fetch(`${API_URL}/inventory`);
+      if (!response.ok) throw new Error('Gagal mengambil data');
+      const data = await response.json();
+
+      // Pastikan format data sesuai (MySQL JSON column sudah jadi object)
+      return data.map(slot => ({
+        ...slot,
+        history: slot.history || [],
+        boxData: slot.box_data || slot.boxData // Handle penamaan snake_case dari DB
+      }));
+    } catch (error) {
+      console.error("DB Error (Inventory):", error);
+      return [];
+    }
+  },
+
+  async saveInventory(data) {
+    try {
+      await fetch(`${API_URL}/inventory`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal menyimpan inventory", e); }
+  },
+
+  async getLogs() {
+    try {
+      const response = await fetch(`${API_URL}/logs`);
+      return await response.json();
+    } catch { return []; }
+  },
+
+  async saveLogs(data) {
+    try {
+      // Mengambil log terbaru saja untuk disimpan (asumsi data adalah array logs)
+      const latestLog = data[0];
+      await fetch(`${API_URL}/logs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(latestLog)
+      });
+    } catch (e) { console.error("Gagal menyimpan logs", e); }
+  },
+
+  async getDocs() {
+    try {
+      const response = await fetch(`${API_URL}/documents`);
+      const data = await response.json();
+      return data.map(doc => ({
+        ...doc,
+        versionsHistory: doc.versions_history || []
+      }));
+    } catch { return []; }
+  },
+
+  async saveDocs(data) {
+    try {
+      await fetch(`${API_URL}/documents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal menyimpan dokumen", e); }
+
+  },
+
+  async getFolders() {
+    try {
+      const response = await fetch(`${API_URL}/folders`);
+      return await response.json();
+    } catch { return []; }
+  },
+
+  async createFolder(folder) {
+    try {
+      await fetch(`${API_URL}/folders`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(folder)
+      });
+    } catch (e) { console.error("Gagal membuat folder", e); }
+  },
+
+  async deleteFolder(id) {
+    try {
+      await fetch(`${API_URL}/folders/${id}`, { method: 'DELETE' });
+    } catch (e) { console.error("Gagal hapus folder", e); }
+  },
+
+  async getTaxAudits() {
+    try {
+      const response = await fetch(`${API_URL}/tax-audits`);
+      return await response.json();
+    } catch { return []; }
+  },
+  async getTaxSummaries() {
+    try {
+      const response = await fetch(`${API_URL}/tax-summaries`);
+      return await response.json();
+    } catch { return []; }
+  },
+  async getUsers() {
+    try {
+      const response = await fetch(`${API_URL}/users`);
+      return await response.json();
+    } catch { return []; }
+  },
+  async getRoles() {
+    try {
+      const response = await fetch(`${API_URL}/roles`);
+      return await response.json();
+    } catch { return []; }
+  },
+  async getDepartments() {
+    try {
+      const response = await fetch(`${API_URL}/departments`);
+      return await response.json();
+    } catch { return []; }
+  },
+
+  async createUser(data) {
+    try {
+      await fetch(`${API_URL}/users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal membuat user", e); }
+  },
+
+  async updateUser(id, data) {
+    try {
+      await fetch(`${API_URL}/users/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal update user", e); }
+  },
+
+  async deleteUser(id) {
+    try {
+      await fetch(`${API_URL}/users/${id}`, { method: 'DELETE' });
+    } catch (e) { console.error("Gagal hapus user", e); }
+  },
+
+  async createRole(data) {
+    try {
+      await fetch(`${API_URL}/roles`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal membuat role", e); }
+  },
+
+  async updateRole(id, data) {
+    try {
+      await fetch(`${API_URL}/roles/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal update role", e); }
+  },
+
+  async deleteRole(id) {
+    try {
+      await fetch(`${API_URL}/roles/${id}`, { method: 'DELETE' });
+    } catch (e) { console.error("Gagal hapus role", e); }
+  },
+
+  async saveTaxSummary(data) {
+    try {
+      await fetch(`${API_URL}/tax-summaries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+    } catch (e) { console.error("Gagal menyimpan tax summary", e); }
+  },
+
+  async createDepartment(name) {
+    try {
+      await fetch(`${API_URL}/departments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name })
+      });
+    } catch (e) { console.error("Gagal membuat dept", e); }
+  },
+
+  async deleteDepartment(id) {
+    try {
+      await fetch(`${API_URL}/departments/${id}`, { method: 'DELETE' });
+    } catch (e) { console.error("Gagal hapus dept", e); }
+  }
+};
+
+// --- INITIAL DATA & CONSTANTS ---
+
+const TOTAL_SLOTS = 100;
+
+const getStatusStyle = (status) => {
+  switch (status) {
+    case 'STORED': return {
+      label: 'Tersimpan',
+      color: 'bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-500/20 dark:border-emerald-500/50 dark:text-emerald-400',
+      icon: CheckCircle2
+    };
+    case 'BORROWED': return {
+      label: 'Dipinjam',
+      color: 'bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-500/20 dark:border-amber-500/50 dark:text-amber-400',
+      icon: Clock
+    };
+    case 'AUDIT': return {
+      label: 'Sedang Audit',
+      color: 'bg-purple-100 border-purple-300 text-purple-700 dark:bg-purple-500/20 dark:border-purple-500/50 dark:text-purple-400',
+      icon: AlertCircle
+    };
+    case 'MOVED': return {
+      label: 'Pindah Rak',
+      color: 'bg-blue-100 border-blue-300 text-blue-700 dark:bg-blue-500/20 dark:border-blue-500/50 dark:text-blue-400',
+      icon: ArrowLeftRight
+    };
+    case 'EXTERNAL': return {
+      label: 'Indoarsip',
+      color: 'bg-indigo-100 border-indigo-300 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500/50 dark:text-indigo-400',
+      icon: Truck
+    };
+    case 'REMOVED': return {
+      label: 'Keluar',
+      color: 'bg-red-100 border-red-300 text-red-700 dark:bg-red-500/20 dark:border-red-500/50 dark:text-red-400',
+      icon: LogOut
+    };
+    case 'IMPORTED': return {
+      label: 'Import Excel',
+      color: 'bg-green-100 border-green-300 text-green-700 dark:bg-green-500/20 dark:border-green-500/50 dark:text-green-400',
+      icon: FileSpreadsheet
+    };
+    default: return {
+      label: 'Tersedia',
+      color: 'bg-slate-100 border-slate-300 text-slate-500 dark:bg-slate-800/50 dark:border-slate-700 dark:text-slate-500',
+      icon: null
+    };
+  }
+};
+
+// --- PERMISSIONS SYSTEM ---
+const APP_MODULES = {
+  DASHBOARD: { id: 'dashboard', label: 'Dashboard', actions: ['view'] },
+  INVENTORY: { id: 'inventory', label: 'Rak Gudang', actions: ['view', 'create', 'edit', 'delete'] },
+  DOCUMENTS: { id: 'documents', label: 'Dokumen Digital', actions: ['view', 'create', 'edit', 'delete'] },
+  TAX_MONITORING: { id: 'tax-monitoring', label: 'Monitoring Pemeriksaan', actions: ['view', 'create', 'edit', 'delete'] },
+  TAX_SUMMARY: { id: 'tax-summary', label: 'Tax Summary', actions: ['view', 'create', 'edit', 'delete'] },
+  MASTER_DATA: { id: 'master', label: 'Master Data', actions: ['view', 'create', 'edit', 'delete'] }
+};
+
+// --- COMPONENTS ---
+
+const Card = ({ children, className = '', onClick }) => (
+  <div
+    onClick={onClick}
+    className={`bg-white/80 dark:bg-slate-900/60 backdrop-blur-md border border-gray-200 dark:border-slate-700/50 rounded-2xl p-6 shadow-sm dark:shadow-none transition-all duration-300 ${onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-700 transform hover:-translate-y-1' : ''} ${className}`}
+  >
+    {children}
+  </div>
+);
+
+const SummaryCard = ({ title, value, subtext, icon: Icon, colorClass }) => (
+  <Card className="flex items-center gap-4 relative overflow-hidden">
+    <div className={`p-3 rounded-xl ${colorClass}`}>
+      <Icon size={24} />
+    </div>
+    <div>
+      <div className="text-sm text-gray-500 dark:text-slate-400 font-medium">{title}</div>
+      <div className="text-2xl font-bold text-gray-900 dark:text-white">{value}</div>
+      {subtext && <div className="text-xs text-gray-400 mt-0.5">{subtext}</div>}
+    </div>
+  </Card>
+);
+
+const Modal = ({ isOpen, onClose, title, children, size = 'max-w-4xl' }) => {
+  if (!isOpen) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className={`bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 w-full ${size} max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 transition-colors duration-300`}>
+        <div className="flex justify-between items-center p-6 border-b border-gray-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{title}</h2>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="p-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN APPLICATION ---
+
+export default function App() {
+  // UI State
+  const [isDarkMode, setIsDarkMode] = useState(() => {
+    const saved = localStorage.getItem('archive_theme');
+    return saved ? saved === 'dark' : true;
+  });
+  const [isLoading, setIsLoading] = useState(true); // State loading untuk database
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [selectedSlotId, setSelectedSlotId] = useState(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [modalTab, setModalTab] = useState('details');
+  const fileInputRef = useRef(null);
+  const excelInputRef = useRef(null);
+
+  // Data State
+  const [inventory, setInventory] = useState([]);
+  const [logs, setLogs] = useState([]);
+
+  const [docList, setDocList] = useState([]);
+  const [folders, setFolders] = useState([]);
+  const [currentFolderId, setCurrentFolderId] = useState(null);
+
+  // New Features State
+  const [taxAudits, setTaxAudits] = useState([]);
+  const [taxSummaries, setTaxSummaries] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [roles, setRoles] = useState([]);
+  const [departments, setDepartments] = useState([]);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [loginForm, setLoginForm] = useState({ username: '', password: '', error: '' });
+  const [masterTab, setMasterTab] = useState('users');
+  const [editingRole, setEditingRole] = useState(null);
+  const [roleForm, setRoleForm] = useState({ name: '', permissions: {} });
+  const [showTaxForm, setShowTaxForm] = useState(false);
+  const [taxForm, setTaxForm] = useState({ month: '', year: 2024, pph23: 0, pph42: 0, ppnIn: { total: 0 }, ppnOut: { total: 0 } });
+
+  useEffect(() => {
+    const saved = localStorage.getItem('archive_user');
+    if (saved) setCurrentUser(JSON.parse(saved));
+  }, []);
+
+  // --- DATA INITIALIZATION FROM API ---
+  useEffect(() => {
+    const initData = async () => {
+      setIsLoading(true);
+      const [invData, logData, docsData, folderData, auditData, summaryData, usersData, rolesData, deptsData] = await Promise.all([
+        db.getInventory(),
+        db.getLogs(),
+        db.getDocs(),
+        db.getFolders(),
+        db.getTaxAudits(),
+        db.getTaxSummaries(),
+        db.getUsers(),
+        db.getRoles(),
+        db.getDepartments()
+      ]);
+      setInventory(invData);
+      setLogs(logData);
+      setDocList(docsData);
+      setFolders(folderData);
+      setTaxAudits(auditData);
+      setTaxSummaries(summaryData);
+      setUsers(usersData);
+      setRoles(rolesData);
+      setDepartments(deptsData);
+      setIsLoading(false);
+    };
+    initData();
+  }, []);
+
+  // Theme Effect
+  useEffect(() => {
+    localStorage.setItem('archive_theme', isDarkMode ? 'dark' : 'light');
+    if (isDarkMode) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [isDarkMode]);
+
+  const [searchQuery, setSearchQuery] = useState('');
+  const [userSearchQuery, setUserSearchQuery] = useState('');
+
+  // Warehouse Form State
+  const [boxForm, setBoxForm] = useState({
+    boxId: '',
+    ordners: []
+  });
+
+  const [editingItem, setEditingItem] = useState(null);
+  const [moveTargetSlot, setMoveTargetSlot] = useState('');
+  const [showMoveInput, setShowMoveInput] = useState(false);
+
+  // Digital Doc Upload/Edit/View State
+  const [uploadForm, setUploadForm] = useState({
+    id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
+    previewUrl: null, fileData: null, isProcessing: false,
+    processingMessage: '', editMode: false, originalDoc: null
+  });
+
+  const [viewDocData, setViewDocData] = useState(null);
+
+  // Temp State
+  const [newOrdner, setNewOrdner] = useState({ noOrdner: '', period: '' });
+  const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '' });
+  const [activeOrdnerId, setActiveOrdnerId] = useState(null);
+
+  // --- INITIALIZATION ---
+
+  useEffect(() => {
+    // 1. Load PDF.js
+    const loadPdfJs = async () => {
+      if (!window.pdfjsLib) {
+        const script = document.createElement('script');
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+        script.async = true;
+        script.onload = () => {
+          if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        };
+        document.body.appendChild(script);
+      }
+    };
+    loadPdfJs();
+
+    // 2. Load SheetJS (XLSX) for Excel Import
+    const loadXLSX = async () => {
+      if (!window.XLSX) {
+        const script = document.createElement('script');
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+        script.async = true;
+        document.body.appendChild(script);
+      }
+    };
+    loadXLSX();
+  }, []);
+
+  // --- HELPERS ---
+
+
+
+  // --- PDF TEXT EXTRACTION ---
+
+
+
+
+  const getSearchSnippet = (text, query) => {
+    if (!query) return text.substring(0, 120) + "...";
+    const lowerText = text.toLowerCase();
+    const lowerQuery = query.toLowerCase();
+    const index = lowerText.indexOf(lowerQuery);
+    if (index === -1) return text.substring(0, 120) + "...";
+    const start = Math.max(0, index - 40);
+    const end = Math.min(text.length, index + query.length + 60);
+    return "..." + text.substring(start, end) + "...";
+  };
+
+  // --- HANDLERS: WAREHOUSE ---
+
+  // --- PERMISSIONS HELPERS ---
+  const hasPermission = (moduleId, action = 'view') => {
+    if (!currentUser) return false;
+    if (currentUser.role === 'admin') return true;
+
+    // Check granular permissions from roles state
+    const userRoleData = roles.find(r => r.name === currentUser.role);
+    if (userRoleData && userRoleData.permissions && userRoleData.permissions[moduleId]) {
+      return userRoleData.permissions[moduleId].includes(action);
+    }
+
+    // Simple role-based fallback
+    if (currentUser.role === 'staff') {
+      if (moduleId === 'master') return false;
+      if (action === 'delete') return false;
+      return true;
+    }
+    return false;
+  };
+
+  // --- HELPERS (RESTORED) ---
+
+  const addLog = async (user, action, details) => {
+    try {
+      await api.createLog({ user, action, details });
+      const updatedLogs = await api.getLogs();
+      setLogs(updatedLogs);
+    } catch (error) {
+      console.error("Failed to add log:", error);
+    }
+  };
+
+  const createHistoryItem = (action, note) => ({
+    id: Date.now(),
+    timestamp: new Date().toISOString(),
+    action,
+    note,
+    user: currentUser?.name || 'Admin'
+  });
+
+  const stats = useMemo(() => {
+    if (!Array.isArray(inventory)) return { stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 };
+    const stored = inventory.filter(s => s.status === 'STORED').length;
+    const borrowed = inventory.filter(s => s.status === 'BORROWED').length;
+    const audit = inventory.filter(s => s.status === 'AUDIT').length;
+    const empty = inventory.filter(s => s.status === 'EMPTY').length;
+    const occupancy = ((stored + borrowed + audit) / TOTAL_SLOTS) * 100;
+    return { stored, borrowed, audit, empty, occupancy };
+  }, [inventory]);
+
+  const docStats = useMemo(() => {
+    if (!Array.isArray(docList)) return { totalDocs: 0, totalRevisions: 0, totalSizeMB: '0' };
+    const totalDocs = docList.length;
+    const totalRevisions = docList.reduce((acc, doc) => acc + (doc.versionsHistory?.length || 0), 0);
+    const totalSizeMB = docList.reduce((acc, doc) => acc + parseFloat(doc.size || '0'), 0);
+    return { totalDocs, totalRevisions, totalSizeMB: totalSizeMB.toFixed(1) };
+  }, [docList]);
+
+  // --- AUTH HANDLERS ---
+
+  const handleLogin = (e) => {
+    e.preventDefault();
+    const user = users.find(u => u.username === loginForm.username && u.password === loginForm.password);
+    if (user) {
+      setCurrentUser(user);
+      localStorage.setItem('archive_user', JSON.stringify(user));
+      addLog(user.name, 'Login', 'User logged in');
+    } else if (loginForm.username === 'admin' && loginForm.password === 'admin') {
+      const adminUser = { name: 'Administrator', role: 'admin', username: 'admin' };
+      setCurrentUser(adminUser);
+      localStorage.setItem('archive_user', JSON.stringify(adminUser));
+      addLog('Admin', 'Login', 'Admin logged in');
+    } else {
+      setLoginForm({ ...loginForm, error: 'Invalid credentials' });
+    }
+  };
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem('archive_user');
+    addLog(currentUser?.name, 'Logout', 'User logged out');
+  };
+
+  // --- WAREHOUSE HANDLERS (API INTEGRATED) ---
+
+  const handleSlotClick = (slot) => {
+    setSelectedSlotId(slot.id);
+    if (slot.status === 'EMPTY') {
+      setBoxForm({ boxId: `BOX-${new Date().getFullYear()}-${String(slot.id).padStart(3, '0')}`, ordners: [] });
+    } else {
+      setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners });
+    }
+    setNewOrdner({ noOrdner: '', period: '' });
+    setNewInvoice({ invoiceNo: '', vendor: '' });
+    setActiveOrdnerId(null);
+    setEditingItem(null);
+    setShowMoveInput(false);
+    setMoveTargetSlot('');
+    setModalTab('details');
+    setIsModalOpen(true);
+  };
+
+  const addOrdner = () => {
+    if (!newOrdner.noOrdner || !newOrdner.period) return;
+    if (editingItem && editingItem.type === 'ordner') {
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === editingItem.id ? { ...o, noOrdner: newOrdner.noOrdner, period: newOrdner.period } : o) }));
+      setEditingItem(null);
+    } else {
+      setBoxForm(prev => ({ ...prev, ordners: [...prev.ordners, { ...newOrdner, id: Date.now(), invoices: [] }] }));
+    }
+    setNewOrdner({ noOrdner: '', period: '' });
+  };
+
+  const editOrdner = (ord) => { setNewOrdner({ noOrdner: ord.noOrdner, period: ord.period }); setEditingItem({ type: 'ordner', id: ord.id }); };
+  const removeOrdner = (id) => { if (window.confirm("Hapus ordner?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.filter(o => o.id !== id) })); };
+
+  const addInvoice = (ordnerId) => {
+    if (!newInvoice.invoiceNo || !newInvoice.vendor) return;
+    if (editingItem && editingItem.type === 'invoice') {
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, invoiceNo: newInvoice.invoiceNo, vendor: newInvoice.vendor } : i) } : o) }));
+      setEditingItem(null);
+    } else {
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: [...o.invoices, { ...newInvoice, id: Date.now() }] } : o) }));
+    }
+    setNewInvoice({ invoiceNo: '', vendor: '' });
+  };
+
+  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
+  const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
+
+  const handleSaveBox = async () => {
+    if (!selectedSlotId) return;
+    const slotIndex = selectedSlotId - 1;
+    const currentSlot = inventory[slotIndex];
+    if (!currentSlot) return;
+
+    const isNew = currentSlot.status === 'EMPTY';
+    const oldBoxId = currentSlot.boxData?.id;
+
+    let newHistory = isNew
+      ? [createHistoryItem('CREATED', `Kardus baru: ${boxForm.boxId}`), createHistoryItem('STORED', `Masuk Slot #${selectedSlotId}`)]
+      : [createHistoryItem('UPDATED', oldBoxId !== boxForm.boxId ? `Rename: ${oldBoxId} -> ${boxForm.boxId}` : `Update data ${boxForm.boxId}`)];
+
+    const updatedSlot = {
+      ...currentSlot,
+      status: currentSlot.status === 'EMPTY' ? 'STORED' : currentSlot.status,
+      lastUpdated: new Date().toISOString(),
+      history: [...(currentSlot.history || []), ...newHistory],
+      boxData: { id: boxForm.boxId, ordners: boxForm.ordners }
+    };
+
+    try {
+      await api.updateInventory(selectedSlotId, updatedSlot);
+      const updatedData = await api.getInventory();
+      setInventory(updatedData);
+      addLog(currentUser?.name || 'Admin', isNew ? 'Masuk Barang' : 'Update Barang', `Kardus ${boxForm.boxId} di Slot #${selectedSlotId}`);
+      setIsModalOpen(false);
+    } catch (error) {
+      alert("Gagal menyimpan: " + error.message);
+    }
+  };
+
+  const handleStatusChange = async (newStatus, label) => {
+    const slotIndex = selectedSlotId - 1;
+    const currentSlot = inventory[slotIndex];
+
+    const updatedSlot = {
+      ...currentSlot,
+      status: newStatus,
+      lastUpdated: new Date().toISOString(),
+      history: [...(currentSlot.history || []), createHistoryItem(newStatus, `Status: ${label}`)]
+    };
+
+    try {
+      await api.updateInventory(selectedSlotId, updatedSlot);
+      const updatedData = await api.getInventory();
+      setInventory(updatedData);
+      addLog(currentUser?.name || 'Admin', 'Ubah Status', `Slot #${selectedSlotId} status: ${label}`);
+      setIsModalOpen(false);
+    } catch (error) {
+      alert("Gagal update status: " + error.message);
+    }
+  };
+
+  const handleMoveBox = async () => {
+    const targetId = parseInt(moveTargetSlot);
+    if (!targetId || targetId < 1 || targetId > TOTAL_SLOTS || inventory[targetId - 1].status !== 'EMPTY') { alert("Slot tujuan tidak valid/penuh."); return; }
+
+    const sourceSlot = inventory[selectedSlotId - 1];
+    const targetSlot = inventory[targetId - 1];
+
+    const updatedTarget = { ...targetSlot, status: sourceSlot.status, boxData: sourceSlot.boxData, lastUpdated: new Date().toISOString(), history: [...(targetSlot.history || []), createHistoryItem('MOVED', `Pindahan dr Slot #${selectedSlotId}`)] };
+    const updatedSource = { ...sourceSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(sourceSlot.history || []), createHistoryItem('MOVED', `Pindah ke Slot #${targetId}`)] };
+
+    try {
+      await api.updateInventory(targetId, updatedTarget);
+      await api.updateInventory(selectedSlotId, updatedSource);
+      const updatedData = await api.getInventory();
+      setInventory(updatedData);
+      addLog(currentUser?.name || 'Admin', 'Pindah Rak', `Kardus ${sourceSlot.boxData.id} -> Slot ${targetId}`);
+      setIsModalOpen(false);
+    } catch (error) {
+      alert("Gagal memindahkan box: " + error.message);
+    }
+  };
+
+  const handleExternalTransfer = async (destination) => {
+    if (!window.confirm(`Kirim ke ${destination}?`)) return;
+    const currentSlot = inventory[selectedSlotId - 1];
+
+    const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem(destination === 'Indoarsip' ? 'EXTERNAL' : 'REMOVED', `Dikirim ke ${destination}`)] };
+
+    try {
+      await api.updateInventory(selectedSlotId, updatedSlot);
+      const updatedData = await api.getInventory();
+      setInventory(updatedData);
+      addLog(currentUser?.name || 'Admin', 'Barang Keluar', `Kardus ke ${destination}`);
+      setIsModalOpen(false);
+    } catch (error) {
+      alert("Gagal transfer keluar: " + error.message);
+    }
+  };
+
+  const handleEmptySlot = async () => {
+    if (!window.confirm("Kosongkan slot? Data kardus akan dihapus.")) return;
+    const currentSlot = inventory[selectedSlotId - 1];
+
+    const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem('REMOVED', `Dikosongkan manual`)] };
+
+    try {
+      await api.updateInventory(selectedSlotId, updatedSlot);
+      const updatedData = await api.getInventory();
+      setInventory(updatedData);
+      addLog(currentUser?.name || 'Admin', 'Kosongkan Slot', `Slot #${selectedSlotId}`);
+      setIsModalOpen(false);
+    } catch (error) {
+      alert("Gagal mengosongkan slot: " + error.message);
+    }
+  };
+
+  const handlePrintLabel = (boxId) => {
+    addLog(currentUser?.name, 'Cetak Label', `Mencetak label untuk Kardus: ${boxId}`);
+    alert(`Label untuk ${boxId} telah dikirim ke printer antrean.`);
+  };
+
+  const handleEditRole = (role) => {
+    setEditingRole(role);
+    setRoleForm({ name: role.name, permissions: { ...role.permissions } });
+    setModalTab('role-edit');
+    setIsModalOpen(true);
+  };
+
+  const handleTogglePermission = (modId, action) => {
+    const currentPerms = roleForm.permissions[modId] || [];
+    const newPerms = currentPerms.includes(action)
+      ? currentPerms.filter(a => a !== action)
+      : [...currentPerms, action];
+
+    setRoleForm({
+      ...roleForm,
+      permissions: {
+        ...roleForm.permissions,
+        [modId]: newPerms
+      }
+    });
+  };
+
+  const handleSaveRole = async () => {
+    try {
+      if (editingRole?.id) {
+        await api.updateRole(editingRole.id, roleForm);
+      } else {
+        await api.createRole(roleForm);
+      }
+      const updatedRoles = await api.getRoles();
+      setRoles(updatedRoles);
+      setIsModalOpen(false);
+      addLog(currentUser?.name, editingRole?.id ? 'Update Role' : 'Role Baru', `Nama: ${roleForm.name}`);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleSaveTaxForm = async (e) => {
+    e.preventDefault();
+    try {
+      await api.saveTaxSummary(taxForm);
+      setTaxSummaries(await api.getTaxSummaries());
+      setShowTaxForm(false);
+      addLog(currentUser?.name, 'Update Pajak', `${taxForm.month} ${taxForm.year}`);
+    } catch (e) { alert(e.message); }
+  };
+
+  // --- MASTER DATA HANDLERS ---
+
+  const handleDeleteRole = async (id) => {
+    if (!window.confirm("Hapus role?")) return;
+    try { await api.deleteRole(id); setRoles(await api.getRoles()); } catch (e) { alert(e.message); }
+  };
+
+  const handleSaveDept = async (name) => {
+    try { await api.createDepartment(name); setDepartments(await api.getDepartments()); setIsModalOpen(false); } catch (e) { alert(e.message); }
+  };
+
+  const handleExcelImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const data = new Uint8Array(event.target.result);
+        const workbook = window.XLSX.read(data, { type: 'array' });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
+
+        let importedCount = 0;
+        for (const row of jsonData) {
+          const slotId = parseInt(row['No Slot'] || row['Slot']);
+          const boxId = row['No Kardus'] || row['Box ID'];
+          const status = row['Status'];
+
+          if (slotId && slotId <= TOTAL_SLOTS && boxId) {
+            const currentSlot = inventory[slotId - 1];
+            const newStatus = status === 'KOSONG' ? 'EMPTY' : 'IMPORTED';
+
+            // Create box data if not empty
+            const boxData = newStatus === 'EMPTY' ? null : {
+              id: boxId,
+              ordners: [] // Simplified import
+            };
+
+            const updatedSlot = {
+              ...currentSlot,
+              status: 'IMPORTED',
+              boxData: boxData,
+              lastUpdated: new Date().toISOString(),
+              history: [...(currentSlot.history || []), createHistoryItem('IMPORTED', `Import: ${boxId}`)]
+            };
+
+            await api.updateInventory(slotId, updatedSlot);
+            importedCount++;
+          }
+        }
+        setInventory(await api.getInventory());
+        alert(`Berhasil import ${importedCount} data kardus!`);
+        addLog(currentUser?.name, 'Import Excel', `Import ${importedCount} data`);
+      } catch (error) {
+        console.error("Excel import error:", error);
+        alert("Gagal membaca file Excel. Pastikan format sesuai.");
+      }
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const downloadTemplate = () => {
+    const templateData = [
+      { "No Slot": 1, "No Kardus": "BOX-2024-001", "Status": "TERISI", "Keterangan": "Contoh Data" },
+      { "No Slot": 2, "No Kardus": "BOX-2024-002", "Status": "TERISI", "Keterangan": "" }
+    ];
+    const ws = window.XLSX.utils.json_to_sheet(templateData);
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, "Template");
+    window.XLSX.writeFile(wb, "Template_Import_Arsip.xlsx");
+  };
+
+  const handleDeleteUser = async (id) => {
+    if (!window.confirm("Hapus user ini?")) return;
+    try {
+      await db.deleteUser(id);
+      setUsers(await db.getUsers());
+      addLog(currentUser?.name, 'Delete User', `ID ${id}`);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleDeleteDept = async (name) => {
+    if (!window.confirm("Hapus dept?")) return;
+    try { await api.deleteDepartment(name); setDepartments(await api.getDepartments()); } catch (e) { alert(e.message); }
+  };
+
+  // --- PDF TEXT EXTRACTION (RESTORED) ---
+  const extractTextFromPDF = async (file) => {
+    if (!window.pdfjsLib) return "Engine OCR PDF sedang dimuat...";
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      let fullText = "";
+      let totalChars = 0;
+
+      const metadata = await pdf.getMetadata().catch(e => null);
+      fullText += `[ANALISIS DOKUMEN DIGITAL]\nNama File: ${file.name}\n`;
+      if (metadata?.info?.Title) fullText += `Judul Meta: ${metadata.info.Title}\n`;
+      fullText += `------------------------------------------------\n\n[EKSTRAKSI TEKS ISI]\n`;
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(' ');
+        totalChars += pageText.length;
+        fullText += `--- Halaman ${i} ---\n${pageText.trim() ? pageText : "(Gambar/Kosong)"}\n\n`;
+      }
+      const summary = `[RINGKASAN]\nTotal Karakter: ${totalChars}\nStatus OCR: ${totalChars > 50 ? "Berhasil" : "Terbatas"}\n\n`;
+      return summary + fullText;
+    } catch (e) {
+      return "Gagal membaca PDF. File mungkin rusak.";
+    }
+  };
+
+  // --- DOC HANDLERS (API INTEGRATED) ---
+
+  const handleFileSelect = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const fileSize = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+
+    // Read Base64
+    const fileBase64 = await new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.readAsDataURL(file);
+    });
+
+    setUploadForm(prev => ({ ...prev, title: file.name, fileType: file.type, fileSize, fileData: file, fileBase64, isProcessing: true, processingMessage: 'Membaca file...', previewUrl: null }));
+
+    setTimeout(async () => {
+      let text = "";
+      try {
+        if (file.type === 'application/pdf') {
+          setUploadForm(prev => ({ ...prev, processingMessage: 'OCR PDF...' }));
+          text = await extractTextFromPDF(file);
+        } else if (file.type.includes('text')) {
+          text = await file.text();
+        } else text = "[Konten biner]";
+      } catch (err) { text = "Error ekstraksi"; }
+      setUploadForm(prev => ({ ...prev, ocrContent: text, isProcessing: false, processingMessage: '' }));
+      if (file.type.includes('image')) setUploadForm(prev => ({ ...prev, previewUrl: fileBase64 }));
+    }, 800);
+  };
+
+  const handleProcessDoc = async () => {
+    const newDoc = {
+      title: uploadForm.title,
+      uploadDate: new Date().toISOString(),
+      ocrContent: uploadForm.ocrContent,
+      size: uploadForm.fileSize,
+      type: uploadForm.fileType,
+      previewUrl: uploadForm.previewUrl,
+      fileData: uploadForm.fileBase64, // Send Base64
+      uploader: currentUser?.name || 'Admin',
+      folder_id: currentFolderId,
+      version: 1,
+      versionsHistory: [],
+      locked: false
+    };
+
+    try {
+      if (uploadForm.editMode && uploadForm.id) {
+        await api.updateDocument(uploadForm.id, newDoc);
+        addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${newDoc.title}`);
+      } else {
+        await api.createDocument(newDoc);
+        addLog(currentUser?.name, 'Upload Dokumen', `Dokumen baru ${newDoc.title}`);
+      }
+      setDocList(await api.getDocuments());
+      setIsModalOpen(false);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleEditDoc = (e, doc) => {
+    e.stopPropagation();
+    setUploadForm({ id: doc.id, title: doc.title, ocrContent: doc.ocrContent, fileType: doc.type, fileSize: doc.size, previewUrl: doc.previewUrl, fileBase64: doc.fileData, isProcessing: false, processingMessage: '', editMode: true, originalDoc: doc });
+    setModalTab('upload');
+    setIsModalOpen(true);
+  };
+
+  const handleDeleteDoc = async (e, docId) => {
+    e.stopPropagation();
+    if (window.confirm('Hapus dokumen?')) {
+      try {
+        await api.deleteDocument(docId);
+        setDocList(await api.getDocuments());
+        addLog(currentUser?.name, 'Hapus Dokumen', `ID ${docId}`);
+      } catch (e) { alert(e.message); }
+    }
+  };
+
+  const handleViewDoc = (doc) => { setViewDocData(doc); setModalTab('doc-view'); setIsModalOpen(true); };
+
+  const handleDownload = (doc) => {
+    const element = document.createElement("a");
+    // If fileData (Base64) exists, use it. Else create blob from OCR text.
+    element.href = doc.fileData || doc.previewUrl || URL.createObjectURL(new Blob([doc.ocrContent], { type: 'text/plain' }));
+    element.download = doc.title;
+    document.body.appendChild(element);
+    element.click();
+    document.body.removeChild(element);
+    addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
+  };
+
+  const handleCreateFolder = async () => {
+    const name = prompt("Nama Folder Baru:");
+    if (name) {
+      await db.createFolder({ name, parent_id: currentFolderId, created_by: currentUser?.name });
+      setFolders(await db.getFolders());
+      addLog(currentUser?.name, 'Create Folder', name);
+    }
+  };
+
+  const handleDeleteFolder = async (e, id) => {
+    e.stopPropagation();
+    if (window.confirm("Hapus folder ini beserta isinya?")) {
+      await db.deleteFolder(id);
+      setFolders(await db.getFolders());
+      addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
+    }
+  };
+
+  // --- IMPROVED RENDER FUNCTIONS ---
+
+
+
+
+
+
+
+  // --- LOGIN SCREEN ---
+
+  if (isLoading) {
+    return (
+      <div className="h-screen w-screen flex items-center justify-center bg-gray-50 dark:bg-slate-950">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+          <p className="text-gray-500 dark:text-slate-400 font-medium">Memuat Database...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!currentUser) return (
+    <Login
+      loginForm={loginForm}
+      setLoginForm={setLoginForm}
+      handleLogin={handleLogin}
+    />
+  );
+
+
+  return (
+    <div className="h-screen flex flex-col">
+      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 text-gray-900 dark:text-slate-200 font-sans transition-colors duration-300">
+        <div className="flex h-screen overflow-hidden">
+
+          <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-20 lg:w-64'} bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col transition-all duration-300 z-20 hidden md:flex`}>
+            <div className="p-6 flex items-center justify-between border-b border-gray-200 dark:border-slate-800/50">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 min-w-[32px] rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">A</div>
+                {!isSidebarCollapsed && <span className="text-xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-slate-400 bg-clip-text text-transparent truncate">ArchiveOS</span>}
+              </div>
+              <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className={`p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ${isSidebarCollapsed ? 'mx-auto mt-4' : ''}`}>
+                {isSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+              </button>
+            </div>
+
+            <nav className="flex-1 p-4 space-y-2">
+              {[
+                { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+                { id: 'inventory', icon: Grid3X3, label: 'Rak Gudang' },
+                { id: 'documents', icon: ScanLine, label: 'Dokumen Digital' },
+                { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Monitoring Pemeriksaan' },
+                { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
+                { id: 'master', icon: Settings, label: 'Master Data' },
+              ].map(item => (
+                <button
+                  key={item.id}
+                  onClick={() => setActiveTab(item.id)}
+                  className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-indigo-50 dark:bg-indigo-600/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-600/20' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800'}`}
+                >
+                  <item.icon size={20} />
+                  {!isSidebarCollapsed && <span>{item.label}</span>}
+                </button>
+              ))}
+            </nav>
+            <div className="p-4 border-t border-gray-200 dark:border-slate-800/50">
+              <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 mb-2`}>
+                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+                {!isSidebarCollapsed && <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
+              </button>
+            </div>
+          </aside>
+
+          <main className="flex-1 overflow-y-auto relative md:static mt-16 md:mt-0 bg-gray-50 dark:bg-slate-950 transition-colors duration-300">
+            <div className="p-6 lg:p-10 max-w-7xl mx-auto">
+              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+                <div>
+                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
+                    {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' : activeTab === 'inventory' ? 'Manajemen Slot' : 'Digital Vault'}
+                  </h1>
+                  <p className="text-gray-500 dark:text-slate-400">Gudang Arsip Utama • {activeTab === 'documents' ? 'Secure Storage' : 'Lantai 1'}</p>
+                </div>
+              </div>
+
+
+
+              {activeTab === 'dashboard' && (
+                <Dashboard
+                  stats={stats}
+                  docList={docList}
+                  docStats={docStats}
+                  logs={logs}
+                  TOTAL_SLOTS={TOTAL_SLOTS}
+                  isDarkMode={isDarkMode}
+                  handleViewDoc={handleViewDoc}
+                />
+              )}
+              {activeTab === 'inventory' && (
+                <Inventory
+                  inventory={inventory}
+                  stats={stats}
+                  TOTAL_SLOTS={TOTAL_SLOTS}
+                  getStatusStyle={getStatusStyle}
+                  handleSlotClick={handleSlotClick}
+                  handleExcelImport={handleExcelImport} // Note: handleExcelImport might need to be created if it was inline or missing? wait, checking
+                  downloadTemplate={downloadTemplate} // check if exists
+                  excelInputRef={excelInputRef}
+                />
+              )}
+              {activeTab === 'documents' && (
+                <Documents
+                  docList={docList}
+                  folders={folders}
+                  currentFolderId={currentFolderId}
+                  setCurrentFolderId={setCurrentFolderId}
+                  searchQuery={searchQuery}
+                  setSearchQuery={setSearchQuery}
+                  handleCreateFolder={handleCreateFolder}
+                  handleDeleteFolder={handleDeleteFolder}
+                  handleViewDoc={handleViewDoc}
+                  handleEditDoc={handleEditDoc}
+                  handleDeleteDoc={handleDeleteDoc}
+                  setUploadForm={setUploadForm}
+                  setModalTab={setModalTab}
+                  setIsModalOpen={setIsModalOpen}
+                  hasPermission={hasPermission}
+                  docStats={docStats}
+                  getSearchSnippet={getSearchSnippet}
+                />
+              )}
+              {activeTab === 'tax-monitoring' && (
+                <TaxMonitoring
+                  taxAudits={taxAudits}
+                  hasPermission={hasPermission}
+                />
+              )}
+              {activeTab === 'tax-summary' && (
+                <TaxSummary
+                  taxSummaries={taxSummaries}
+                  hasPermission={hasPermission}
+                  setTaxForm={setTaxForm}
+                  setModalTab={setModalTab}
+                  setIsModalOpen={setIsModalOpen}
+                />
+              )}
+              {activeTab === 'master' && (
+                <MasterData
+                  masterTab={masterTab}
+                  setMasterTab={setMasterTab}
+                  users={users}
+                  roles={roles}
+                  departments={departments}
+                  userSearchQuery={userSearchQuery}
+                  setUserSearchQuery={setUserSearchQuery}
+                  handleDeleteUser={handleDeleteUser} // need to ensure this is available
+                  handleEditRole={handleEditRole}
+                  handleDeleteRole={handleDeleteRole}
+                  handleDeleteDept={handleDeleteDept}
+                />
+              )}
+
+            </div>
+          </main>
+        </div>
+
+        {/* MODAL SYSTEM */}
+        <Modal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          title={
+            activeTab === 'documents'
+              ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
+              : `Slot #${selectedSlotId}`
+          }
+        >
+          {activeTab === 'documents' && modalTab === 'upload' && (
+            <div className="space-y-6">
+              {uploadForm.isProcessing ? (
+                <div className="text-center py-12">
+                  <div className="relative mx-auto mb-4 w-16 h-16">
+                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
+                  </div>
+                  <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
+                  <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
+                    onClick={() => fileInputRef.current.click()}
+                  >
+                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                    <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
+                    <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
+                    <input
+                      value={uploadForm.title}
+                      onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-3 pt-4">
+                    <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
+            <div className="space-y-6">
+              <div className="flex gap-4">
+                <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
+                  {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
+                  <div className="flex gap-4 text-sm text-gray-500 mt-2">
+                    <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
+                    <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
+                    <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
+                  </div>
+                  <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
+                </div>
+              </div>
+              <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+                <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
+                <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'inventory' && (
+            <div className="space-y-6">
+              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
+                <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+                  <Package size={16} /> Slot #{selectedSlotId}
+                  <ChevronRight size={14} />
+                  <input
+                    type="text"
+                    value={boxForm.boxId}
+                    onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
+                    className="font-bold text-gray-900 dark:text-white bg-transparent border-b border-gray-300 dark:border-slate-700 focus:outline-none focus:border-indigo-500 w-full"
+                    placeholder="Ketik Nama Kardus..."
+                  />
+                </div>
+
+                <div className="flex border-b border-gray-200 dark:border-slate-800 mb-4">
+                  <button onClick={() => setModalTab('details')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'details' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Isi Kardus</button>
+                  <button onClick={() => setModalTab('history')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'history' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Riwayat Mutasi (Flow Trail)</button>
+                </div>
+
+                {modalTab === 'details' && (
+                  <div className="space-y-4">
+                    {/* Input Area - Changes based on edit mode */}
+                    <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-500 ml-1">No Ordner</label>
+                        <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-500 ml-1">Periode</label>
+                        <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
+                      </div>
+                      <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                        {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                      {boxForm.ordners.map(ord => (
+                        <div key={ord.id} className="border border-gray-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800/50">
+                          <div className="flex justify-between items-center cursor-pointer" onClick={() => setActiveOrdnerId(activeOrdnerId === ord.id ? null : ord.id)}>
+                            <div className="flex items-center gap-2">
+                              <FolderOpen size={18} className="text-amber-500" />
+                              <div>
+                                <span className="font-bold dark:text-white text-sm">{ord.noOrdner}</span>
+                                <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500 ml-2">{ord.period}</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
+                              <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
+                              <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
+                            </div>
+                          </div>
+
+                          {/* Nested Invoice */}
+                          {activeOrdnerId === ord.id && (
+                            <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
+                              <div className="flex gap-2 items-center mb-2">
+                                <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+                                  {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
+                                </button>
+                              </div>
+                              {ord.invoices.map(inv => (
+                                <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
+                                  <div className="flex items-center gap-2">
+                                    <FileText size={12} />
+                                    <span className="font-mono font-medium">{inv.invoiceNo}</span>
+                                    <span className="text-gray-300">|</span>
+                                    <span>{inv.vendor}</span>
+                                  </div>
+                                  <div className="flex gap-1">
+                                    <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
+                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {modalTab === 'history' && (
+                  <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
+                    {inventory[selectedSlotId - 1]?.history?.slice().reverse().map((hist, idx) => (
+                      <div key={idx} className="relative">
+                        <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
+                        <div className="text-sm">
+                          <span className={`font-bold ${hist.action === 'REMOVED' ? 'text-red-500' : hist.action === 'MOVED' ? 'text-blue-500' : hist.action === 'IMPORTED' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{hist.action}</span>
+                          <span className="text-xs text-gray-500 ml-2">{new Date(hist.timestamp).toLocaleString()}</span>
+                        </div>
+                        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{hist.note}</p>
+                        <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
+                      </div>
+                    ))}
+                    {(!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
+                  </div>
+                )}
+              </div>
+
+              {/* FOOTER ACTIONS */}
+              <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
+                {/* Row 1: Save & Primary Actions */}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
+                    <ArrowLeftRight size={16} /> Pindah Slot
+                  </button>
+                  <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
+                    <Printer size={16} /> Cetak Label
+                  </button>
+                  <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
+                    <CheckCircle2 size={16} /> Simpan Data
+                  </button>
+                </div>
+
+                {/* Row 2: Move Input (Conditional) */}
+                {showMoveInput && (
+                  <div className="flex gap-2 items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
+                    <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Pindah ke Slot:</span>
+                    <input
+                      type="number"
+                      placeholder="No. Slot (1-100)"
+                      value={moveTargetSlot}
+                      onChange={(e) => setMoveTargetSlot(e.target.value)}
+                      className="w-32 px-2 py-1 text-sm border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                    />
+                    <button onClick={handleMoveBox} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Konfirmasi Pindah</button>
+                  </div>
+                )}
+
+                {/* Row 3: Status & External Actions (Only if stored) */}
+                {inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
+                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
+                    <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
+                      <Clock size={14} /> Set Dipinjam
+                    </button>
+                    <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
+                      <AlertCircle size={14} /> Set Audit
+                    </button>
+                    <button onClick={() => handleExternalTransfer('Indoarsip')} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
+                      <Truck size={14} /> Kirim ke Indoarsip
+                    </button>
+                    <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
+                      <LogOut size={14} /> Hapus / Kosongkan
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </Modal>
+      </div>
+    </div>
+  );
+}
