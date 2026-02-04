@@ -25,7 +25,8 @@ export const api = {
     // Departments
     getDepartments: () => fetchAPI('/departments'),
     createDepartment: (name) => fetchAPI('/departments', { method: 'POST', body: JSON.stringify({ name }) }),
-    deleteDepartment: (name) => fetchAPI(`/departments/${name}`, { method: 'DELETE' }),
+    updateDepartment: (id, name) => fetchAPI(`/departments/${id}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+    deleteDepartment: (id) => fetchAPI(`/departments/${id}`, { method: 'DELETE' }),
 
     // Roles
     getRoles: () => fetchAPI('/roles'),

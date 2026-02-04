@@ -472,14 +472,17 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                                 }
                                                                 openEditModal(auditWithSteps);
                                                             }}
-                                                            className="p-1.5 hover:bg-gray-100 text-gray-500 rounded-lg transition-colors"
+                                                            className={`p-1.5 rounded-lg transition-colors ${hasPermission('tax-monitoring', 'edit') ? 'hover:bg-gray-100 text-gray-500' : 'opacity-30 cursor-not-allowed text-gray-300'}`}
                                                             title="Edit"
+                                                            disabled={!hasPermission('tax-monitoring', 'edit')}
                                                         >
                                                             <Edit size={16} />
                                                         </button>
-                                                        <button onClick={(e) => handleDeleteAudit(audit.id, e)} className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors" title="Delete">
-                                                            <Trash2 size={16} />
-                                                        </button>
+                                                        {hasPermission('tax-monitoring', 'delete') && (
+                                                            <button onClick={(e) => handleDeleteAudit(audit.id, e)} className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors" title="Delete">
+                                                                <Trash2 size={16} />
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </td>
                                             </tr>
@@ -510,7 +513,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                     <p className="text-xs text-gray-500 mb-1">Durasi Total</p>
                                     <p className="font-bold text-xl text-indigo-600 dark:text-indigo-400">{getDuration(selectedAudit.startDate, selectedAudit.status === 'Done' ? null : new Date())}</p>
                                 </div>
-                                <button onClick={() => openEditModal(selectedAudit)} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Edit size={12} /> Edit Detail</button>
+                                {hasPermission('tax-monitoring', 'edit') && (
+                                    <button onClick={() => openEditModal(selectedAudit)} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Edit size={12} /> Edit Detail</button>
+                                )}
                             </div>
                         </div>
                         <div className="mb-2">
@@ -572,12 +577,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                     </div>
                                 </div>
                                 <div className="flex gap-2">
-                                    {(selectedAudit.steps?.[activeStep - 1]?.status || '') === 'Done' && (
+                                    {(selectedAudit.steps?.[activeStep - 1]?.status || '') === 'Done' && hasPermission('tax-monitoring', 'edit') && (
                                         <button onClick={handleSendbackStep} className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-lg flex items-center gap-2 hover:bg-amber-200 transition-all text-sm font-semibold">
                                             <RotateCcw size={16} /> Batalkan Selesai
                                         </button>
                                     )}
-                                    {(selectedAudit.steps?.[activeStep - 1]?.status || '') !== 'Done' && (
+                                    {(selectedAudit.steps?.[activeStep - 1]?.status || '') !== 'Done' && hasPermission('tax-monitoring', 'edit') && (
                                         <button onClick={handleFinishStep} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-2 shadow-sm transition-all text-sm font-semibold">
                                             <CheckCircle2 size={16} /> Selesai Tahap Ini
                                         </button>
@@ -625,7 +630,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                             )}
                                         </div>
                                         <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            {editingNoteId !== note.id && (
+                                            {editingNoteId !== note.id && hasPermission('tax-monitoring', 'edit') && (
                                                 <button
                                                     onClick={() => {
                                                         setEditingNoteId(note.id);
@@ -637,18 +642,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                     <Edit size={14} />
                                                 </button>
                                             )}
-                                            <button onClick={() => handleDeleteNote(note.id)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
-                                                <Trash2 size={16} />
-                                            </button>
+                                            {hasPermission('tax-monitoring', 'delete') && (
+                                                <button onClick={() => handleDeleteNote(note.id)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
+                                                    <Trash2 size={16} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ))}
                             </div>
-                            <div className="flex gap-2 items-start pt-4 border-t border-gray-100 dark:border-slate-800">
-                                <input id={`note-input-${activeStep}`} className="flex-1 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="Tambah item pekerjaan..." onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; } }} />
-                                <input id={`pic-input-${activeStep}`} className="w-24 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="PIC" />
-                                <button onClick={() => { const val = document.getElementById(`note-input-${activeStep}`); const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(val.value, pic.value); val.value = ''; }} className="p-2 bg-indigo-600 text-white rounded-lg"><Plus size={20} /></button>
-                            </div>
+                            {hasPermission('tax-monitoring', 'edit') && (
+                                <div className="flex gap-2 items-start pt-4 border-t border-gray-100 dark:border-slate-800">
+                                    <input id={`note-input-${activeStep}`} className="flex-1 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="Tambah item pekerjaan..." onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; } }} />
+                                    <input id={`pic-input-${activeStep}`} className="w-24 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="PIC" />
+                                    <button onClick={() => { const val = document.getElementById(`note-input-${activeStep}`); const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(val.value, pic.value); val.value = ''; }} className="p-2 bg-indigo-600 text-white rounded-lg"><Plus size={20} /></button>
+                                </div>
+                            )}
                         </Card>
                         <div className="space-y-4">
                             <Card>
@@ -663,49 +672,56 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                     <span className="text-gray-400">{file.size}</span>
                                                 </div>
                                                 <button onClick={() => handleSecureDownload(file)} className="text-gray-400 hover:text-blue-500 transition-colors" title="Download"><Download size={14} /></button>
-                                                <button onClick={() => handleDeleteFile(file.id)} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
+                                                {hasPermission('tax-monitoring', 'delete') && (
+                                                    <button onClick={() => handleDeleteFile(file.id)} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
+                                                )}
                                             </div>
                                         ))
                                     }
                                 </div>
-                                <label className="block w-full cursor-pointer">
-                                    <div className="w-full py-3 border-2 border-dashed border-indigo-300 dark:border-indigo-800 rounded-lg flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 transition-colors"><UploadCloud size={24} className="mb-1" /><span className="text-xs font-semibold">Upload File</span></div>
-                                    <input type="file" className="hidden" onChange={handleFileUpload} />
-                                </label>
+                                {hasPermission('tax-monitoring', 'create') && (
+                                    <label className="block w-full cursor-pointer">
+                                        <div className="w-full py-3 border-2 border-dashed border-indigo-300 dark:border-indigo-800 rounded-lg flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 transition-colors"><UploadCloud size={24} className="mb-1" /><span className="text-xs font-semibold">Upload File</span></div>
+                                        <input type="file" className="hidden" onChange={handleFileUpload} />
+                                    </label>
+                                )}
                             </Card>
                         </div>
                     </div>
                 </div>
-            )}
+            )
+            }
 
             {/* SINGLE MODAL AT THE END */}
-            {isCreateModalOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-xl w-[500px]">
-                        <h3 className="font-bold text-lg mb-4 dark:text-white">{editingAudit ? 'Edit Pemeriksaan' : 'Pemeriksaan Baru'}</h3>
-                        <div className="space-y-3">
-                            <input className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" placeholder="Judul / Nama WP" value={newAuditTitle} onChange={e => setNewAuditTitle(e.target.value)} />
-                            <input className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" placeholder="Nomor Surat Perintah (SP2)" value={newAuditLetter} onChange={e => setNewAuditLetter(e.target.value)} />
-                            <div className="flex gap-2">
-                                <div className="flex-1">
-                                    <label className="text-xs text-gray-500 block mb-1">Tanggal Mulai</label>
-                                    <input type="date" className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" value={newAuditDate} onChange={e => setNewAuditDate(e.target.value)} />
-                                </div>
-                                {!editingAudit && (
+            {
+                isCreateModalOpen && (
+                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-xl w-[500px]">
+                            <h3 className="font-bold text-lg mb-4 dark:text-white">{editingAudit ? 'Edit Pemeriksaan' : 'Pemeriksaan Baru'}</h3>
+                            <div className="space-y-3">
+                                <input className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" placeholder="Judul / Nama WP" value={newAuditTitle} onChange={e => setNewAuditTitle(e.target.value)} />
+                                <input className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" placeholder="Nomor Surat Perintah (SP2)" value={newAuditLetter} onChange={e => setNewAuditLetter(e.target.value)} />
+                                <div className="flex gap-2">
                                     <div className="flex-1">
-                                        <label className="text-xs text-gray-500 block mb-1">Upload Surat (Opsional)</label>
-                                        <input type="file" className="w-full text-xs" onChange={e => setNewAuditFile(e.target.files[0])} />
+                                        <label className="text-xs text-gray-500 block mb-1">Tanggal Mulai</label>
+                                        <input type="date" className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" value={newAuditDate} onChange={e => setNewAuditDate(e.target.value)} />
                                     </div>
-                                )}
+                                    {!editingAudit && (
+                                        <div className="flex-1">
+                                            <label className="text-xs text-gray-500 block mb-1">Upload Surat (Opsional)</label>
+                                            <input type="file" className="w-full text-xs" onChange={e => setNewAuditFile(e.target.files[0])} />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex justify-end gap-2 mt-6">
+                                <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg">Batal</button>
+                                <button onClick={handleSaveAudit} disabled={!newAuditTitle || isSaving} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">{isSaving ? 'Menyimpan...' : 'Simpan'}</button>
                             </div>
                         </div>
-                        <div className="flex justify-end gap-2 mt-6">
-                            <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg">Batal</button>
-                            <button onClick={handleSaveAudit} disabled={!newAuditTitle || isSaving} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">{isSaving ? 'Menyimpan...' : 'Simpan'}</button>
-                        </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 }

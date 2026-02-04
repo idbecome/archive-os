@@ -7,6 +7,7 @@ const app = express();
 const PORT = 5000;
 
 console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
+// Trigger restart for re-seeding
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -52,7 +53,7 @@ app.delete('/api/users/:id', (req, res) => {
 app.get('/api/departments', (req, res) => {
     db.all("SELECT * FROM departments", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => r.name));
+        res.json(rows); // Return full objects {id, name}
     });
 });
 
@@ -63,8 +64,15 @@ app.post('/api/departments', (req, res) => {
     });
 });
 
-app.delete('/api/departments/:name', (req, res) => {
-    db.run("DELETE FROM departments WHERE name = ?", [req.params.name], (err) => {
+app.put('/api/departments/:id', (req, res) => {
+    db.run("UPDATE departments SET name = ? WHERE id = ?", [req.body.name, req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.delete('/api/departments/:id', (req, res) => {
+    db.run("DELETE FROM departments WHERE id = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
     });
@@ -74,25 +82,34 @@ app.delete('/api/departments/:name', (req, res) => {
 app.get('/api/roles', (req, res) => {
     db.all("SELECT * FROM roles", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => ({ ...r, access: JSON.parse(r.access) })));
+        // Map DB 'label' -> Frontend 'name' AND DB 'access' -> Frontend 'permissions'
+        res.json(rows.map(r => ({
+            id: r.id,
+            name: r.label,
+            permissions: JSON.parse(r.access)
+        })));
     });
 });
 
 app.post('/api/roles', (req, res) => {
-    const { id, label, access } = req.body;
+    // Map Frontend 'name' -> DB 'label' AND Frontend 'permissions' -> DB 'access'
+    // Generate simple ID from name if not provided (slugify)
+    const { name, permissions } = req.body;
+    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+
     db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)",
-        [id, label, JSON.stringify(access)],
+        [id, name, JSON.stringify(permissions)],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
+            res.json({ success: true, id });
         }
     );
 });
 
 app.put('/api/roles/:id', (req, res) => {
-    const { label, access } = req.body;
+    const { name, permissions } = req.body;
     db.run("UPDATE roles SET label = ?, access = ? WHERE id = ?",
-        [label, JSON.stringify(access), req.params.id],
+        [name, JSON.stringify(permissions), req.params.id],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });

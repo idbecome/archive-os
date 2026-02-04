@@ -149,9 +149,28 @@ function initDb() {
 
     pool.query("SELECT count(*) as count FROM roles", (err, rows) => {
         if (!err && rows[0].count === 0) {
-            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['admin', 'Administrator', JSON.stringify(['all'])]);
-            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['staff', 'Staff Gudang', JSON.stringify(['dashboard', 'inventory', 'inventory_edit', 'documents', 'documents_upload', 'documents_edit', 'tax', 'tax_manage', 'summary-tax'])]);
-            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['viewer', 'Tamu / Viewer', JSON.stringify(['dashboard', 'inventory', 'documents', 'tax', 'summary-tax'])]);
+            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['admin', 'Administrator', JSON.stringify({
+                dashboard: ['view'],
+                inventory: ['view', 'create', 'edit', 'delete'],
+                documents: ['view', 'create', 'edit', 'delete'],
+                'tax-monitoring': ['view', 'create', 'edit', 'delete'],
+                'tax-summary': ['view', 'create', 'edit', 'delete'],
+                master: ['view', 'create', 'edit', 'delete']
+            })]);
+            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['staff', 'Staff Gudang', JSON.stringify({
+                dashboard: ['view'],
+                inventory: ['view', 'create', 'edit'],
+                documents: ['view', 'create'],
+                'tax-monitoring': ['view'],
+                'tax-summary': ['view']
+            })]);
+            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['viewer', 'Tamu / Viewer', JSON.stringify({
+                dashboard: ['view'],
+                inventory: ['view'],
+                documents: ['view'],
+                'tax-monitoring': ['view'],
+                'tax-summary': ['view']
+            })]);
         }
     });
 

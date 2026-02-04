@@ -446,6 +446,10 @@ export default function App() {
   const [masterTab, setMasterTab] = useState('users');
   const [editingRole, setEditingRole] = useState(null);
   const [roleForm, setRoleForm] = useState({ name: '', permissions: {} });
+  // NEW STATE FOR MASTER DATA
+  const [userForm, setUserForm] = useState({ id: null, username: '', password: '', name: '', role: 'staff', department: '' });
+  const [deptForm, setDeptForm] = useState({ id: null, name: '' });
+
   const [showTaxForm, setShowTaxForm] = useState(false);
   const [taxForm, setTaxForm] = useState({ month: '', year: 2024, pph23: 0, pph42: 0, ppnIn: { total: 0 }, ppnOut: { total: 0 } });
   const [currentUser, setCurrentUser] = useState(() => {
@@ -583,7 +587,7 @@ export default function App() {
     if (currentUser.role === 'admin') return true;
 
     // Check granular permissions from roles state
-    const userRoleData = roles.find(r => r.name === currentUser.role);
+    const userRoleData = roles.find(r => r.id === currentUser.role);
     if (userRoleData && userRoleData.permissions && userRoleData.permissions[moduleId]) {
       return userRoleData.permissions[moduleId].includes(action);
     }
@@ -821,12 +825,7 @@ export default function App() {
     alert(`Label untuk ${boxId} telah dikirim ke printer antrean.`);
   };
 
-  const handleEditRole = (role) => {
-    setEditingRole(role);
-    setRoleForm({ name: role.name, permissions: { ...role.permissions } });
-    setModalTab('role-edit');
-    setIsModalOpen(true);
-  };
+
 
   const handleTogglePermission = (modId, action) => {
     const currentPerms = roleForm.permissions[modId] || [];
@@ -843,19 +842,7 @@ export default function App() {
     });
   };
 
-  const handleSaveRole = async () => {
-    try {
-      if (editingRole?.id) {
-        await api.updateRole(editingRole.id, roleForm);
-      } else {
-        await api.createRole(roleForm);
-      }
-      const updatedRoles = await api.getRoles();
-      setRoles(updatedRoles);
-      setIsModalOpen(false);
-      addLog(currentUser?.name, editingRole?.id ? 'Update Role' : 'Role Baru', `Nama: ${roleForm.name}`);
-    } catch (e) { alert(e.message); }
-  };
+
 
   const handleSaveTaxForm = async (e) => {
     e.preventDefault();
@@ -869,14 +856,9 @@ export default function App() {
 
   // --- MASTER DATA HANDLERS ---
 
-  const handleDeleteRole = async (id) => {
-    if (!window.confirm("Hapus role?")) return;
-    try { await api.deleteRole(id); setRoles(await api.getRoles()); } catch (e) { alert(e.message); }
-  };
 
-  const handleSaveDept = async (name) => {
-    try { await api.createDepartment(name); setDepartments(await api.getDepartments()); setIsModalOpen(false); } catch (e) { alert(e.message); }
-  };
+
+
 
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
 
@@ -1062,6 +1044,33 @@ export default function App() {
     XLSX.writeFile(wb, "Template_Import_Arsip.xlsx");
   };
 
+  // --- MASTER DATA HANDLERS ---
+
+  const handleCreateUser = () => {
+    setUserForm({ id: null, username: '', password: '', name: '', role: 'staff', department: '' });
+    setModalTab('user-create');
+    setIsModalOpen(true);
+  };
+
+  const handleEditUser = (user) => {
+    setUserForm({ ...user, password: '' }); // Don't show password
+    setModalTab('user-create'); // Reuse same form
+    setIsModalOpen(true);
+  };
+
+  const handleSaveUser = async () => {
+    try {
+      if (userForm.id) {
+        await api.updateUser(userForm.id, userForm);
+      } else {
+        await api.createUser(userForm);
+      }
+      setUsers(await api.getUsers());
+      setIsModalOpen(false);
+      addLog(currentUser?.name, userForm.id ? 'Update User' : 'Create User', userForm.username);
+    } catch (e) { alert(e.message); }
+  };
+
   const handleDeleteUser = async (id) => {
     if (!window.confirm("Hapus user ini?")) return;
     try {
@@ -1071,9 +1080,65 @@ export default function App() {
     } catch (e) { alert(e.message); }
   };
 
-  const handleDeleteDept = async (name) => {
+  const handleEditDept = (dept) => {
+    setDeptForm({ id: dept.id, name: dept.name });
+    setModalTab('dept-form');
+    setIsModalOpen(true);
+  };
+
+  const handleCreateDept = () => {
+    setDeptForm({ id: null, name: '' });
+    setModalTab('dept-form');
+    setIsModalOpen(true);
+  };
+
+  const handleSaveDept = async () => {
+    try {
+      if (deptForm.id) {
+        await api.updateDepartment(deptForm.id, deptForm.name);
+      } else {
+        await api.createDepartment(deptForm.name);
+      }
+      setDepartments(await api.getDepartments());
+      setIsModalOpen(false);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleDeleteDept = async (id) => {
     if (!window.confirm("Hapus dept?")) return;
-    try { await api.deleteDepartment(name); setDepartments(await api.getDepartments()); } catch (e) { alert(e.message); }
+    try { await api.deleteDepartment(id); setDepartments(await api.getDepartments()); } catch (e) { alert(e.message); }
+  };
+
+  const handleCreateRole = () => {
+    setEditingRole(null);
+    setRoleForm({ name: '', permissions: {} });
+    setModalTab('role-create');
+    setIsModalOpen(true);
+  };
+
+  const handleEditRole = (role) => {
+    setEditingRole(role);
+    setRoleForm({ name: role.name, permissions: { ...role.permissions } });
+    setModalTab('role-edit');
+    setIsModalOpen(true);
+  };
+
+  const handleSaveRole = async () => {
+    try {
+      if (editingRole) {
+        await api.updateRole(editingRole.id, roleForm);
+      } else {
+        await api.createRole(roleForm);
+      }
+      setRoles(await api.getRoles());
+      setIsModalOpen(false);
+      setEditingRole(null);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleDeleteRole = async (id) => {
+    if (!window.confirm("Hapus role?")) return;
+    try { await api.deleteRole(id); setRoles(await api.getRoles()); } catch (e) { alert(e.message); }
   };
 
   // --- PDF TEXT EXTRACTION (RESTORED) ---
@@ -1362,6 +1427,7 @@ export default function App() {
                   handleExcelImport={handleExcelImport} // Note: handleExcelImport might need to be created if it was inline or missing? wait, checking
                   downloadTemplate={downloadTemplate} // check if exists
                   excelInputRef={excelInputRef}
+                  hasPermission={hasPermission}
                 />
               )}
               {activeTab === 'documents' && (
@@ -1420,10 +1486,20 @@ export default function App() {
                   departments={departments}
                   userSearchQuery={userSearchQuery}
                   setUserSearchQuery={setUserSearchQuery}
-                  handleDeleteUser={handleDeleteUser} // need to ensure this is available
+                  handleDeleteUser={handleDeleteUser}
+                  handleCreateUser={handleCreateUser}
+                  handleEditUser={handleEditUser}
                   handleEditRole={handleEditRole}
                   handleDeleteRole={handleDeleteRole}
+                  handleCreateRole={handleCreateRole}
+                  handleCreateDept={handleCreateDept}
+                  handleEditDept={handleEditDept}
                   handleDeleteDept={handleDeleteDept}
+                  setIsModalOpen={setIsModalOpen}
+                  setModalTab={setModalTab}
+                  setRoles={setRoles}
+                  setDepartments={setDepartments}
+                  hasPermission={hasPermission}
                 />
               )}
 
@@ -1436,9 +1512,14 @@ export default function App() {
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
           title={
-            activeTab === 'documents'
-              ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
-              : `Slot #${selectedSlotId}`
+            activeTab === 'master'
+              ? (modalTab === 'user-create' ? 'Manajemen User'
+                : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
+                  : modalTab === 'dept-form' ? 'Manajemen Departemen'
+                    : 'Master Data')
+              : activeTab === 'documents'
+                ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
+                : `Slot #${selectedSlotId}`
           }
         >
           {activeTab === 'documents' && modalTab === 'upload' && (
@@ -1524,19 +1605,21 @@ export default function App() {
                 {modalTab === 'details' && (
                   <div className="space-y-4">
                     {/* Input Area - Changes based on edit mode */}
-                    <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-500 ml-1">No Ordner</label>
-                        <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
+                    {hasPermission('inventory', 'edit') && (
+                      <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
+                        <div className="flex-1">
+                          <label className="text-xs text-gray-500 ml-1">No Ordner</label>
+                          <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
+                        </div>
+                        <div className="flex-1">
+                          <label className="text-xs text-gray-500 ml-1">Periode</label>
+                          <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
+                        </div>
+                        <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                          {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
+                        </button>
                       </div>
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-500 ml-1">Periode</label>
-                        <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
-                      </div>
-                      <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-                        {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
-                      </button>
-                    </div>
+                    )}
 
                     <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
                       {boxForm.ordners.map(ord => (
@@ -1550,8 +1633,12 @@ export default function App() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1">
-                              <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
-                              <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
+                              {hasPermission('inventory', 'edit') && (
+                                <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
+                              )}
+                              {hasPermission('inventory', 'delete') && (
+                                <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
+                              )}
                               <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
                             </div>
                           </div>
@@ -1559,14 +1646,18 @@ export default function App() {
                           {/* Nested Invoice */}
                           {activeOrdnerId === ord.id && (
                             <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
-                              <div className="flex gap-2 items-center mb-2 flex-wrap">
-                                <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
-                                <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
-                                  {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
-                                </button>
-                              </div>
+                              {hasPermission('inventory', 'edit') && (
+                                <>
+                                  <div className="flex gap-2 items-center mb-2 flex-wrap">
+                                    <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                    <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                    <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
+                                    <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+                                      {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
+                                    </button>
+                                  </div>
+                                </>
+                              )}
                               {ord.invoices.map(inv => (
                                 <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
                                   <div className="flex items-center gap-2">
@@ -1577,8 +1668,12 @@ export default function App() {
                                     {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
                                   </div>
                                   <div className="flex gap-1">
-                                    <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
-                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
+                                    {hasPermission('inventory', 'edit') && (
+                                      <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
+                                    )}
+                                    {hasPermission('inventory', 'delete') && (
+                                      <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
+                                    )}
                                   </div>
                                 </div>
                               ))}
@@ -1612,15 +1707,19 @@ export default function App() {
               <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
                 {/* Row 1: Save & Primary Actions */}
                 <div className="flex justify-end gap-2">
-                  <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
-                    <ArrowLeftRight size={16} /> Pindah Slot
-                  </button>
+                  {hasPermission('inventory', 'edit') && (
+                    <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
+                      <ArrowLeftRight size={16} /> Pindah Slot
+                    </button>
+                  )}
                   <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
                     <Printer size={16} /> Cetak Label
                   </button>
-                  <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
-                    <CheckCircle2 size={16} /> Simpan Data
-                  </button>
+                  {hasPermission('inventory', 'edit') && (
+                    <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
+                      <CheckCircle2 size={16} /> Simpan Data
+                    </button>
+                  )}
                 </div>
 
                 {/* Row 2: Move Input (Conditional) */}
@@ -1641,29 +1740,160 @@ export default function App() {
                 {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
                 {inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
-                    {inventory[selectedSlotId - 1]?.status === 'BORROWED' ? (
-                      <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
-                        <CheckCircle2 size={14} /> Kembalikan (Return)
-                      </button>
-                    ) : (
-                      <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
-                        <Clock size={14} /> Set Dipinjam
+                    {hasPermission('inventory', 'edit') && (
+                      <>
+                        {inventory[selectedSlotId - 1]?.status === 'BORROWED' ? (
+                          <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
+                            <CheckCircle2 size={14} /> Kembalikan (Return)
+                          </button>
+                        ) : (
+                          <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
+                            <Clock size={14} /> Set Dipinjam
+                          </button>
+                        )}
+                        <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
+                          <AlertCircle size={14} /> Set Audit
+                        </button>
+                        <button onClick={() => handleExternalTransfer('Indoarsip')} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
+                          <Truck size={14} /> Kirim ke Indoarsip
+                        </button>
+                      </>
+                    )}
+                    {hasPermission('inventory', 'delete') && (
+                      <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
+                        <LogOut size={14} /> Hapus / Kosongkan
                       </button>
                     )}
-
-                    <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
-                      <AlertCircle size={14} /> Set Audit
-                    </button>
-                    <button onClick={() => handleExternalTransfer('Indoarsip')} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
-                      <Truck size={14} /> Kirim ke Indoarsip
-                    </button>
-                    <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
-                      <LogOut size={14} /> Hapus / Kosongkan
-                    </button>
                   </div>
                 )}
               </div>
             </div>
+          )}
+
+          {/* MASTER DATA MODALS */}
+          {activeTab === 'master' && (
+            <>
+              {modalTab === 'user-create' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Username</label>
+                    <input
+                      value={userForm.username}
+                      onChange={e => setUserForm({ ...userForm, username: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      placeholder="Username untuk login"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Password</label>
+                    <input
+                      type="password"
+                      value={userForm.password}
+                      onChange={e => setUserForm({ ...userForm, password: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      placeholder={userForm.id ? "Kosongkan jika tidak ingin mengubah" : "Password login"}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Nama Lengkap</label>
+                    <input
+                      value={userForm.name}
+                      onChange={e => setUserForm({ ...userForm, name: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1 dark:text-white">Role</label>
+                      <select
+                        value={userForm.role}
+                        onChange={e => setUserForm({ ...userForm, role: e.target.value })}
+                        className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      >
+                        {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1 dark:text-white">Departemen</label>
+                      <select
+                        value={userForm.department}
+                        onChange={e => setUserForm({ ...userForm, department: e.target.value })}
+                        className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      >
+                        <option value="">- Pilih Dept -</option>
+                        {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-4">
+                    <button onClick={handleSaveUser} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan User</button>
+                  </div>
+                </div>
+              )}
+
+              {modalTab === 'dept-form' && (
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Nama Departemen</label>
+                    <input
+                      value={deptForm.name}
+                      onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      placeholder="Contoh: Finance"
+                    />
+                  </div>
+                  <div className="flex justify-end pt-4">
+                    <button onClick={handleSaveDept} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Departemen</button>
+                  </div>
+                </div>
+              )}
+
+              {(modalTab === 'role-create' || modalTab === 'role-edit') && (
+                <div className="space-y-6">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Nama Role</label>
+                    <input
+                      value={roleForm.name}
+                      onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    />
+                  </div>
+                  <div className="border rounded-xl overflow-hidden border-gray-200 dark:border-slate-700">
+                    <table className="w-full text-sm">
+                      <thead className="bg-gray-50 dark:bg-slate-800">
+                        <tr>
+                          <th className="px-4 py-2 text-left dark:text-white">Modul</th>
+                          <th className="px-4 py-2 text-center dark:text-white">View</th>
+                          <th className="px-4 py-2 text-center dark:text-white">Create</th>
+                          <th className="px-4 py-2 text-center dark:text-white">Edit</th>
+                          <th className="px-4 py-2 text-center dark:text-white">Delete</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
+                        {Object.values(APP_MODULES).map(mod => (
+                          <tr key={mod.id} className="dark:bg-slate-900">
+                            <td className="px-4 py-3 font-medium dark:text-white">{mod.label}</td>
+                            {['view', 'create', 'edit', 'delete'].map(action => (
+                              <td key={action} className="text-center">
+                                <input
+                                  type="checkbox"
+                                  checked={roleForm.permissions[mod.id]?.includes(action) || false}
+                                  onChange={() => handleTogglePermission(mod.id, action)}
+                                  className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="flex justify-end pt-4">
+                    <button onClick={handleSaveRole} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Role</button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </Modal>
       </div>

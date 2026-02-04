@@ -5,7 +5,8 @@ import { SummaryCard } from '../components/ui/Card';
 export default function Inventory({
     inventory, stats, TOTAL_SLOTS, getStatusStyle,
     handleSlotClick, handleExcelImport, downloadTemplate, excelInputRef,
-    handleExportInventory, inventorySearchQuery, setInventorySearchQuery
+    handleExportInventory, inventorySearchQuery, setInventorySearchQuery,
+    hasPermission
 }) {
 
     // Helper to check if a slot matches the search query
@@ -83,27 +84,31 @@ export default function Inventory({
                 </div>
 
                 <div className="flex flex-wrap justify-end gap-2 border-t border-gray-100 dark:border-slate-800 pt-4">
-                    <input
-                        type="file"
-                        ref={excelInputRef}
-                        onChange={handleExcelImport}
-                        accept=".xlsx, .xls, .csv"
-                        className="hidden"
-                    />
-                    <button
-                        onClick={downloadTemplate}
-                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-lg text-sm flex items-center gap-2 transition-colors"
-                        title="Download Template Excel"
-                    >
-                        <Download size={16} /> Template
-                    </button>
-                    <button
-                        onClick={() => excelInputRef.current.click()}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors"
-                        title="Import Data dari Excel"
-                    >
-                        <FileSpreadsheet size={16} /> Import Excel
-                    </button>
+                    {hasPermission('inventory', 'create') && (
+                        <>
+                            <input
+                                type="file"
+                                ref={excelInputRef}
+                                onChange={handleExcelImport}
+                                accept=".xlsx, .xls, .csv"
+                                className="hidden"
+                            />
+                            <button
+                                onClick={downloadTemplate}
+                                className="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-300 rounded-lg text-sm flex items-center gap-2 transition-colors"
+                                title="Download Template Excel"
+                            >
+                                <Download size={16} /> Template
+                            </button>
+                            <button
+                                onClick={() => excelInputRef.current.click()}
+                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors"
+                                title="Import Data dari Excel"
+                            >
+                                <FileSpreadsheet size={16} /> Import Excel
+                            </button>
+                        </>
+                    )}
                     <button
                         onClick={handleExportInventory}
                         className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors"
