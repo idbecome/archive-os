@@ -391,7 +391,7 @@ export default function App() {
     const saved = localStorage.getItem('archive_theme');
     return saved ? saved === 'dark' : true;
   });
-  const [isLoading, setIsLoading] = useState(true); // State loading untuk database
+
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -442,18 +442,21 @@ export default function App() {
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [departments, setDepartments] = useState([]);
-  const [currentUser, setCurrentUser] = useState(null);
-  const [loginForm, setLoginForm] = useState({ username: '', password: '', error: '' });
+
   const [masterTab, setMasterTab] = useState('users');
   const [editingRole, setEditingRole] = useState(null);
   const [roleForm, setRoleForm] = useState({ name: '', permissions: {} });
   const [showTaxForm, setShowTaxForm] = useState(false);
   const [taxForm, setTaxForm] = useState({ month: '', year: 2024, pph23: 0, pph42: 0, ppnIn: { total: 0 }, ppnOut: { total: 0 } });
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('archive_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch { return null; }
+  });
 
-  useEffect(() => {
-    const saved = localStorage.getItem('archive_user');
-    if (saved) setCurrentUser(JSON.parse(saved));
-  }, []);
+  const [isLoading, setIsLoading] = useState(!!currentUser); // Start loading only if user is logged in
+
 
   // --- DATA INITIALIZATION FROM API ---
   const fetchDocs = async () => {
@@ -477,6 +480,8 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (!currentUser) return; // Only fetch data if logged in
+
     const initData = async () => {
       setIsLoading(true);
       await Promise.all([
@@ -493,7 +498,7 @@ export default function App() {
       setIsLoading(false);
     };
     initData();
-  }, []);
+  }, [currentUser]);
 
   // Theme Effect
   useEffect(() => {
@@ -632,20 +637,19 @@ export default function App() {
 
   // --- AUTH HANDLERS ---
 
-  const handleLogin = (e) => {
-    e.preventDefault();
-    const user = users.find(u => u.username === loginForm.username && u.password === loginForm.password);
+  const handleLogin = (username, password, onError) => {
+    const user = users.find(u => u.username === username && u.password === password);
     if (user) {
       setCurrentUser(user);
       localStorage.setItem('archive_user', JSON.stringify(user));
       addLog(user.name, 'Login', 'User logged in');
-    } else if (loginForm.username === 'admin' && loginForm.password === 'admin') {
+    } else if (username === 'admin' && password === 'admin') {
       const adminUser = { name: 'Administrator', role: 'admin', username: 'admin' };
       setCurrentUser(adminUser);
       localStorage.setItem('archive_user', JSON.stringify(adminUser));
       addLog('Admin', 'Login', 'Admin logged in');
     } else {
-      setLoginForm({ ...loginForm, error: 'Invalid credentials' });
+      if (onError) onError('Invalid credentials');
     }
   };
 
@@ -1261,9 +1265,7 @@ export default function App() {
 
   if (!currentUser) return (
     <Login
-      loginForm={loginForm}
-      setLoginForm={setLoginForm}
-      handleLogin={handleLogin}
+      onLogin={handleLogin}
     />
   );
 
@@ -1306,6 +1308,10 @@ export default function App() {
               <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 mb-2`}>
                 {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
                 {!isSidebarCollapsed && <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
+              </button>
+              <button onClick={handleLogout} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10`}>
+                <LogOut size={20} />
+                {!isSidebarCollapsed && <span>Keluar</span>}
               </button>
             </div>
           </aside>
