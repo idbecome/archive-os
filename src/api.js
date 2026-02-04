@@ -62,6 +62,28 @@ export const api = {
     updateTaxAudit: (id, audit) => fetchAPI(`/tax-audits/${id}`, { method: 'PUT', body: JSON.stringify(audit) }),
     deleteTaxAudit: (id) => fetchAPI(`/tax-audits/${id}`, { method: 'DELETE' }),
 
+    // --- MANAGEMENT OPS ---
+    copyDocument: (id, targetFolderId) => fetchAPI('/documents/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, targetFolderId })
+    }),
+    moveDocument: (id, targetFolderId) => fetchAPI('/documents/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, targetFolderId })
+    }),
+    copyFolder: (id, targetParentId) => fetchAPI('/folders/copy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, targetParentId })
+    }),
+    moveFolder: (id, targetParentId) => fetchAPI('/folders/move', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, targetParentId })
+    }),
+
     // Tax Summaries
     getTaxSummaries: () => fetchAPI('/tax-summaries'),
     createTaxSummary: (data) => fetchAPI('/tax-summaries', { method: 'POST', body: JSON.stringify(data) }),

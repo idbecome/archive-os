@@ -456,6 +456,21 @@ export default function App() {
   }, []);
 
   // --- DATA INITIALIZATION FROM API ---
+  const fetchDocs = async () => {
+    const data = await db.getDocs();
+    setDocList(data);
+  };
+
+  const fetchFolders = async () => {
+    const data = await db.getFolders();
+    setFolders(data);
+  };
+
+  const fetchLogs = async () => {
+    const data = await db.getLogs();
+    setLogs(data);
+  };
+
   const fetchTaxAudits = async () => {
     const data = await db.getTaxAudits();
     setTaxAudits(data);
@@ -464,26 +479,17 @@ export default function App() {
   useEffect(() => {
     const initData = async () => {
       setIsLoading(true);
-      const [invData, logData, docsData, folderData, auditData, summaryData, usersData, rolesData, deptsData] = await Promise.all([
-        db.getInventory(),
-        db.getLogs(),
-        db.getDocs(),
-        db.getFolders(),
-        db.getTaxAudits(),
-        db.getTaxSummaries(),
-        db.getUsers(),
-        db.getRoles(),
-        db.getDepartments()
+      await Promise.all([
+        fetchDocs(),
+        fetchFolders(),
+        fetchLogs(),
+        fetchTaxAudits(),
+        db.getInventory().then(setInventory),
+        db.getTaxSummaries().then(setTaxSummaries),
+        db.getUsers().then(setUsers),
+        db.getRoles().then(setRoles),
+        db.getDepartments().then(setDepartments)
       ]);
-      setInventory(invData);
-      setLogs(logData);
-      setDocList(docsData);
-      setFolders(folderData);
-      setTaxAudits(auditData);
-      setTaxSummaries(summaryData);
-      setUsers(usersData);
-      setRoles(rolesData);
-      setDepartments(deptsData);
       setIsLoading(false);
     };
     initData();
@@ -1150,7 +1156,8 @@ export default function App() {
         await api.createDocument(newDoc);
         addLog(currentUser?.name, 'Upload Dokumen', `Dokumen baru ${newDoc.title}`);
       }
-      setDocList(await api.getDocuments());
+      await fetchDocs();
+      await fetchLogs();
       setIsModalOpen(false);
     } catch (e) { alert(e.message); }
   };
@@ -1167,7 +1174,8 @@ export default function App() {
     if (window.confirm('Hapus dokumen?')) {
       try {
         await api.deleteDocument(docId);
-        setDocList(await api.getDocuments());
+        await fetchDocs();
+        await fetchLogs();
         addLog(currentUser?.name, 'Hapus Dokumen', `ID ${docId}`);
       } catch (e) { alert(e.message); }
     }
@@ -1190,7 +1198,8 @@ export default function App() {
     const name = prompt("Nama Folder Baru:");
     if (name) {
       await db.createFolder({ name, parent_id: currentFolderId, created_by: currentUser?.name });
-      setFolders(await db.getFolders());
+      await fetchFolders();
+      await fetchLogs();
       addLog(currentUser?.name, 'Create Folder', name);
     }
   };
@@ -1212,7 +1221,8 @@ export default function App() {
       try {
         const updatedDoc = { ...doc, title: newTitle };
         await api.updateDocument(doc.id, updatedDoc);
-        setDocList(await api.getDocuments());
+        await fetchDocs();
+        await fetchLogs();
         addLog(currentUser?.name, 'Rename File', `${doc.title} -> ${newTitle}`);
       } catch (err) { alert(err.message); }
     }
@@ -1222,7 +1232,8 @@ export default function App() {
     e.stopPropagation();
     if (window.confirm("Hapus folder ini beserta isinya?")) {
       await db.deleteFolder(id);
-      setFolders(await db.getFolders());
+      await fetchFolders();
+      await fetchLogs();
       addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
     }
   };
@@ -1275,7 +1286,7 @@ export default function App() {
             <nav className="flex-1 p-4 space-y-2">
               {[
                 { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-                { id: 'inventory', icon: Grid3X3, label: 'Rak Gudang' },
+                { id: 'inventory', icon: Grid3X3, label: 'Gudang' },
                 { id: 'documents', icon: ScanLine, label: 'Dokumen Digital' },
                 { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Pemeriksaan' },
                 { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
@@ -1374,6 +1385,7 @@ export default function App() {
                   docStats={docStats}
                   getSearchSnippet={getSearchSnippet}
                   logs={logs}
+                  onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
                 />
               )}
               {activeTab === 'tax-monitoring' && (

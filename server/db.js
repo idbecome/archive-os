@@ -95,7 +95,7 @@ function initDb() {
         `CREATE TABLE IF NOT EXISTS logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-            user_name VARCHAR(100),
+            user VARCHAR(100),
             action VARCHAR(100),
             details TEXT
         )`,

@@ -1,6 +1,11 @@
 import React, { useState } from 'react';
-import { HardDrive, ChevronRight, ChevronLeft, Search, Plus, UploadCloud, FolderOpen, Trash2, Edit3, FileDigit, FileText, Highlighter, History, PenLine, User, Clock } from 'lucide-react';
+import {
+    HardDrive, ChevronRight, ChevronLeft, Search, Plus, UploadCloud, FolderOpen,
+    Trash2, Edit3, FileDigit, FileText, Highlighter, History, PenLine, User, Clock,
+    Copy, Move, RefreshCw, X
+} from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
+import { api } from '../api';
 
 export default function Documents({
     docList, folders, currentFolderId, setCurrentFolderId,
@@ -10,13 +15,59 @@ export default function Documents({
     setUploadForm, setModalTab, setIsModalOpen,
     hasPermission, docStats,
     getSearchSnippet, logs,
-    navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex
+    navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex,
+    onRefresh
 }) {
     const [showHistory, setShowHistory] = useState(false);
 
+    // --- MANAGEMENT OPS STATE ---
+    const [mgmtOp, setMgmtOp] = useState(null); // { type: 'copy' | 'move', itemType: 'file' | 'folder', item: any }
+    const [isMgmtModalOpen, setIsMgmtModalOpen] = useState(false);
+    const [opProgress, setOpProgress] = useState(0);
+    const [isExecutingOp, setIsExecutingOp] = useState(false);
+
+    const startMgmtOp = (type, itemType, item) => {
+        setMgmtOp({ type, itemType, item });
+        setIsMgmtModalOpen(true);
+    };
+
+    const performCopyMove = async (targetFolderId) => {
+        if (!mgmtOp) return;
+        setIsExecutingOp(true);
+        setOpProgress(10);
+
+        try {
+            if (mgmtOp.itemType === 'file') {
+                if (mgmtOp.type === 'copy') {
+                    await api.copyDocument(mgmtOp.item.id, targetFolderId);
+                } else {
+                    await api.moveDocument(mgmtOp.item.id, targetFolderId);
+                }
+            } else {
+                if (mgmtOp.type === 'copy') {
+                    await api.copyFolder(mgmtOp.item.id, targetFolderId);
+                } else {
+                    await api.moveFolder(mgmtOp.item.id, targetFolderId);
+                }
+            }
+            setOpProgress(100);
+            setTimeout(() => {
+                setIsExecutingOp(false);
+                setIsMgmtModalOpen(false);
+                setMgmtOp(null);
+                setOpProgress(0);
+                if (onRefresh) onRefresh();
+            }, 500);
+        } catch (e) {
+            alert("Operasi gagal: " + e.message);
+            setIsExecutingOp(false);
+            setOpProgress(0);
+        }
+    };
+
     // Filter logs for document activities
     const docLogs = logs?.filter(l =>
-        ['Upload', 'Delete', 'Rename', 'Folder', 'Revisi', 'Download'].some(k => l.action.includes(k))
+        ['Upload', 'Delete', 'Rename', 'Folder', 'Revisi', 'Download', 'Copy', 'Move', 'Hapus'].some(k => l.action.includes(k))
     ) || [];
 
     return (
@@ -75,6 +126,9 @@ export default function Documents({
                             className="w-full pl-10 pr-4 py-2 bg-gray-50 dark:bg-slate-950 border border-gray-200 dark:border-slate-700 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:outline-none dark:text-white"
                         />
                     </div>
+                    <button onClick={onRefresh} className="px-3 py-2 rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 flex items-center gap-2" title="Refresh Data">
+                        <RefreshCw size={18} />
+                    </button>
                     <button onClick={() => setShowHistory(!showHistory)} className={`px-3 py-2 rounded-lg border flex items-center gap-2 ${showHistory ? 'bg-indigo-100 text-indigo-600 border-indigo-200' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'}`}>
                         <History size={18} />
                     </button>
@@ -142,13 +196,17 @@ export default function Documents({
                             {/* Actions Overlay */}
                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 {hasPermission('documents', 'edit') && (
-                                    <button
-                                        onClick={(e) => handleRenameFolder(e, folder)}
-                                        className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-blue-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600"
-                                        title="Rename"
-                                    >
-                                        <PenLine size={14} />
-                                    </button>
+                                    <>
+                                        <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); }} className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600" title="Copy Folder"><Copy size={14} /></button>
+                                        <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'folder', folder); }} className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600" title="Move Folder"><Move size={14} /></button>
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); handleRenameFolder(e, folder); }}
+                                            className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-blue-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600"
+                                            title="Rename"
+                                        >
+                                            <PenLine size={14} />
+                                        </button>
+                                    </>
                                 )}
                                 {hasPermission('documents', 'delete') && (
                                     <button
@@ -186,6 +244,8 @@ export default function Documents({
                             <div key={doc.id} onClick={() => handleViewDoc(doc)} className="group relative flex flex-col p-4 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl hover:border-indigo-400 dark:hover:border-indigo-500 hover:shadow-md cursor-pointer transition-all h-full">
                                 {/* Actions Overlay */}
                                 <div className="absolute top-2 right-2 flex flex-col gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 dark:bg-slate-900/90 rounded-lg p-1 shadow-sm backdrop-blur-sm">
+                                    <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'file', doc); }} className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Salin File (Copy)"><Copy size={14} /></button>
+                                    <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'file', doc); }} className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Pindah File (Move)"><Move size={14} /></button>
                                     <button onClick={(e) => handleRenameDoc(e, doc)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Ganti Nama File (Rename)"><PenLine size={14} /></button>
                                     <button onClick={(e) => handleEditDoc(e, doc)} className="p-1.5 text-gray-500 hover:text-amber-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Update / Upload Ulang File"><UploadCloud size={14} /></button>
                                     <button onClick={(e) => handleDeleteDoc(e, doc.id)} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Hapus File"><Trash2 size={14} /></button>
@@ -227,6 +287,75 @@ export default function Documents({
                     })}
                 </div>
             </div>
+
+            {/* MANAGEMENT MODAL (COPY/MOVE) */}
+            {isMgmtModalOpen && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 dark:border-slate-800 flex flex-col max-h-[80vh] animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center">
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                    {mgmtOp.type === 'copy' ? <Copy size={20} className="text-indigo-600" /> : <Move size={20} className="text-indigo-600" />}
+                                    {mgmtOp.type === 'copy' ? 'Salin' : 'Pindah'} {mgmtOp.itemType === 'file' ? 'File' : 'Folder'}
+                                </h3>
+                                <p className="text-sm text-gray-500 mt-1 truncate max-w-[300px]">"{mgmtOp.item.title || mgmtOp.item.name}"</p>
+                            </div>
+                            <button onClick={() => setIsMgmtModalOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-400 transition-colors">
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-2 overflow-y-auto flex-1">
+                            <p className="px-4 py-2 text-xs font-bold text-gray-400 uppercase tracking-widest">Pilih Folder Tujuan</p>
+
+                            {/* Target Selection List */}
+                            <div className="space-y-1">
+                                <button
+                                    onClick={() => performCopyMove(null)}
+                                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-200 transition-colors rounded-xl group"
+                                >
+                                    <div className="p-2 bg-gray-100 dark:bg-slate-800 rounded-lg group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/40 text-gray-500 group-hover:text-indigo-600">
+                                        <HardDrive size={18} />
+                                    </div>
+                                    <span className="font-medium">Semua Dokumen (Root)</span>
+                                </button>
+
+                                {folders.filter(f => String(f.id) !== String(mgmtOp.item.id)).map(folder => (
+                                    <button
+                                        key={folder.id}
+                                        onClick={() => performCopyMove(folder.id)}
+                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 text-gray-700 dark:text-gray-200 transition-colors rounded-xl group"
+                                    >
+                                        <div className="p-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg group-hover:bg-amber-100 dark:group-hover:bg-amber-900/40 text-amber-500">
+                                            <FolderOpen size={18} fill="currentColor" className="opacity-70" />
+                                        </div>
+                                        <div className="text-left">
+                                            <span className="font-medium block">{folder.name}</span>
+                                            <span className="text-[10px] text-gray-400">ID: {folder.id}</span>
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Progress Indicator */}
+                        {isExecutingOp && (
+                            <div className="p-6 border-t border-gray-100 dark:border-slate-800 bg-gray-50/50 dark:bg-slate-900/50 rounded-b-2xl">
+                                <div className="flex justify-between text-sm mb-2">
+                                    <span className="text-indigo-600 font-bold animate-pulse">Memproses...</span>
+                                    <span className="text-gray-500">{opProgress}%</span>
+                                </div>
+                                <div className="w-full bg-gray-200 dark:bg-slate-800 rounded-full h-2 overflow-hidden">
+                                    <div
+                                        className="bg-indigo-600 h-full transition-all duration-300 ease-out shadow-[0_0_8px_rgba(79,70,229,0.5)]"
+                                        style={{ width: `${opProgress}%` }}
+                                    ></div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
