@@ -53,7 +53,8 @@ import {
   Printer,
   ArrowDownRight,
   ArrowUpRight,
-  Building2
+  Building2,
+  Menu
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import Login from './pages/Login';
@@ -1688,720 +1689,802 @@ export default function App() {
   );
 
   return (
-    <div className="h-screen flex flex-col">
-      <div className="min-h-screen bg-gray-50 dark:bg-slate-950 text-gray-900 dark:text-slate-200 font-sans transition-colors duration-300">
-        <div className="flex h-screen overflow-hidden">
+    <div className="h-screen flex flex-col bg-transparent text-gray-900 dark:text-gray-100 font-sans selection:bg-indigo-500 selection:text-white overflow-hidden">
+      <div className="flex h-screen overflow-hidden">
 
-          <aside className={`${isSidebarCollapsed ? 'w-20' : 'w-20 lg:w-64'} bg-white dark:bg-slate-900 border-r border-gray-200 dark:border-slate-800 flex flex-col transition-all duration-300 z-20 hidden md:flex`}>
-            <div className="p-6 flex items-center justify-between border-b border-gray-200 dark:border-slate-800/50">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 min-w-[32px] rounded-lg bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold shadow-lg shadow-indigo-500/20">A</div>
-                {!isSidebarCollapsed && <span className="text-xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-slate-400 bg-clip-text text-transparent truncate">ArchiveOS</span>}
-              </div>
-              <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className={`p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-slate-800 text-gray-400 transition-colors ${isSidebarCollapsed ? 'mx-auto mt-4' : ''}`}>
-                {isSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-              </button>
-            </div>
-
-            <nav className="flex-1 p-4 space-y-2">
-              {[
-                { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-                { id: 'inventory', icon: Grid3X3, label: 'Gudang' },
-                { id: 'documents', icon: ScanLine, label: 'Dokumen Digital' },
-                { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Pemeriksaan' },
-                { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
-                { id: 'master', icon: Settings, label: 'Master Data' },
-              ].filter(item => {
-                if (item.id === 'master') return hasPermission('master', 'view');
-                return true;
-              }).map(item => (
-                <button
-                  key={item.id}
-                  onClick={() => setActiveTab(item.id)}
-                  className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === item.id ? 'bg-indigo-50 dark:bg-indigo-600/10 text-indigo-600 dark:text-indigo-400 border border-indigo-200 dark:border-indigo-600/20' : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800'}`}
-                >
-                  <item.icon size={20} />
-                  {!isSidebarCollapsed && <span className="whitespace-nowrap">{item.label}</span>}
-                </button>
-              ))}
-            </nav>
-            <div className="p-4 border-t border-gray-200 dark:border-slate-800/50">
-              <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl text-gray-500 dark:text-slate-400 hover:bg-gray-100 dark:hover:bg-slate-800 mb-2`}>
-                {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-                {!isSidebarCollapsed && <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
-              </button>
-              <button onClick={handleLogout} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10`}>
-                <LogOut size={20} />
-                {!isSidebarCollapsed && <span>Keluar</span>}
-              </button>
-            </div>
-          </aside>
-
-          <main className="flex-1 overflow-y-auto relative md:static mt-16 md:mt-0 bg-gray-50 dark:bg-slate-950 transition-colors duration-300">
-            <div className="p-6 lg:p-10 max-w-7xl mx-auto">
-              <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <aside
+          className={`${isSidebarCollapsed ? 'w-20' : 'w-72'} 
+            bg-white/40 dark:bg-slate-900/60 backdrop-blur-xl border-r border-white/20 dark:border-white/10
+            transition-all duration-300 ease-in-out flex flex-col fixed md:relative z-30 h-full shadow-2xl
+            ${isSidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}
+          `}
+        >
+          <div className="p-6 flex items-center justify-between">
+            <div className={`flex items-center gap-3 ${isSidebarCollapsed ? 'justify-center w-full' : ''}`}>
+              <img src="/vite.svg" alt="Logo" className="w-10 h-10 drop-shadow-lg" />
+              {!isSidebarCollapsed && (
                 <div>
-                  <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
-                    {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' :
-                      activeTab === 'inventory' ? 'Manajemen Slot' :
-                        activeTab === 'documents' ? 'Dokumen Digital' :
-                          activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
-                            activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
-                              activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
+                  <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-white dark:to-slate-400">
+                    Archive OS
                   </h1>
-                  <p className="text-gray-500 dark:text-slate-400">
-                    {activeTab === 'dashboard' ? 'Gudang Arsip Utama • Lantai 1' :
-                      activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
-                        activeTab === 'documents' ? 'Secure Digital Storage' :
-                          activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
-                            activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
-                              activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
-                  </p>
+                  <p className="text-[10px] text-gray-500 dark:text-slate-400 font-bold tracking-widest mt-0.5">ENTERPRISE</p>
                 </div>
-              </div>
-
-
-
-              {activeTab === 'dashboard' && (
-                <Dashboard
-                  stats={stats}
-                  docList={docList}
-                  docStats={docStats}
-                  logs={logs}
-                  TOTAL_SLOTS={TOTAL_SLOTS}
-                  isDarkMode={isDarkMode}
-                  handleViewDoc={handleViewDoc}
-                />
               )}
-              {activeTab === 'inventory' && (
-                <Inventory
-                  inventory={inventory}
-                  stats={stats}
-                  TOTAL_SLOTS={TOTAL_SLOTS}
-                  getStatusStyle={getStatusStyle}
-                  handleSlotClick={handleSlotClick}
-                  handleExcelImport={handleExcelImport} // Note: handleExcelImport might need to be created if it was inline or missing? wait, checking
-                  downloadTemplate={downloadTemplate} // check if exists
-                  excelInputRef={excelInputRef}
-                  handleExportInventory={handleExportInventory}
-                  inventorySearchQuery={inventorySearchQuery}
-                  setInventorySearchQuery={setInventorySearchQuery}
-                  hasPermission={hasPermission}
-                  activeInvTab={activeInvTab}
-                  setActiveInvTab={setActiveInvTab}
-                  externalItems={externalItems}
-                  onRestoreExternal={(item) => {
-                    setSelectedExternalItem(item);
-                    setRestoreTargetSlot(''); // Reset selection
-                    setShowRestoreForm(true);
-                  }}
-                  onViewExternal={handleViewExternal}
-                />
-              )}
-              {activeTab === 'documents' && (
-                <Documents
-                  docList={docList}
-                  folders={folders}
-                  currentFolderId={currentFolderId}
-                  setCurrentFolderId={setCurrentFolderId}
-                  folderHistory={folderHistory}
-                  historyIndex={historyIndex}
-                  navigateFolder={navigateFolder}
-                  navigateBack={navigateBack}
-                  navigateForward={navigateForward}
-                  searchQuery={searchQuery}
-                  setSearchQuery={setSearchQuery}
-                  handleCreateFolder={handleCreateFolder}
-                  handleDeleteFolder={handleDeleteFolder}
-                  // handleRenameFolder removed, replaced by handleEditFolder passed below
-                  // handleRenameFolder={handleRenameFolder} 
-                  handleViewDoc={handleViewDoc}
-                  handleEditDoc={handleEditDoc}
-                  handleDeleteDoc={handleDeleteDoc}
-                  handleRenameDoc={handleRenameDoc}
-                  setUploadForm={setUploadForm}
-                  setModalTab={setModalTab}
-                  setIsModalOpen={setIsModalOpen}
-                  hasPermission={hasPermission}
-                  docStats={docStats}
-                  getSearchSnippet={getSearchSnippet}
-                  logs={logs}
-                  onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
-                  users={users}
-                  departments={departments}
-                  currentUser={currentUser}
-                  handleEditFolder={handleEditFolder}
-                />
-              )}
-              {activeTab === 'tax-monitoring' && (
-                <TaxMonitoring
-                  taxAudits={taxAudits}
-                  onRefresh={fetchTaxAudits}
-                  hasPermission={hasPermission}
-                  currentUser={currentUser}
-                />
-              )}
-              {activeTab === 'tax-summary' && (
-                <TaxSummary
-                  taxSummaries={taxSummaries}
-                  hasPermission={hasPermission}
-                  setTaxForm={setTaxForm}
-                  setModalTab={setModalTab}
-                  setIsModalOpen={setIsModalOpen}
-                  config={taxConfig}
-                  saveConfig={saveTaxConfig}
-                  handleDeleteRecord={handleDeleteTaxRecord}
-                  handleRenameTaxType={handleRenameTaxType}
-                />
-              )}
-              {activeTab === 'master' && (
-                <MasterData
-                  masterTab={masterTab}
-                  setMasterTab={setMasterTab}
-                  users={users}
-                  roles={roles}
-                  departments={departments}
-                  userSearchQuery={userSearchQuery}
-                  setUserSearchQuery={setUserSearchQuery}
-                  handleDeleteUser={handleDeleteUser}
-                  handleCreateUser={handleCreateUser}
-                  handleEditUser={handleEditUser}
-                  handleEditRole={handleEditRole}
-                  handleDeleteRole={handleDeleteRole}
-                  handleCreateRole={handleCreateRole}
-                  handleCreateDept={handleCreateDept}
-                  handleEditDept={handleEditDept}
-                  handleDeleteDept={handleDeleteDept}
-                  setIsModalOpen={setIsModalOpen}
-                  setModalTab={setModalTab}
-                  setRoles={setRoles}
-                  setDepartments={setDepartments}
-                  hasPermission={hasPermission}
-                />
-              )}
-
             </div>
-          </main>
+            <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="hidden md:block p-1.5 rounded-lg hover:bg-white/30 dark:hover:bg-slate-800/30 text-gray-400 transition-colors">
+              {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+            </button>
+          </div>
+
+          <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto">
+            {[
+              { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+              { id: 'inventory', icon: Grid3X3, label: 'Gudang' },
+              { id: 'documents', icon: ScanLine, label: 'Dokumen Digital' },
+              { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Pemeriksaan' },
+              { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
+              { id: 'master', icon: Settings, label: 'Master Data' },
+            ].filter(item => {
+              if (item.id === 'master') return hasPermission('master', 'view');
+              return true;
+            }).map(item => (
+              <button
+                key={item.id}
+                onClick={() => {
+                  setActiveTab(item.id);
+                  if (window.innerWidth < 768) setIsSidebarCollapsed(true);
+                }}
+                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-2xl transition-all duration-300 relative group
+                  ${activeTab === item.id
+                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/20 font-bold'
+                    : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-slate-800/50'
+                  }`}
+              >
+                <item.icon size={20} className={activeTab === item.id ? 'stroke-[2.5px]' : ''} />
+                {!isSidebarCollapsed && <span className="whitespace-nowrap tracking-wide text-sm">{item.label}</span>}
+
+                {isSidebarCollapsed && (
+                  <div className="absolute left-full ml-4 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none uppercase tracking-tighter shadow-xl">
+                    {item.label}
+                  </div>
+                )}
+              </button>
+            ))}
+          </nav>
+          <div className="p-4 mx-4 mb-6 rounded-2xl bg-white/20 dark:bg-slate-800/20 border border-white/20 dark:border-white/5 backdrop-blur-sm">
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 p-2.5 rounded-xl text-gray-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors`}>
+              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
+              {!isSidebarCollapsed && <span className="text-sm font-medium">{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
+            </button>
+            <button onClick={handleLogout} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 p-2.5 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors mt-1`}>
+              <LogOut size={20} />
+              {!isSidebarCollapsed && <span className="text-sm font-medium">Logout</span>}
+            </button>
+          </div>
+        </aside>
+
+        {/* MOBILE OVERLAY */}
+        {!isSidebarCollapsed && (
+          <div
+            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-20 md:hidden animate-in fade-in duration-300"
+            onClick={() => setIsSidebarCollapsed(true)}
+          />
+        )}
+
+        {/* MOBILE HEADER */}
+        <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-white/10 flex items-center justify-between px-6 z-20">
+          <div className="flex items-center gap-2">
+            <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
+            <span className="font-bold text-lg dark:text-white tracking-tight">Archive OS</span>
+          </div>
+          <button onClick={() => setIsSidebarCollapsed(false)} className="p-2 text-gray-500 dark:text-white">
+            <Menu size={24} />
+          </button>
         </div>
 
-        {/* MODAL SYSTEM */}
-        {/* Restore Modal Overlay - Moved to Top Level */}
-        {showRestoreForm && (
-          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
-            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-2xl w-full max-w-sm border border-indigo-200 dark:border-indigo-900">
-              <h3 className="text-lg font-bold mb-4 dark:text-white">Kembalikan ke Gudang Internal</h3>
-              <p className="text-sm text-gray-500 mb-4">Pilih slot kosong untuk menyimpan kembali Box <b>{selectedExternalItem?.boxId}</b>:</p>
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs font-bold text-gray-700 dark:text-gray-300">Pilih Slot Kosong:</label>
-                  <select
-                    className="w-full border rounded p-2 dark:bg-slate-800 dark:text-white text-sm"
-                    value={restoreTargetSlot}
-                    onChange={(e) => setRestoreTargetSlot(e.target.value)}
-                  >
-                    <option value="">-- Pilih Slot --</option>
-                    {inventory.filter(s => s.status === 'EMPTY').map(s => (
-                      <option key={s.id} value={s.id}>Slot #{s.id}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex gap-2 justify-end mt-4">
-                  <button onClick={() => setShowRestoreForm(false)} className="px-3 py-2 text-gray-500 hover:bg-gray-100 rounded text-sm">Batal</button>
-                  <button
-                    onClick={handleRestoreExternal}
-                    disabled={!restoreTargetSlot}
-                    className={`px-3 py-2 text-white rounded text-sm ${!restoreTargetSlot ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                  >
-                    Konfirmasi Masuk Gudang
-                  </button>
-                </div>
+        <main className="flex-1 overflow-y-auto relative bg-transparent pt-16 md:pt-0 scroll-smooth">
+          <div className="p-6 lg:p-10 max-w-7xl mx-auto">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+              <div>
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
+                  {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' :
+                    activeTab === 'inventory' ? 'Manajemen Slot' :
+                      activeTab === 'documents' ? 'Dokumen Digital' :
+                        activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
+                          activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
+                            activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
+                </h1>
+                <p className="text-gray-500 dark:text-slate-400">
+                  {activeTab === 'dashboard' ? 'Gudang Arsip Utama • Lantai 1' :
+                    activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
+                      activeTab === 'documents' ? 'Secure Digital Storage' :
+                        activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
+                          activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
+                            activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
+                </p>
               </div>
+            </div>
+
+
+
+            {activeTab === 'dashboard' && (
+              <Dashboard
+                stats={stats}
+                docList={docList}
+                docStats={docStats}
+                logs={logs}
+                TOTAL_SLOTS={TOTAL_SLOTS}
+                isDarkMode={isDarkMode}
+                handleViewDoc={handleViewDoc}
+              />
+            )}
+            {activeTab === 'inventory' && (
+              <Inventory
+                inventory={inventory}
+                stats={stats}
+                TOTAL_SLOTS={TOTAL_SLOTS}
+                getStatusStyle={getStatusStyle}
+                handleSlotClick={handleSlotClick}
+                handleExcelImport={handleExcelImport} // Note: handleExcelImport might need to be created if it was inline or missing? wait, checking
+                downloadTemplate={downloadTemplate} // check if exists
+                excelInputRef={excelInputRef}
+                handleExportInventory={handleExportInventory}
+                inventorySearchQuery={inventorySearchQuery}
+                setInventorySearchQuery={setInventorySearchQuery}
+                hasPermission={hasPermission}
+                activeInvTab={activeInvTab}
+                setActiveInvTab={setActiveInvTab}
+                externalItems={externalItems}
+                onRestoreExternal={(item) => {
+                  setSelectedExternalItem(item);
+                  setRestoreTargetSlot(''); // Reset selection
+                  setShowRestoreForm(true);
+                }}
+                onViewExternal={handleViewExternal}
+              />
+            )}
+            {activeTab === 'documents' && (
+              <Documents
+                docList={docList}
+                folders={folders}
+                currentFolderId={currentFolderId}
+                setCurrentFolderId={setCurrentFolderId}
+                folderHistory={folderHistory}
+                historyIndex={historyIndex}
+                navigateFolder={navigateFolder}
+                navigateBack={navigateBack}
+                navigateForward={navigateForward}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                handleCreateFolder={handleCreateFolder}
+                handleDeleteFolder={handleDeleteFolder}
+                // handleRenameFolder removed, replaced by handleEditFolder passed below
+                // handleRenameFolder={handleRenameFolder} 
+                handleViewDoc={handleViewDoc}
+                handleEditDoc={handleEditDoc}
+                handleDeleteDoc={handleDeleteDoc}
+                handleRenameDoc={handleRenameDoc}
+                setUploadForm={setUploadForm}
+                setModalTab={setModalTab}
+                setIsModalOpen={setIsModalOpen}
+                hasPermission={hasPermission}
+                docStats={docStats}
+                getSearchSnippet={getSearchSnippet}
+                logs={logs}
+                onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
+                users={users}
+                departments={departments}
+                currentUser={currentUser}
+                handleEditFolder={handleEditFolder}
+              />
+            )}
+            {activeTab === 'tax-monitoring' && (
+              <TaxMonitoring
+                taxAudits={taxAudits}
+                onRefresh={fetchTaxAudits}
+                hasPermission={hasPermission}
+                currentUser={currentUser}
+              />
+            )}
+            {activeTab === 'tax-summary' && (
+              <TaxSummary
+                taxSummaries={taxSummaries}
+                hasPermission={hasPermission}
+                setTaxForm={setTaxForm}
+                setModalTab={setModalTab}
+                setIsModalOpen={setIsModalOpen}
+                config={taxConfig}
+                saveConfig={saveTaxConfig}
+                handleDeleteRecord={handleDeleteTaxRecord}
+                handleRenameTaxType={handleRenameTaxType}
+              />
+            )}
+            {activeTab === 'master' && (
+              <MasterData
+                masterTab={masterTab}
+                setMasterTab={setMasterTab}
+                users={users}
+                roles={roles}
+                departments={departments}
+                userSearchQuery={userSearchQuery}
+                setUserSearchQuery={setUserSearchQuery}
+                handleDeleteUser={handleDeleteUser}
+                handleCreateUser={handleCreateUser}
+                handleEditUser={handleEditUser}
+                handleEditRole={handleEditRole}
+                handleDeleteRole={handleDeleteRole}
+                handleCreateRole={handleCreateRole}
+                handleCreateDept={handleCreateDept}
+                handleEditDept={handleEditDept}
+                handleDeleteDept={handleDeleteDept}
+                setIsModalOpen={setIsModalOpen}
+                setModalTab={setModalTab}
+                setRoles={setRoles}
+                setDepartments={setDepartments}
+                hasPermission={hasPermission}
+              />
+            )}
+
+          </div>
+        </main>
+      </div>
+
+      {/* MODAL SYSTEM */}
+      {/* Restore Modal Overlay - Moved to Top Level */}
+      {showRestoreForm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in">
+          <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl p-6 rounded-3xl shadow-3xl w-full max-w-sm border border-white/40 dark:border-white/10 ring-1 ring-black/5">
+            <h3 className="text-lg font-bold mb-4 dark:text-white">Kembalikan ke Gudang Internal</h3>
+            <p className="text-sm text-gray-500 mb-4">Pilih slot kosong untuk menyimpan kembali Box <b>{selectedExternalItem?.boxId}</b>:</p>
+            <div className="space-y-3">
+              <div>
+                <label className="text-xs font-bold text-gray-700 dark:text-gray-300">Pilih Slot Kosong:</label>
+                <select
+                  className="w-full border rounded p-2 dark:bg-slate-800 dark:text-white text-sm"
+                  value={restoreTargetSlot}
+                  onChange={(e) => setRestoreTargetSlot(e.target.value)}
+                >
+                  <option value="">-- Pilih Slot --</option>
+                  {inventory.filter(s => s.status === 'EMPTY').map(s => (
+                    <option key={s.id} value={s.id}>Slot #{s.id}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex gap-2 justify-end mt-4">
+                <button onClick={() => setShowRestoreForm(false)} className="px-3 py-2 text-gray-500 hover:bg-gray-100 rounded text-sm">Batal</button>
+                <button
+                  onClick={handleRestoreExternal}
+                  disabled={!restoreTargetSlot}
+                  className={`px-3 py-2 text-white rounded text-sm ${!restoreTargetSlot ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                >
+                  Konfirmasi Masuk Gudang
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={
+          activeTab === 'master'
+            ? (modalTab === 'user-create' ? 'Manajemen User'
+              : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
+                : modalTab === 'dept-form' ? 'Manajemen Departemen'
+                  : 'Master Data')
+            : modalTab === 'tax-form' ? 'Input Data Pajak'
+              : modalTab === 'tax-form-pph' ? 'Input Data PPh'
+                : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
+                  : activeTab === 'documents'
+                    ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
+                    : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
+        }
+      >
+        {activeTab === 'documents' && modalTab === 'upload' && (
+          <div className="space-y-6">
+            {uploadForm.isProcessing ? (
+              <div className="text-center py-12">
+                <div className="relative mx-auto mb-4 w-16 h-16">
+                  <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
+                </div>
+                <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
+                <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
+                  onClick={() => fileInputRef.current.click()}
+                >
+                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                  <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
+                  <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
+                  <input
+                    value={uploadForm.title}
+                    onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  />
+                </div>
+                <div className="flex justify-end gap-3 pt-4">
+                  <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
+          <div className="space-y-6">
+            <div className="flex gap-4">
+              <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
+                {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
+                <div className="flex gap-4 text-sm text-gray-500 mt-2">
+                  <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
+                  <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
+                  <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
+                </div>
+                <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
+              </div>
+            </div>
+            <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
+              <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
             </div>
           </div>
         )}
 
-        <Modal
-          isOpen={isModalOpen}
-          onClose={() => setIsModalOpen(false)}
-          title={
-            activeTab === 'master'
-              ? (modalTab === 'user-create' ? 'Manajemen User'
-                : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
-                  : modalTab === 'dept-form' ? 'Manajemen Departemen'
-                    : 'Master Data')
-              : modalTab === 'tax-form' ? 'Input Data Pajak'
-                : modalTab === 'tax-form-pph' ? 'Input Data PPh'
-                  : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
-                    : activeTab === 'documents'
-                      ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
-                      : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
-          }
-        >
-          {activeTab === 'documents' && modalTab === 'upload' && (
-            <div className="space-y-6">
-              {uploadForm.isProcessing ? (
-                <div className="text-center py-12">
-                  <div className="relative mx-auto mb-4 w-16 h-16">
-                    <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                    <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
-                  </div>
-                  <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
-                  <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
-                </div>
-              ) : (
-                <>
-                  <div
-                    className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
-                    onClick={() => fileInputRef.current.click()}
-                  >
-                    <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-                    <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
-                    <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
-                    <input
-                      value={uploadForm.title}
-                      onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    />
-                  </div>
-                  <div className="flex justify-end gap-3 pt-4">
-                    <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-
-          {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
-            <div className="space-y-6">
-              <div className="flex gap-4">
-                <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
-                  {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
-                </div>
-                <div className="flex-1">
-                  <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
-                  <div className="flex gap-4 text-sm text-gray-500 mt-2">
-                    <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
-                    <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
-                    <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
-                  </div>
-                  <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
-                </div>
+        {activeTab === 'inventory' && (
+          <div className="space-y-6">
+            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
+              <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+                <Package size={16} /> {selectedSlotId ? `Slot #${selectedSlotId}` : 'External Item'}
+                <ChevronRight size={14} />
+                <input
+                  type="text"
+                  value={boxForm.boxId}
+                  onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
+                  className="font-bold text-gray-900 dark:text-white bg-transparent border-b border-gray-300 dark:border-slate-700 focus:outline-none focus:border-indigo-500 w-full"
+                  placeholder="Ketik Nama Kardus..."
+                />
               </div>
-              <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-                <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
-                <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
+
+              <div className="flex border-b border-gray-200 dark:border-slate-800 mb-4">
+                <button onClick={() => setModalTab('details')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'details' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Isi Kardus</button>
+                <button onClick={() => setModalTab('history')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'history' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Riwayat Mutasi (Flow Trail)</button>
               </div>
-            </div>
-          )}
 
-          {activeTab === 'inventory' && (
-            <div className="space-y-6">
-              <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
-                <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-                  <Package size={16} /> {selectedSlotId ? `Slot #${selectedSlotId}` : 'External Item'}
-                  <ChevronRight size={14} />
-                  <input
-                    type="text"
-                    value={boxForm.boxId}
-                    onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
-                    className="font-bold text-gray-900 dark:text-white bg-transparent border-b border-gray-300 dark:border-slate-700 focus:outline-none focus:border-indigo-500 w-full"
-                    placeholder="Ketik Nama Kardus..."
-                  />
-                </div>
-
-                <div className="flex border-b border-gray-200 dark:border-slate-800 mb-4">
-                  <button onClick={() => setModalTab('details')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'details' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Isi Kardus</button>
-                  <button onClick={() => setModalTab('history')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'history' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Riwayat Mutasi (Flow Trail)</button>
-                </div>
-
-                {modalTab === 'details' && (
-                  <div className="space-y-4">
-                    {/* Input Area - Changes based on edit mode */}
-                    {hasPermission('inventory', 'edit') && (
-                      <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
-                        <div className="flex-1">
-                          <label className="text-xs text-gray-500 ml-1">No Ordner</label>
-                          <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
-                        </div>
-                        <div className="flex-1">
-                          <label className="text-xs text-gray-500 ml-1">Periode</label>
-                          <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
-                        </div>
-                        <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-                          {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
-                        </button>
+              {modalTab === 'details' && (
+                <div className="space-y-4">
+                  {/* Input Area - Changes based on edit mode */}
+                  {hasPermission('inventory', 'edit') && (
+                    <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-500 ml-1">No Ordner</label>
+                        <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
                       </div>
-                    )}
+                      <div className="flex-1">
+                        <label className="text-xs text-gray-500 ml-1">Periode</label>
+                        <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
+                      </div>
+                      <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                        {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
+                      </button>
+                    </div>
+                  )}
 
-                    <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                      {boxForm.ordners.map(ord => (
-                        <div key={ord.id} className="border border-gray-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800/50">
-                          <div className="flex justify-between items-center cursor-pointer" onClick={() => setActiveOrdnerId(activeOrdnerId === ord.id ? null : ord.id)}>
-                            <div className="flex items-center gap-2">
-                              <FolderOpen size={18} className="text-amber-500" />
-                              <div>
-                                <span className="font-bold dark:text-white text-sm">{ord.noOrdner}</span>
-                                <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500 ml-2">{ord.period}</span>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              {hasPermission('inventory', 'edit') && (
-                                <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
-                              )}
-                              {hasPermission('inventory', 'delete') && (
-                                <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
-                              )}
-                              <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
+                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                    {boxForm.ordners.map(ord => (
+                      <div key={ord.id} className="border border-gray-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800/50">
+                        <div className="flex justify-between items-center cursor-pointer" onClick={() => setActiveOrdnerId(activeOrdnerId === ord.id ? null : ord.id)}>
+                          <div className="flex items-center gap-2">
+                            <FolderOpen size={18} className="text-amber-500" />
+                            <div>
+                              <span className="font-bold dark:text-white text-sm">{ord.noOrdner}</span>
+                              <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500 ml-2">{ord.period}</span>
                             </div>
                           </div>
+                          <div className="flex items-center gap-1">
+                            {hasPermission('inventory', 'edit') && (
+                              <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
+                            )}
+                            {hasPermission('inventory', 'delete') && (
+                              <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
+                            )}
+                            <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
+                          </div>
+                        </div>
 
-                          {/* Nested Invoice */}
-                          {activeOrdnerId === ord.id && (
-                            <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
-                              {hasPermission('inventory', 'edit') && (
-                                <>
-                                  <div className="flex gap-2 items-center mb-2 flex-wrap">
-                                    <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                    <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                    <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
-                                    <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
-                                      {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
-                                    </button>
-                                  </div>
-                                </>
-                              )}
-                              {ord.invoices.map(inv => (
-                                <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
-                                  <div className="flex items-center gap-2">
-                                    <FileText size={12} />
-                                    <span className="font-mono font-medium">{inv.invoiceNo}</span>
-                                    <span className="text-gray-300">|</span>
-                                    <span>{inv.vendor}</span>
-                                    {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
-                                  </div>
-                                  <div className="flex gap-1">
-                                    {hasPermission('inventory', 'edit') && (
-                                      <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
-                                    )}
-                                    {hasPermission('inventory', 'delete') && (
-                                      <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
-                                    )}
-                                  </div>
+                        {/* Nested Invoice */}
+                        {activeOrdnerId === ord.id && (
+                          <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
+                            {hasPermission('inventory', 'edit') && (
+                              <>
+                                <div className="flex gap-2 items-center mb-2 flex-wrap">
+                                  <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                  <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                                  <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
+                                  <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+                                    {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
+                                  </button>
                                 </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {modalTab === 'history' && (
-                  <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
-                    {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
-                      <div key={idx} className="relative">
-                        <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
-                        <div className="text-sm">
-                          <span className={`font-bold ${hist.action === 'REMOVED' ? 'text-red-500' : hist.action === 'MOVED' ? 'text-blue-500' : hist.action === 'IMPORTED' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{hist.action}</span>
-                          <span className="text-xs text-gray-500 ml-2">{new Date(hist.timestamp).toLocaleString()}</span>
-                        </div>
-                        <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{hist.note}</p>
-                        <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
+                              </>
+                            )}
+                            {ord.invoices.map(inv => (
+                              <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
+                                <div className="flex items-center gap-2">
+                                  <FileText size={12} />
+                                  <span className="font-mono font-medium">{inv.invoiceNo}</span>
+                                  <span className="text-gray-300">|</span>
+                                  <span>{inv.vendor}</span>
+                                  {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
+                                </div>
+                                <div className="flex gap-1">
+                                  {hasPermission('inventory', 'edit') && (
+                                    <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
+                                  )}
+                                  {hasPermission('inventory', 'delete') && (
+                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
-                    {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
                   </div>
+                </div>
+              )}
+
+              {modalTab === 'history' && (
+                <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
+                  {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
+                    <div key={idx} className="relative">
+                      <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
+                      <div className="text-sm">
+                        <span className={`font-bold ${hist.action === 'REMOVED' ? 'text-red-500' : hist.action === 'MOVED' ? 'text-blue-500' : hist.action === 'IMPORTED' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{hist.action}</span>
+                        <span className="text-xs text-gray-500 ml-2">{new Date(hist.timestamp).toLocaleString()}</span>
+                      </div>
+                      <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{hist.note}</p>
+                      <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
+                    </div>
+                  ))}
+                  {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
+                </div>
+              )}
+            </div>
+
+            {/* FOOTER ACTIONS */}
+            <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
+              {/* Row 1: Save & Primary Actions */}
+              <div className="flex justify-end gap-2">
+                {selectedSlotId && hasPermission('inventory', 'edit') && (
+                  <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
+                    <ArrowLeftRight size={16} /> Pindah Slot
+                  </button>
+                )}
+                <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
+                  <Printer size={16} /> Cetak Label
+                </button>
+                {selectedSlotId && hasPermission('inventory', 'edit') && (
+                  <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
+                    <CheckCircle2 size={16} /> Simpan Data
+                  </button>
                 )}
               </div>
 
-              {/* FOOTER ACTIONS */}
-              <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
-                {/* Row 1: Save & Primary Actions */}
-                <div className="flex justify-end gap-2">
-                  {selectedSlotId && hasPermission('inventory', 'edit') && (
-                    <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
-                      <ArrowLeftRight size={16} /> Pindah Slot
-                    </button>
+              {/* Row 2: Move Input (Conditional) */}
+              {showMoveInput && (
+                <div className="flex gap-2 items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
+                  <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Pindah ke Slot:</span>
+                  <input
+                    type="number"
+                    placeholder="No. Slot (1-100)"
+                    value={moveTargetSlot}
+                    onChange={(e) => setMoveTargetSlot(e.target.value)}
+                    className="w-32 px-2 py-1 text-sm border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                  />
+                  <button onClick={handleMoveBox} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Konfirmasi Pindah</button>
+                </div>
+              )}
+
+              {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
+              {selectedSlotId && inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
+                  {hasPermission('inventory', 'edit') && (
+                    <>
+                      {(inventory[selectedSlotId - 1]?.status === 'BORROWED' || inventory[selectedSlotId - 1]?.status === 'AUDIT') ? (
+                        <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
+                          <CheckCircle2 size={14} /> Kembalikan (Return)
+                        </button>
+                      ) : (
+                        <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
+                          <Clock size={14} /> Set Dipinjam
+                        </button>
+                      )}
+                      <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
+                        <AlertCircle size={14} /> Set Audit
+                      </button>
+                      <button onClick={() => {
+                        setShowExternalForm(true);
+                        setExternalDate(new Date().toISOString().split('T')[0]);
+                      }} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
+                        <Truck size={14} /> Kirim ke Indoarsip
+                      </button>
+                    </>
                   )}
-                  <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
-                    <Printer size={16} /> Cetak Label
-                  </button>
-                  {selectedSlotId && hasPermission('inventory', 'edit') && (
-                    <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
-                      <CheckCircle2 size={16} /> Simpan Data
+                  {hasPermission('inventory', 'delete') && (
+                    <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
+                      <LogOut size={14} /> Hapus / Kosongkan
                     </button>
                   )}
                 </div>
+              )}
 
-                {/* Row 2: Move Input (Conditional) */}
-                {showMoveInput && (
-                  <div className="flex gap-2 items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
-                    <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Pindah ke Slot:</span>
-                    <input
-                      type="number"
-                      placeholder="No. Slot (1-100)"
-                      value={moveTargetSlot}
-                      onChange={(e) => setMoveTargetSlot(e.target.value)}
-                      className="w-32 px-2 py-1 text-sm border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
-                    />
-                    <button onClick={handleMoveBox} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Konfirmasi Pindah</button>
-                  </div>
-                )}
+              {/* Date Picker for External Transfer */}
+              {showExternalForm && (
+                <div className="flex gap-2 items-center bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
+                  <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Tanggal Kirim:</span>
+                  <input
+                    type="date"
+                    value={externalDate}
+                    onChange={(e) => setExternalDate(e.target.value)}
+                    className="text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                  />
+                  <button
+                    onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
+                    className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
+                  >
+                    Kirim
+                  </button>
+                  <button
+                    onClick={() => setShowExternalForm(false)}
+                    className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-slate-400 text-xs"
+                  >
+                    Batal
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
-                {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
-                {selectedSlotId && inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
-                  <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
-                    {hasPermission('inventory', 'edit') && (
-                      <>
-                        {(inventory[selectedSlotId - 1]?.status === 'BORROWED' || inventory[selectedSlotId - 1]?.status === 'AUDIT') ? (
-                          <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
-                            <CheckCircle2 size={14} /> Kembalikan (Return)
-                          </button>
-                        ) : (
-                          <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
-                            <Clock size={14} /> Set Dipinjam
-                          </button>
-                        )}
-                        <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
-                          <AlertCircle size={14} /> Set Audit
-                        </button>
-                        <button onClick={() => {
-                          setShowExternalForm(true);
-                          setExternalDate(new Date().toISOString().split('T')[0]);
-                        }} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
-                          <Truck size={14} /> Kirim ke Indoarsip
-                        </button>
-                      </>
-                    )}
-                    {hasPermission('inventory', 'delete') && (
-                      <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
-                        <LogOut size={14} /> Hapus / Kosongkan
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Date Picker for External Transfer */}
-                {showExternalForm && (
-                  <div className="flex gap-2 items-center bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
-                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Tanggal Kirim:</span>
-                    <input
-                      type="date"
-                      value={externalDate}
-                      onChange={(e) => setExternalDate(e.target.value)}
-                      className="text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
-                    />
-                    <button
-                      onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
-                      className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
+        {/* MASTER DATA MODALS */}
+        {activeTab === 'master' && (
+          <>
+            {modalTab === 'user-create' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Username</label>
+                  <input
+                    value={userForm.username}
+                    onChange={e => setUserForm({ ...userForm, username: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    placeholder="Username untuk login"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Password</label>
+                  <input
+                    type="password"
+                    value={userForm.password}
+                    onChange={e => setUserForm({ ...userForm, password: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    placeholder={userForm.id ? "Kosongkan jika tidak ingin mengubah" : "Password login"}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Nama Lengkap</label>
+                  <input
+                    value={userForm.name}
+                    onChange={e => setUserForm({ ...userForm, name: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Role</label>
+                    <select
+                      value={userForm.role}
+                      onChange={e => setUserForm({ ...userForm, role: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                     >
-                      Kirim
-                    </button>
-                    <button
-                      onClick={() => setShowExternalForm(false)}
-                      className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-slate-400 text-xs"
-                    >
-                      Batal
-                    </button>
+                      {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                    </select>
                   </div>
-                )}
+                  <div>
+                    <label className="block text-sm font-medium mb-1 dark:text-white">Departemen</label>
+                    <select
+                      value={userForm.department}
+                      onChange={e => setUserForm({ ...userForm, department: e.target.value })}
+                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    >
+                      <option value="">- Pilih Dept -</option>
+                      {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="flex justify-end pt-4">
+                  <button onClick={handleSaveUser} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan User</button>
+                </div>
+              </div>
+            )}
+
+            {modalTab === 'dept-form' && (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Nama Departemen</label>
+                  <input
+                    value={deptForm.name}
+                    onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    placeholder="Contoh: Finance"
+                  />
+                </div>
+                <div className="flex justify-end pt-4">
+                  <button onClick={handleSaveDept} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Departemen</button>
+                </div>
+              </div>
+            )}
+
+            {(modalTab === 'role-create' || modalTab === 'role-edit') && (
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Nama Role</label>
+                  <input
+                    value={roleForm.name}
+                    onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  />
+                </div>
+                <div className="border rounded-xl overflow-hidden border-gray-200 dark:border-slate-700">
+                  <table className="w-full text-sm">
+                    <thead className="bg-gray-50 dark:bg-slate-800">
+                      <tr>
+                        <th className="px-4 py-2 text-left dark:text-white">Modul</th>
+                        <th className="px-4 py-2 text-center dark:text-white">View</th>
+                        <th className="px-4 py-2 text-center dark:text-white">Create</th>
+                        <th className="px-4 py-2 text-center dark:text-white">Edit</th>
+                        <th className="px-4 py-2 text-center dark:text-white">Delete</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
+                      {Object.values(APP_MODULES).map(mod => (
+                        <tr key={mod.id} className="dark:bg-slate-900">
+                          <td className="px-4 py-3 font-medium dark:text-white">{mod.label}</td>
+                          {['view', 'create', 'edit', 'delete'].map(action => (
+                            <td key={action} className="text-center">
+                              <input
+                                type="checkbox"
+                                checked={roleForm.permissions[mod.id]?.includes(action) || false}
+                                onChange={() => handleTogglePermission(mod.id, action)}
+                                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                              />
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="flex justify-end pt-4">
+                  <button onClick={handleSaveRole} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Role</button>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {/* TAX FORM MODAL */}
+        {(modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
+          <div className="space-y-6">
+            <div className="grid grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-1 dark:text-white">Bulan</label>
+                <select
+                  value={taxForm.month}
+                  onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
+                  className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                >
+                  <option value="">- Pilih Bulan -</option>
+                  {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 dark:text-white">Tahun</label>
+                <input
+                  type="number"
+                  value={taxForm.year}
+                  onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
+                  className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1 dark:text-white">Pembetulan Ke-</label>
+                <input
+                  type="number"
+                  min="0"
+                  value={taxForm.pembetulan || 0}
+                  onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
+                  className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                />
               </div>
             </div>
-          )}
 
-          {/* MASTER DATA MODALS */}
-          {activeTab === 'master' && (
-            <>
-              {modalTab === 'user-create' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Username</label>
-                    <input
-                      value={userForm.username}
-                      onChange={e => setUserForm({ ...userForm, username: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      placeholder="Username untuk login"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Password</label>
-                    <input
-                      type="password"
-                      value={userForm.password}
-                      onChange={e => setUserForm({ ...userForm, password: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      placeholder={userForm.id ? "Kosongkan jika tidak ingin mengubah" : "Password login"}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Nama Lengkap</label>
-                    <input
-                      value={userForm.name}
-                      onChange={e => setUserForm({ ...userForm, name: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-1 dark:text-white">Role</label>
-                      <select
-                        value={userForm.role}
-                        onChange={e => setUserForm({ ...userForm, role: e.target.value })}
-                        className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      >
-                        {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-                      </select>
+            {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
+              <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+                <div className="flex justify-between items-center mb-3">
+                  <h4 className="font-bold dark:text-white flex items-center gap-2"><Percent size={16} className="text-indigo-500" /> PPh (Pajak Penghasilan)</h4>
+                  <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-medium px-2 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                    <Plus size={12} /> Tambah Field
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  {Object.keys(taxForm.data?.pph || {}).map(key => (
+                    <div key={key}>
+                      <div className="flex justify-between items-center mb-1">
+                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                        <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                      </div>
+                      <input
+                        type="text"
+                        value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
+                        onChange={e => {
+                          const val = e.target.value.replace(/[^\d]/g, '');
+                          setTaxForm({
+                            ...taxForm,
+                            data: {
+                              ...taxForm.data,
+                              pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
+                            }
+                          })
+                        }}
+                        className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                        placeholder="0"
+                      />
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-1 dark:text-white">Departemen</label>
-                      <select
-                        value={userForm.department}
-                        onChange={e => setUserForm({ ...userForm, department: e.target.value })}
-                        className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      >
-                        <option value="">- Pilih Dept -</option>
-                        {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                      </select>
-                    </div>
-                  </div>
-                  <div className="flex justify-end pt-4">
-                    <button onClick={handleSaveUser} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan User</button>
-                  </div>
-                </div>
-              )}
-
-              {modalTab === 'dept-form' && (
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Nama Departemen</label>
-                    <input
-                      value={deptForm.name}
-                      onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      placeholder="Contoh: Finance"
-                    />
-                  </div>
-                  <div className="flex justify-end pt-4">
-                    <button onClick={handleSaveDept} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Departemen</button>
-                  </div>
-                </div>
-              )}
-
-              {(modalTab === 'role-create' || modalTab === 'role-edit') && (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Nama Role</label>
-                    <input
-                      value={roleForm.name}
-                      onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    />
-                  </div>
-                  <div className="border rounded-xl overflow-hidden border-gray-200 dark:border-slate-700">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50 dark:bg-slate-800">
-                        <tr>
-                          <th className="px-4 py-2 text-left dark:text-white">Modul</th>
-                          <th className="px-4 py-2 text-center dark:text-white">View</th>
-                          <th className="px-4 py-2 text-center dark:text-white">Create</th>
-                          <th className="px-4 py-2 text-center dark:text-white">Edit</th>
-                          <th className="px-4 py-2 text-center dark:text-white">Delete</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
-                        {Object.values(APP_MODULES).map(mod => (
-                          <tr key={mod.id} className="dark:bg-slate-900">
-                            <td className="px-4 py-3 font-medium dark:text-white">{mod.label}</td>
-                            {['view', 'create', 'edit', 'delete'].map(action => (
-                              <td key={action} className="text-center">
-                                <input
-                                  type="checkbox"
-                                  checked={roleForm.permissions[mod.id]?.includes(action) || false}
-                                  onChange={() => handleTogglePermission(mod.id, action)}
-                                  className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                                />
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="flex justify-end pt-4">
-                    <button onClick={handleSaveRole} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Role</button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-
-          {/* TAX FORM MODAL */}
-          {(modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
-            <div className="space-y-6">
-              <div className="grid grid-cols-3 gap-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Bulan</label>
-                  <select
-                    value={taxForm.month}
-                    onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
-                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  >
-                    <option value="">- Pilih Bulan -</option>
-                    {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Tahun</label>
-                  <input
-                    type="number"
-                    value={taxForm.year}
-                    onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
-                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Pembetulan Ke-</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={taxForm.pembetulan || 0}
-                    onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
-                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  />
+                  ))}
                 </div>
               </div>
+            )}
 
-              {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
+            {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
+              <>
                 <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
                   <div className="flex justify-between items-center mb-3">
-                    <h4 className="font-bold dark:text-white flex items-center gap-2"><Percent size={16} className="text-indigo-500" /> PPh (Pajak Penghasilan)</h4>
-                    <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-medium px-2 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                    <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowDownRight size={16} className="text-emerald-500" /> PPN Masukan (Input)</h4>
+                    <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="text-xs flex items-center gap-1 text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 font-medium px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
                       <Plus size={12} /> Tambah Field
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    {Object.keys(taxForm.data?.pph || {}).map(key => (
+                    {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
                       <div key={key}>
                         <div className="flex justify-between items-center mb-1">
                           <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
                         </div>
                         <input
                           type="text"
-                          value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
+                          value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
                           onChange={e => {
                             const val = e.target.value.replace(/[^\d]/g, '');
                             setTaxForm({
                               ...taxForm,
                               data: {
                                 ...taxForm.data,
-                                pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
+                                ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
                               }
                             })
                           }}
@@ -2412,89 +2495,50 @@ export default function App() {
                     ))}
                   </div>
                 </div>
-              )}
 
-              {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
-                <>
-                  <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                    <div className="flex justify-between items-center mb-3">
-                      <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowDownRight size={16} className="text-emerald-500" /> PPN Masukan (Input)</h4>
-                      <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="text-xs flex items-center gap-1 text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 font-medium px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
-                        <Plus size={12} /> Tambah Field
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
-                        <div key={key}>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                          </div>
-                          <input
-                            type="text"
-                            value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
-                            onChange={e => {
-                              const val = e.target.value.replace(/[^\d]/g, '');
-                              setTaxForm({
-                                ...taxForm,
-                                data: {
-                                  ...taxForm.data,
-                                  ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
-                                }
-                              })
-                            }}
-                            className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                            placeholder="0"
-                          />
-                        </div>
-                      ))}
-                    </div>
+                <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowUpRight size={16} className="text-amber-500" /> PPN Keluaran (Output)</h4>
+                    <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="text-xs flex items-center gap-1 text-amber-600 hover:text-amber-800 dark:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                      <Plus size={12} /> Tambah Field
+                    </button>
                   </div>
-
-                  <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                    <div className="flex justify-between items-center mb-3">
-                      <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowUpRight size={16} className="text-amber-500" /> PPN Keluaran (Output)</h4>
-                      <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="text-xs flex items-center gap-1 text-amber-600 hover:text-amber-800 dark:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
-                        <Plus size={12} /> Tambah Field
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-4">
-                      {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
-                        <div key={key}>
-                          <div className="flex justify-between items-center mb-1">
-                            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                          </div>
-                          <input
-                            type="text"
-                            value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
-                            onChange={e => {
-                              const val = e.target.value.replace(/[^\d]/g, '');
-                              setTaxForm({
-                                ...taxForm,
-                                data: {
-                                  ...taxForm.data,
-                                  ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
-                                }
-                              })
-                            }}
-                            className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                            placeholder="0"
-                          />
+                  <div className="grid grid-cols-2 gap-4">
+                    {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
+                      <div key={key}>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
                         </div>
-                      ))}
-                    </div>
+                        <input
+                          type="text"
+                          value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
+                          onChange={e => {
+                            const val = e.target.value.replace(/[^\d]/g, '');
+                            setTaxForm({
+                              ...taxForm,
+                              data: {
+                                ...taxForm.data,
+                                ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
+                              }
+                            })
+                          }}
+                          className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                          placeholder="0"
+                        />
+                      </div>
+                    ))}
                   </div>
-                </>
-              )}
+                </div>
+              </>
+            )}
 
-              <div className="flex justify-end pt-6">
-                <button onClick={handleSaveTaxSummary} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-500/20">Simpan Data Pajak</button>
-              </div>
+            <div className="flex justify-end pt-6">
+              <button onClick={handleSaveTaxSummary} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-500/20">Simpan Data Pajak</button>
             </div>
-          )}
-        </Modal>
-      </div>
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

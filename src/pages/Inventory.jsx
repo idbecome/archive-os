@@ -65,7 +65,7 @@ export default function Inventory({
             </div>
 
             {/* CONTROL BAR */}
-            <div className="flex flex-col gap-4 mb-6 bg-white dark:bg-slate-900 p-4 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm">
+            <div className="flex flex-col gap-4 mb-6 bg-white/30 dark:bg-slate-900/40 backdrop-blur-xl p-4 rounded-2xl border border-white/40 dark:border-white/10 shadow-xl ring-1 ring-black/5">
                 <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                     <div className="flex flex-col md:flex-row justify-between items-center gap-4">
                         <div className="flex items-center gap-2 bg-gray-100 dark:bg-slate-800 p-1 rounded-lg">

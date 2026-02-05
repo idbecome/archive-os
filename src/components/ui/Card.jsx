@@ -3,7 +3,7 @@ import React from 'react';
 export const Card = ({ children, className = '', onClick }) => (
     <div
         onClick={onClick}
-        className={`bg-white/80 dark:bg-slate-900/60 backdrop-blur-md border border-gray-200 dark:border-slate-700/50 rounded-2xl p-6 shadow-sm dark:shadow-none transition-all duration-300 ${onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-700 transform hover:-translate-y-1' : ''} ${className}`}
+        className={`bg-white/40 dark:bg-slate-800/40 backdrop-blur-xl border border-white/40 dark:border-white/10 rounded-3xl p-6 shadow-2xl ring-1 ring-black/5 dark:ring-white/5 transition-all duration-300 ${onClick ? 'cursor-pointer hover:shadow-3xl hover:bg-white/50 dark:hover:bg-slate-700/50 transform hover:-translate-y-1' : ''} ${className}`}
     >
         {children}
     </div>

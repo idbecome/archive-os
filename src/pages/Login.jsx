@@ -12,13 +12,13 @@ export default function Login({ onLogin }) {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-slate-900 transition-colors duration-300">
-            <div className="bg-white dark:bg-slate-800 p-8 rounded-2xl shadow-xl w-full max-w-md border border-gray-200 dark:border-slate-700 animate-in fade-in zoom-in-95 duration-300">
+        <div className="min-h-screen flex items-center justify-center bg-transparent transition-colors duration-300 p-4">
+            <div className="bg-white/40 dark:bg-slate-800/40 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-md border border-white/40 dark:border-white/10 animate-in fade-in zoom-in-95 duration-300 ring-1 ring-black/5 dark:ring-white/5 mx-auto">
                 <div className="flex justify-center mb-8">
-                    <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-bold text-3xl shadow-lg shadow-indigo-500/30">A</div>
+                    <img src="/vite.svg" alt="Logo" className="w-20 h-20 drop-shadow-2xl" />
                 </div>
-                <h2 className="text-2xl font-bold text-center text-gray-900 dark:text-white mb-2">ArchiveOS</h2>
-                <p className="text-center text-gray-500 dark:text-slate-400 mb-8">Sistem Manajemen Arsip Terpadu</p>
+                <h2 className="text-3xl font-extrabold text-center text-gray-900 dark:text-white mb-2 tracking-tight">Archive Os</h2>
+                <p className="text-center text-gray-500 dark:text-slate-400 mb-8 font-medium">Sistem Manajemen Arsip Terpadu</p>
 
                 {loginForm.error && (
                     <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm rounded-lg flex items-center gap-2 animate-in slide-in-from-top-2">
