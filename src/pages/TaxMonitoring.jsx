@@ -55,10 +55,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     }, [taxAudits]);
 
     useEffect(() => {
+        if (selectedAudit) {
+            // Auto-select the current active step (or last active)
+            // Auto-select the current active step (or last active)
+            let stepVal = selectedAudit.currentStep ? parseInt(selectedAudit.currentStep) : 1;
+            if (isNaN(stepVal) || stepVal < 1) stepVal = 1;
+            if (stepVal > 7) stepVal = 7;
+            setActiveStep(stepVal);
+            loadFiles(selectedAudit);
+        }
+    }, [selectedAudit]);
+
+    useEffect(() => {
         if (selectedAudit && activeStep) {
             loadFiles(selectedAudit);
         }
-    }, [selectedAudit, activeStep]);
+    }, [activeStep]);
 
     const loadFiles = async (audit) => {
         setIsLoadingFiles(true);
@@ -518,60 +530,131 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                 )}
                             </div>
                         </div>
-                        <div className="mb-2">
-                            <div className="flex justify-between items-center text-sm mb-1">
-                                <span className="font-semibold text-gray-700 dark:text-gray-300">Overall Progress</span>
-                                <span className="text-indigo-600 font-bold">
-                                    {(() => {
-                                        const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
-                                            (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
-                                        const done = steps.filter(s => s.status === 'Done').length;
-                                        return Math.round((done / 7) * 100);
-                                    })()}%
-                                </span>
+
+                        {/* TRAIL FLOW VISUALIZATION */}
+
+                        {/* OVERALL PROGRESS & TRAIL FLOW */}
+                        <div className="mb-8 mt-2 space-y-6">
+                            {/* 1. Overall Progress Bar (Restored) */}
+                            <div>
+                                <div className="flex justify-between items-center text-sm mb-2">
+                                    <span className="font-semibold text-gray-700 dark:text-gray-300">Overall Progress</span>
+                                    <span className="text-indigo-600 font-bold">
+                                        {(() => {
+                                            try {
+                                                const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
+                                                    (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
+                                                const done = steps.filter(s => s.status === 'Done').length;
+                                                return Math.round((done / 7) * 100);
+                                            } catch (e) { return 0; }
+                                        })()}%
+                                    </span>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-3 dark:bg-gray-700 overflow-hidden">
+                                    <div
+                                        className="bg-indigo-600 h-3 rounded-full transition-all duration-500 ease-out"
+                                        style={{
+                                            width: `${(() => {
+                                                try {
+                                                    const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
+                                                        (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
+                                                    const done = steps.filter(s => s.status === 'Done').length;
+                                                    return Math.round((done / 7) * 100);
+                                                } catch (e) { return 0; }
+                                            })()}%`
+                                        }}
+                                    ></div>
+                                </div>
                             </div>
-                            <div className="w-full bg-gray-200 rounded-full h-3 dark:bg-gray-700 overflow-hidden">
-                                <div
-                                    className="bg-indigo-600 h-3 rounded-full transition-all duration-500 ease-out"
-                                    style={{
-                                        width: `${(() => {
-                                            const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
-                                                (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
-                                            const done = steps.filter(s => s.status === 'Done').length;
-                                            return Math.round((done / 7) * 100);
-                                        })()}%`
-                                    }}
-                                ></div>
+
+                            {/* 2. Trail Flow Visualization */}
+                            <div>
+                                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Step Tracking</h3>
+
+
+                                {/* Desktop/Tablet Horizontal Flow */}
+                                <div className="hidden md:flex items-center justify-between relative px-4">
+                                    {/* Connecting Line Background */}
+                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-1 bg-gray-200 dark:bg-slate-700 -z-10" />
+
+                                    {AUDIT_STEPS.map((step, index) => {
+                                        const sData = selectedAudit.steps?.[step.id - 1] || {};
+                                        const isDone = sData.status === 'Done';
+                                        const isActive = activeStep === step.id;
+                                        const isPending = !isDone && !isActive;
+                                        const nextStep = selectedAudit.steps?.[step.id] || {};
+
+                                        // Calculate line colored progress
+                                        // If this step is done, the line to the next step should be green
+                                        const isLineColored = isDone;
+
+                                        return (
+                                            <div key={step.id} className="relative flex flex-col items-center group cursor-pointer" onClick={() => setActiveStep(step.id)}>
+                                                {/* Connecting Line Colored Overlay (to the right) */}
+                                                {index < AUDIT_STEPS.length - 1 && (
+                                                    <div
+                                                        className={`absolute left-1/2 top-1/2 -translate-y-1/2 h-1 w-full -z-10 transition-all duration-500 ${isDone ? 'bg-emerald-500' : 'bg-transparent'}`}
+                                                        style={{ width: 'calc(100% + 2rem)' }}
+                                                    />
+                                                )}
+
+                                                <div
+                                                    className={`w-10 h-10 rounded-full flex items-center justify-center border-4 transition-all duration-300 z-10
+                                                ${isDone
+                                                            ? 'bg-emerald-500 border-emerald-100 dark:border-emerald-900/50 text-white scale-100 shadow-md shadow-emerald-500/20'
+                                                            : isActive
+                                                                ? 'bg-indigo-600 border-indigo-100 dark:border-indigo-900/50 text-white scale-110 shadow-lg shadow-indigo-500/30'
+                                                                : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500'}`}
+                                                >
+                                                    {isDone ? <CheckCircle2 size={18} /> : <span className="text-sm font-bold">{step.id}</span>}
+                                                </div>
+
+                                                <div className="absolute top-12 w-32 text-center transition-all duration-300">
+                                                    <p className={`text-xs font-bold mb-0.5 ${isActive ? 'text-indigo-600 scale-105' : isDone ? 'text-emerald-600' : 'text-gray-400'}`}>
+                                                        {step.title}
+                                                    </p>
+                                                    <p className={`text-[10px] ${isActive ? 'text-indigo-400' : 'text-gray-400 hidden group-hover:block'}`}>
+                                                        {sData.status || 'Pending'}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Mobile Vertical Flow (Fallback) */}
+                                <div className="md:hidden space-y-2 pl-4 border-l-2 border-gray-200 dark:border-slate-800 ml-2">
+                                    {AUDIT_STEPS.map((step) => {
+                                        const sData = selectedAudit.steps?.[step.id - 1] || {};
+                                        const isDone = sData.status === 'Done';
+                                        const isActive = activeStep === step.id;
+                                        return (
+                                            <div key={step.id} onClick={() => setActiveStep(step.id)} className={`flex items-center gap-3 relative cursor-pointer ${isActive ? 'pl-2 transition-all' : ''}`}>
+                                                {/* Dot on line */}
+                                                <div className={`absolute -left-[21px] w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${isDone ? 'bg-emerald-500' : isActive ? 'bg-indigo-500' : 'bg-gray-300'}`} />
+
+                                                <div className={`flex-1 p-2 rounded-lg border ${isActive ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}>
+                                                    <div className="flex justify-between items-center">
+                                                        <span className={`text-xs font-bold ${isDone ? 'text-emerald-600' : isActive ? 'text-indigo-600' : 'text-gray-500'}`}>{step.title}</span>
+                                                        {isDone && <CheckCircle2 size={14} className="text-emerald-500" />}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )
+                                    })}
+                                </div>
                             </div>
                         </div>
                     </div>
+
                     {/* Stepper & Detail Content (Collapsed for brevity but presumed same) */}
-                    <div className="overflow-x-auto pb-4 -mx-4 px-4 scrollbar-hide">
-                        <div className="flex gap-2 min-w-max">
-                            {AUDIT_STEPS.map((step) => {
-                                const sData = selectedAudit.steps?.[step.id - 1] || {};
-                                const isActive = activeStep === step.id;
-                                const isDone = sData.status === 'Done';
-                                return (
-                                    <button key={step.id} onClick={() => setActiveStep(step.id)} className={`flex items-center p-3 rounded-xl border min-w-max transition-all relative ${isActive ? 'bg-indigo-50 border-indigo-500 ring-1 ring-indigo-500 dark:bg-indigo-900/20 dark:border-indigo-500' : isDone ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/10' : 'bg-white border-gray-200 dark:bg-slate-900 dark:border-slate-800'}`}>
-                                        <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm mr-2 ${isDone ? 'bg-emerald-500 text-white' : isActive ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-600'}`}>
-                                            {isDone ? <CheckCircle2 size={16} /> : step.id}
-                                        </div>
-                                        <div className="text-left">
-                                            <span className={`text-xs font-bold whitespace-nowrap block ${isActive ? 'text-indigo-700' : isDone ? 'text-emerald-700' : 'text-gray-600'}`}>{step.title}</span>
-                                            <span className="text-[10px] text-gray-400 block">{sData.status || 'Pending'}</span>
-                                        </div>
-                                    </button>
-                                )
-                            })}
-                        </div>
-                    </div>
+
                     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                         <Card className="lg:col-span-2">
                             <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100 dark:border-slate-800">
                                 <div>
-                                    <h3 className="font-bold text-lg dark:text-white">{AUDIT_STEPS[activeStep - 1].title}</h3>
-                                    <p className="text-sm text-gray-500">{AUDIT_STEPS[activeStep - 1].description}</p>
+                                    <h3 className="font-bold text-lg dark:text-white">{(AUDIT_STEPS[activeStep - 1] || AUDIT_STEPS[0]).title}</h3>
+                                    <p className="text-sm text-gray-500">{(AUDIT_STEPS[activeStep - 1] || AUDIT_STEPS[0]).description}</p>
                                     <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
                                         <span className="flex items-center gap-1"><Clock size={12} /> Durasi Tahap: {getDuration(selectedAudit.steps?.[activeStep - 1]?.startDate, selectedAudit.steps?.[activeStep - 1]?.endDate)}</span>
                                     </div>
@@ -583,7 +666,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         </button>
                                     )}
                                     {(selectedAudit.steps?.[activeStep - 1]?.status || '') !== 'Done' && hasPermission('tax-monitoring', 'edit') && (
-                                        <button onClick={handleFinishStep} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center gap-2 shadow-sm transition-all text-sm font-semibold">
+                                        <button
+                                            onClick={handleFinishStep}
+                                            disabled={activeStep > 1 && selectedAudit.steps?.[activeStep - 2]?.status !== 'Done'}
+                                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:text-gray-500 text-white rounded-lg flex items-center gap-2 shadow-sm transition-all text-sm font-semibold"
+                                            title={activeStep > 1 && selectedAudit.steps?.[activeStep - 2]?.status !== 'Done' ? "Selesaikan tahap sebelumnya terlebih dahulu" : "Selesaikan tahap ini"}
+                                        >
                                             <CheckCircle2 size={16} /> Selesai Tahap Ini
                                         </button>
                                     )}

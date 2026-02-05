@@ -51,6 +51,8 @@ import {
   FileBarChart,
   Shield,
   Printer,
+  ArrowDownRight,
+  ArrowUpRight,
   Building2
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -459,7 +461,17 @@ export default function App() {
   const [deptForm, setDeptForm] = useState({ id: null, name: '' });
 
   const [showTaxForm, setShowTaxForm] = useState(false);
-  const [taxForm, setTaxForm] = useState({ month: '', year: 2024, pph23: 0, pph42: 0, ppnIn: { total: 0 }, ppnOut: { total: 0 } });
+  const [taxForm, setTaxForm] = useState({
+    id: '',
+    month: '',
+    year: new Date().getFullYear(),
+    pembetulan: 0,
+    data: {
+      pph: {},
+      ppnIn: {},
+      ppnOut: {}
+    }
+  });
   const [currentUser, setCurrentUser] = useState(() => {
     try {
       const saved = localStorage.getItem('archive_user');
@@ -502,7 +514,16 @@ export default function App() {
       const emptyCount = data.filter(s => s.status === 'EMPTY').length;
       const borrowedCount = data.filter(s => s.status === 'BORROWED').length;
       const auditCount = data.filter(s => s.status === 'AUDIT').length;
-      setStats({ empty: emptyCount, borrowed: borrowedCount, audit: auditCount });
+      const storedCount = data.filter(s => s.status === 'STORED').length;
+      const occupancyRate = ((TOTAL_SLOTS - emptyCount) / TOTAL_SLOTS) * 100;
+
+      setStats({
+        stored: storedCount,
+        borrowed: borrowedCount,
+        audit: auditCount,
+        empty: emptyCount,
+        occupancy: occupancyRate
+      });
     } catch (error) {
       console.error("Failed to fetch inventory", error);
     }
@@ -1359,6 +1380,29 @@ export default function App() {
     addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
   };
 
+  const handleSaveTaxSummary = async () => {
+    try {
+      // Ensure data structure integrity
+      const payload = {
+        ...taxForm,
+        // Fallback for legacy fields if needed by backend, though new structure is primary
+        pph23: taxForm.data?.pph?.['PPh 23'] || 0,
+        pph42: taxForm.data?.pph?.['PPh 4(2)'] || 0,
+      };
+
+      if (taxForm.id) {
+        await api.updateTaxSummary(taxForm.id, payload);
+        addLog(currentUser?.name, 'Update Pajak', `${taxForm.month} ${taxForm.year}`);
+      } else {
+        await api.createTaxSummary(payload);
+        addLog(currentUser?.name, 'Create Pajak', `${taxForm.month} ${taxForm.year}`);
+      }
+      const data = await db.getTaxSummaries();
+      setTaxSummaries(data);
+      setIsModalOpen(false);
+    } catch (e) { alert(e.message); }
+  };
+
   const handleCreateFolder = async (folderData) => {
     // folderData = { name, privacy, allowedDepts, allowedUsers }
     if (!folderData || !folderData.name) return;
@@ -1415,6 +1459,192 @@ export default function App() {
 
 
 
+
+
+
+
+
+  // --- TAX CONFIGURATION STATE ---
+  const [taxConfig, setTaxConfig] = useState(() => {
+    const saved = localStorage.getItem('tax_config');
+    return saved ? JSON.parse(saved) : {
+      pphTypes: ['PPh 23', 'PPh 4(2)', 'PPh 21', 'PPh 26', 'PPh Final'],
+      ppnInTypes: ['PIB', 'PPN Masukan', 'Dokumen Lain', 'Kelebihan Bayar Bulan Lalu', 'Lain-lain'],
+      ppnOutTypes: ['Sales', 'PEB', 'Promotion Material', 'Manual Invoice']
+    };
+  });
+
+  const saveTaxConfig = (newConfig) => {
+    setTaxConfig(newConfig);
+    localStorage.setItem('tax_config', JSON.stringify(newConfig));
+  };
+
+  const handleAddTaxField = (category) => {
+    const name = prompt("Masukkan nama field baru:");
+    if (!name) return;
+
+    // Check if exists
+    if (taxConfig[category].includes(name)) {
+      alert("Field sudah ada!");
+      return;
+    }
+
+    // Update Config
+    const newConfig = {
+      ...taxConfig,
+      [category]: [...taxConfig[category], name]
+    };
+    saveTaxConfig(newConfig);
+
+    // Update Current Form Data to include this new field with 0 value
+    const categoryKey = category === 'pphTypes' ? 'pph' : category === 'ppnInTypes' ? 'ppnIn' : 'ppnOut';
+    setTaxForm(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        [categoryKey]: {
+          ...prev.data?.[categoryKey],
+          [name]: 0
+        }
+      }
+    }));
+  };
+
+  const handleDeleteTaxField = (category, name) => {
+    if (!window.confirm(`Hapus field "${name}" secara permanen? Data tersimpan di field ini mungkin akan hilang.`)) return;
+
+    // Remove from Config
+    const newConfig = {
+      ...taxConfig,
+      [category]: taxConfig[category].filter(t => t !== name)
+    };
+    saveTaxConfig(newConfig);
+
+    // Remove from Current Form
+    const categoryKey = category === 'pphTypes' ? 'pph' : category === 'ppnInTypes' ? 'ppnIn' : 'ppnOut';
+    const newDataIsGroup = { ...taxForm.data[categoryKey] };
+    delete newDataIsGroup[name];
+
+    setTaxForm(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        [categoryKey]: newDataIsGroup
+      }
+    }));
+  };
+
+
+  const handleDeleteTaxRecord = (id) => {
+    if (window.confirm("Apakah Anda yakin ingin menghapus data ini secara permanen?")) {
+      const updated = taxSummaries.filter(s => s.id !== id);
+      setTaxSummaries(updated);
+      localStorage.setItem('tax_summaries', JSON.stringify(updated));
+    }
+  };
+
+  const handleRenameTaxType = (category, oldName) => {
+    const newName = prompt("Nama Baru:", oldName);
+    if (!newName || newName === oldName) return;
+    if (taxConfig[category].includes(newName)) {
+      alert("Nama tersebut sudah digunakan.");
+      return;
+    }
+
+    // 1. Update Config
+    const newConfig = {
+      ...taxConfig,
+      [category]: taxConfig[category].map(t => t === oldName ? newName : t)
+    };
+    saveTaxConfig(newConfig);
+
+    // 2. Update Current Form Data (if applicable)
+    // We need to migrate the value from oldName to newName in the current form state
+    const categoryKey = category === 'pphTypes' ? 'pph' : category === 'ppnInTypes' ? 'ppnIn' : 'ppnOut';
+    const oldVal = taxForm.data[categoryKey][oldName] || 0;
+
+    // Create new data object for that category
+    const categoryData = { ...taxForm.data[categoryKey] };
+    delete categoryData[oldName]; // Remove old key
+    categoryData[newName] = oldVal; // Add new key with old value
+
+    setTaxForm(prev => ({
+      ...prev,
+      data: {
+        ...prev.data,
+        [categoryKey]: categoryData
+      }
+    }));
+  };
+
+  // --- AUTO CALCULATE PREVIOUS MONTH BALANCE ---
+
+  useEffect(() => {
+    // Only run if modal is open and we have a valid date
+    if (!isModalOpen || !taxForm.month || !taxForm.year) return;
+
+    // Only skip calculation if we are EDITING an existing record (prevents overwriting saved manual adjustments)
+    // BUT user asked for "auto enter", so we might want to do it always or be smart.
+    // For now, let's do it if the field is empty or 0 to be safe.
+
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    let prevMonthIndex = months.indexOf(taxForm.month) - 1;
+    let prevYear = taxForm.year;
+
+    if (prevMonthIndex < 0) {
+      prevMonthIndex = 11;
+      prevYear -= 1;
+    }
+    const prevMonthName = months[prevMonthIndex];
+
+    // Find previous record
+    const prevRecord = taxSummaries.find(r => r.month === prevMonthName && r.year === prevYear);
+
+    let overpaymentAmount = 0;
+
+    if (prevRecord) {
+      // Calculate PPN In Total
+      const totalIn = taxConfig.ppnInTypes.reduce((sum, t) => {
+        // Handle both structure versions if needed, but assuming data structure is consistent
+        const val = prevRecord.data?.ppnIn?.[t] ?? 0;
+        return sum + val;
+      }, 0);
+
+      // Calculate PPN Out Total
+      const totalOut = taxConfig.ppnOutTypes.reduce((sum, t) => {
+        const val = prevRecord.data?.ppnOut?.[t] ?? 0;
+        return sum + val;
+      }, 0);
+
+      // Net = Out - In
+      const net = totalOut - totalIn;
+
+      // If Net is Negative, it means OVERPAYMENT (Lebih Bayar).
+      // e.g. Out 100, In 150 -> Net -50. Overpayment = 50.
+      if (net < 0) {
+        overpaymentAmount = Math.abs(net);
+      }
+    }
+
+    // Update Form
+    // Only update if the value is different to avoid infinite loops, and maybe only if 0?
+    // User requirement: "otomatis akan masuk". Let's force update it.
+    const currentVal = taxForm.data?.ppnIn?.['Kelebihan Bayar Bulan Lalu'] ?? 0;
+
+    if (currentVal !== overpaymentAmount) {
+      setTaxForm(prev => ({
+        ...prev,
+        data: {
+          ...prev.data,
+          ppnIn: {
+            ...prev.data?.ppnIn,
+            'Kelebihan Bayar Bulan Lalu': overpaymentAmount
+          }
+        }
+      }));
+    }
+
+  }, [taxForm.month, taxForm.year, isModalOpen, taxSummaries, taxConfig]);
 
 
 
@@ -1599,6 +1829,10 @@ export default function App() {
                   setTaxForm={setTaxForm}
                   setModalTab={setModalTab}
                   setIsModalOpen={setIsModalOpen}
+                  config={taxConfig}
+                  saveConfig={saveTaxConfig}
+                  handleDeleteRecord={handleDeleteTaxRecord}
+                  handleRenameTaxType={handleRenameTaxType}
                 />
               )}
               {activeTab === 'master' && (
@@ -1676,9 +1910,12 @@ export default function App() {
                 : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
                   : modalTab === 'dept-form' ? 'Manajemen Departemen'
                     : 'Master Data')
-              : activeTab === 'documents'
-                ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
-                : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
+              : modalTab === 'tax-form' ? 'Input Data Pajak'
+                : modalTab === 'tax-form-pph' ? 'Input Data PPh'
+                  : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
+                    : activeTab === 'documents'
+                      ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
+                      : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
           }
         >
           {activeTab === 'documents' && modalTab === 'upload' && (
@@ -2081,6 +2318,161 @@ export default function App() {
                 </div>
               )}
             </>
+          )}
+
+          {/* TAX FORM MODAL */}
+          {(modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
+            <div className="space-y-6">
+              <div className="grid grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Bulan</label>
+                  <select
+                    value={taxForm.month}
+                    onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
+                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  >
+                    <option value="">- Pilih Bulan -</option>
+                    {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Tahun</label>
+                  <input
+                    type="number"
+                    value={taxForm.year}
+                    onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
+                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1 dark:text-white">Pembetulan Ke-</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={taxForm.pembetulan || 0}
+                    onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
+                    className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
+                <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="font-bold dark:text-white flex items-center gap-2"><Percent size={16} className="text-indigo-500" /> PPh (Pajak Penghasilan)</h4>
+                    <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-medium px-2 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                      <Plus size={12} /> Tambah Field
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    {Object.keys(taxForm.data?.pph || {}).map(key => (
+                      <div key={key}>
+                        <div className="flex justify-between items-center mb-1">
+                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                        </div>
+                        <input
+                          type="text"
+                          value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
+                          onChange={e => {
+                            const val = e.target.value.replace(/[^\d]/g, '');
+                            setTaxForm({
+                              ...taxForm,
+                              data: {
+                                ...taxForm.data,
+                                pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
+                              }
+                            })
+                          }}
+                          className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                          placeholder="0"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
+                <>
+                  <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowDownRight size={16} className="text-emerald-500" /> PPN Masukan (Input)</h4>
+                      <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="text-xs flex items-center gap-1 text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 font-medium px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
+                        <Plus size={12} /> Tambah Field
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
+                        <div key={key}>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                          </div>
+                          <input
+                            type="text"
+                            value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
+                            onChange={e => {
+                              const val = e.target.value.replace(/[^\d]/g, '');
+                              setTaxForm({
+                                ...taxForm,
+                                data: {
+                                  ...taxForm.data,
+                                  ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
+                                }
+                              })
+                            }}
+                            className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            placeholder="0"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+                    <div className="flex justify-between items-center mb-3">
+                      <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowUpRight size={16} className="text-amber-500" /> PPN Keluaran (Output)</h4>
+                      <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="text-xs flex items-center gap-1 text-amber-600 hover:text-amber-800 dark:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                        <Plus size={12} /> Tambah Field
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-4">
+                      {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
+                        <div key={key}>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                          </div>
+                          <input
+                            type="text"
+                            value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
+                            onChange={e => {
+                              const val = e.target.value.replace(/[^\d]/g, '');
+                              setTaxForm({
+                                ...taxForm,
+                                data: {
+                                  ...taxForm.data,
+                                  ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
+                                }
+                              })
+                            }}
+                            className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                            placeholder="0"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <div className="flex justify-end pt-6">
+                <button onClick={handleSaveTaxSummary} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-500/20">Simpan Data Pajak</button>
+              </div>
+            </div>
           )}
         </Modal>
       </div>
