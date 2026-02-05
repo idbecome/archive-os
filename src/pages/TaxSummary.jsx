@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import {
     Percent, FileBarChart, Trash2, Plus, ArrowUpRight, ArrowDownRight,
     TrendingUp, TrendingDown, LayoutGrid, List, SlidersHorizontal, Settings,
-    ChevronDown, ArrowRight, Download, Calendar, Edit3
+    ChevronDown, ArrowRight, Download, Calendar, Edit3, X
 } from 'lucide-react';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -13,6 +13,41 @@ import { Card, SummaryCard } from '../components/ui/Card';
 export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, handleDeleteRecord, handleRenameTaxType }) {
     const [activeTab, setActiveTab] = useState('pph'); // pph, ppn, comparison
     const [viewMode, setViewMode] = useState('chart'); // chart, table
+    const [filters, setFilters] = useState({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
+
+    // Helper: Reset filters
+    const resetFilters = () => setFilters({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
+
+    // Helper: Filter Logic
+    const getFilteredData = (data, type) => {
+        return data.filter(s => {
+            // 1. Type Check (Start with base type)
+            if (type === 'pph' && (s.type || 'PPH') !== 'PPH') return false;
+            if (type === 'ppn' && s.type !== 'PPN') return false;
+
+            // 2. Month Filter
+            if (filters.month !== 'All' && s.month !== filters.month) return false;
+
+            // 3. Year Filter
+            if (filters.year !== 'All' && String(s.year) !== String(filters.year)) return false;
+
+            // 4. Pembetulan Filter
+            if (filters.pembetulan !== 'All' && String(s.pembetulan || 0) !== String(filters.pembetulan)) return false;
+
+            // 5. Status Filter (PPN Only)
+            if (type === 'ppn' && filters.status !== 'All') {
+                const totalIn = config.ppnInTypes.reduce((acc, t) => acc + getSafeValue(s, t, 'ppnIn'), 0);
+                const totalOut = config.ppnOutTypes.reduce((acc, t) => acc + getSafeValue(s, t, 'ppnOut'), 0);
+                const net = totalOut - totalIn;
+
+                if (filters.status === 'KB' && net <= 0) return false; // Want KB (>0)
+                if (filters.status === 'LB' && net >= 0) return false; // Want LB (<0)
+                if (filters.status === 'Nihil' && net !== 0) return false;
+            }
+
+            return true;
+        });
+    };
 
     // --- DYNAMIC CONFIGURATION (Now passed from App.jsx) ---
     // config and saveConfig are now props
@@ -80,6 +115,61 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         return 0;
     };
 
+    // --- FILTER UI COMPONENT ---
+    const renderFilterControls = (type) => {
+        const uniqueYears = [...new Set(taxSummaries.map(s => s.year))].sort((a, b) => b - a);
+        const uniquePembetulan = [...new Set(taxSummaries.map(s => s.pembetulan || 0))].sort((a, b) => a - b);
+        const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+        return (
+            <div className="flex flex-wrap gap-2 items-center bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
+                <select
+                    className="p-1.5 text-xs rounded border border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                    value={filters.month}
+                    onChange={e => setFilters(prev => ({ ...prev, month: e.target.value }))}
+                >
+                    <option value="All">Semua Bulan</option>
+                    {months.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
+
+                <select
+                    className="p-1.5 text-xs rounded border border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                    value={filters.year}
+                    onChange={e => setFilters(prev => ({ ...prev, year: e.target.value }))}
+                >
+                    <option value="All">Semua Tahun</option>
+                    {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+
+                <select
+                    className="p-1.5 text-xs rounded border border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                    value={filters.pembetulan}
+                    onChange={e => setFilters(prev => ({ ...prev, pembetulan: e.target.value }))}
+                >
+                    <option value="All">Semua Pembetulan</option>
+                    {uniquePembetulan.map(p => <option key={p} value={p}>P-{p}</option>)}
+                </select>
+
+                {type === 'ppn' && (
+                    <select
+                        className="p-1.5 text-xs rounded border border-gray-300 dark:border-slate-600 dark:bg-slate-700 dark:text-white"
+                        value={filters.status}
+                        onChange={e => setFilters(prev => ({ ...prev, status: e.target.value }))}
+                    >
+                        <option value="All">Semua Status</option>
+                        <option value="KB">Kurang Bayar</option>
+                        <option value="LB">Lebih Bayar</option>
+                        <option value="Nihil">Nihil</option>
+                    </select>
+                )}
+
+                <button onClick={resetFilters} className="p-1.5 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded" title="Reset Filter">
+                    <X size={14} />
+                </button>
+            </div>
+        );
+    };
+
     const sortedSummaries = useMemo(() => {
         const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
         return [...taxSummaries].sort((a, b) => {
@@ -91,7 +181,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
     // --- TAB: PPH RENDERER ---
     const renderPPhTab = () => {
         // Transform data for charts
-        const chartData = sortedSummaries.map(s => {
+        const chartData = sortedSummaries.filter(s => (s.type || 'PPH') === 'PPH').map(s => {
             const item = { name: `${s.month} ${s.year}` };
             config.pphTypes.forEach(type => {
                 item[type] = getSafeValue(s, type, 'pph');
@@ -138,8 +228,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 <button
                                     onClick={() => {
                                         setTaxForm({
+                                            type: 'PPH',
                                             month: 'Januari',
                                             year: new Date().getFullYear(),
+                                            pembetulan: 0,
                                             data: {
                                                 pph: config.pphTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {}),
                                                 ppnIn: {},
@@ -219,12 +311,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="font-bold text-gray-900 dark:text-white">Rincian Data PPh</h3>
                         <div className="flex gap-2">
-                            <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 dark:bg-slate-800 dark:border-slate-700 dark:text-white transition-colors">
-                                <Calendar size={14} /> Filter Periode
-                            </button>
-                            <button className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium bg-white border border-gray-200 rounded-lg hover:bg-gray-50 dark:bg-slate-800 dark:border-slate-700 dark:text-white transition-colors">
-                                <Download size={14} /> Export CSV
-                            </button>
+                            {renderFilterControls('pph')}
                         </div>
                     </div>
                     <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700">
@@ -260,7 +347,8 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                                {sortedSummaries.map((s, idx) => {
+
+                                {getFilteredData(sortedSummaries, 'pph').map((s, idx) => {
                                     let rowTotal = 0;
                                     return (
                                         <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group" onClick={() => handleEditRow(s)}>
@@ -271,10 +359,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                                 return <td key={t} className="px-6 py-4 text-right">Rp {val.toLocaleString()}</td>
                                             })}
                                             <td className="px-6 py-4 text-right font-bold text-indigo-600 dark:text-indigo-400">Rp {rowTotal.toLocaleString()}</td>
-                                            <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <td className="px-6 py-4 text-right">
                                                 <div className="flex justify-end gap-2">
-                                                    <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'pph') }} className="p-1 text-blue-500 hover:bg-blue-50 rounded" title="Edit Data"><Settings size={16} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Hapus Data"><Trash2 size={16} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'pph') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
                                                 </div>
                                             </td>
                                         </tr>
@@ -291,7 +379,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
     // --- TAB: PPN RENDERER ---
     const renderPPNTab = () => {
         // Prepare Data
-        const chartData = sortedSummaries.map(s => {
+        const chartData = sortedSummaries.filter(s => s.type === 'PPN').map(s => {
             const inTotal = config.ppnInTypes.reduce((sum, t) => sum + getSafeValue(s, t, 'ppnIn'), 0);
             const outTotal = config.ppnOutTypes.reduce((sum, t) => sum + getSafeValue(s, t, 'ppnOut'), 0);
             return {
@@ -373,8 +461,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 <button
                                     onClick={() => {
                                         setTaxForm({
+                                            type: 'PPN',
                                             month: 'Januari',
                                             year: new Date().getFullYear(),
+                                            pembetulan: 0,
                                             data: {
                                                 pph: {},
                                                 ppnIn: config.ppnInTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {}),
@@ -394,16 +484,17 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                             <ResponsiveContainer width="100%" height="100%">
                                 <ComposedChart data={chartData}>
                                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
-                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} dy={10} />
-                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#9ca3af' }} tickFormatter={(val) => `${val / 1000000}M`} />
+                                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6b7280' }} dy={10} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6b7280' }} tickFormatter={(val) => `${val / 1000000}M`} />
                                     <Tooltip
-                                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)' }}
-                                        formatter={(value) => `Rp ${value.toLocaleString()}`}
+                                        contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', padding: '12px' }}
+                                        formatter={(value, name) => [`Rp ${value.toLocaleString()}`, name === 'net' ? 'Net Balance' : name === 'inTotal' ? 'Pajak Masukan' : 'Pajak Keluaran']}
+                                        labelStyle={{ color: '#374151', fontWeight: 'bold', marginBottom: '8px' }}
                                     />
-                                    <Legend />
-                                    <Bar dataKey="inTotal" name="Masukan" fill="#10b981" radius={[4, 4, 0, 0]} barSize={20} />
-                                    <Bar dataKey="outTotal" name="Keluaran" fill="#f59e0b" radius={[4, 4, 0, 0]} barSize={20} />
-                                    <Line type="monotone" dataKey="net" name="Net Balance" stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} />
+                                    <Legend wrapperStyle={{ paddingTop: '20px' }} />
+                                    <Bar dataKey="inTotal" name="Masukan (In)" fill="#10b981" radius={[6, 6, 0, 0]} barSize={32} />
+                                    <Bar dataKey="outTotal" name="Keluaran (Out)" fill="#f59e0b" radius={[6, 6, 0, 0]} barSize={32} />
+                                    <Line type="monotone" dataKey="net" name="Net Balance" stroke="#6366f1" strokeWidth={4} dot={{ r: 6, strokeWidth: 2, fill: '#fff' }} activeDot={{ r: 8 }} />
                                 </ComposedChart>
                             </ResponsiveContainer>
                         </div>
@@ -462,6 +553,9 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                 <Card>
                     <div className="flex justify-between items-center mb-4">
                         <h3 className="font-bold text-gray-900 dark:text-white">Rincian Komponen PPN</h3>
+                        <div className="flex gap-2">
+                            {renderFilterControls('ppn')}
+                        </div>
                     </div>
                     <div className="overflow-x-auto rounded-xl border border-gray-200 dark:border-slate-700">
                         <table className="w-full text-sm text-left">
@@ -474,6 +568,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                     <th className="px-6 py-2 font-semibold text-center bg-amber-50/50 dark:bg-amber-900/20 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30" colSpan={config.ppnOutTypes.length} onClick={() => handleAddType('ppnOutTypes')}>
                                         PPN Keluaran (Out) <Plus size={12} className="inline ml-1 opacity-50" />
                                     </th>
+                                    <th className="px-4 py-4 font-semibold text-center bg-gray-100 dark:bg-slate-700" rowSpan="2">Status</th>
                                     <th className="px-4 py-4 font-semibold" rowSpan="2">Aksi</th>
                                 </tr>
                                 <tr>
@@ -522,19 +617,32 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
-                                {sortedSummaries.map((s, idx) => (
-                                    <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer group" onClick={() => handleEditRow(s, 'ppn')}>
-                                        <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
-                                        {config.ppnInTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnIn').toLocaleString()}</td>)}
-                                        {config.ppnOutTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnOut').toLocaleString()}</td>)}
-                                        <td className="px-6 py-4 text-right opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <div className="flex justify-end gap-2">
-                                                <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'ppn') }} className="p-1 text-blue-500 hover:bg-blue-50 rounded"><Settings size={16} /></button>
-                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1 text-red-500 hover:bg-red-50 rounded" title="Hapus Data"><Trash2 size={16} /></button>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {getFilteredData(sortedSummaries, 'ppn').map((s, idx) => {
+                                    const totalIn = config.ppnInTypes.reduce((acc, t) => acc + getSafeValue(s, t, 'ppnIn'), 0);
+                                    const totalOut = config.ppnOutTypes.reduce((acc, t) => acc + getSafeValue(s, t, 'ppnOut'), 0);
+                                    const net = totalOut - totalIn;
+                                    const isKB = net > 0;
+                                    const isLB = net < 0;
+
+                                    return (
+                                        <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer group" onClick={() => handleEditRow(s, 'ppn')}>
+                                            <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
+                                            {config.ppnInTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnIn').toLocaleString()}</td>)}
+                                            {config.ppnOutTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnOut').toLocaleString()}</td>)}
+
+                                            <td className={`px-4 py-4 text-center font-bold text-xs ${isKB ? 'text-red-600 bg-red-50' : isLB ? 'text-emerald-600 bg-emerald-50' : 'text-gray-500'}`}>
+                                                {isKB ? 'KURANG BAYAR' : isLB ? 'LEBIH BAYAR' : 'NIHIL'}
+                                                <div className="text-[10px] opacity-75">Rp {Math.abs(net).toLocaleString()}</div>
+                                            </td>
+                                            <td className="px-6 py-4 text-right">
+                                                <div className="flex justify-end gap-2">
+                                                    <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'ppn') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )
+                                })}
                             </tbody>
                         </table>
                     </div>

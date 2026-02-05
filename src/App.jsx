@@ -180,10 +180,7 @@ const db = {
     } catch { return []; }
   },
   async getTaxSummaries() {
-    try {
-      const response = await fetch(`${API_URL}/tax-summaries`);
-      return await response.json();
-    } catch { return []; }
+    return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
   },
   async getUsers() {
     try {
@@ -463,6 +460,7 @@ export default function App() {
   const [showTaxForm, setShowTaxForm] = useState(false);
   const [taxForm, setTaxForm] = useState({
     id: '',
+    type: 'PPH',
     month: '',
     year: new Date().getFullYear(),
     pembetulan: 0,
@@ -1382,23 +1380,44 @@ export default function App() {
 
   const handleSaveTaxSummary = async () => {
     try {
+      // 1. Uniqueness Check (Month + Year + Pembetulan + Type)
+      const currentType = taxForm.type || 'PPH';
+      const duplicate = taxSummaries.find(s =>
+        s.month === taxForm.month &&
+        s.year === taxForm.year &&
+        (s.pembetulan || 0) === (taxForm.pembetulan || 0) &&
+        (s.type || 'PPH') === currentType &&
+        s.id !== taxForm.id
+      );
+
+      if (duplicate) {
+        alert(`Data ${currentType} untuk ${taxForm.month} ${taxForm.year} (Pembetulan ${taxForm.pembetulan || 0}) sudah ada.`);
+        return;
+      }
+
       // Ensure data structure integrity
       const payload = {
         ...taxForm,
-        // Fallback for legacy fields if needed by backend, though new structure is primary
+        type: currentType,
+        // Fallback for legacy fields if needed by backend
         pph23: taxForm.data?.pph?.['PPh 23'] || 0,
         pph42: taxForm.data?.pph?.['PPh 4(2)'] || 0,
       };
 
+      let updatedList;
       if (taxForm.id) {
-        await api.updateTaxSummary(taxForm.id, payload);
-        addLog(currentUser?.name, 'Update Pajak', `${taxForm.month} ${taxForm.year}`);
+        // Edit
+        updatedList = taxSummaries.map(s => s.id === taxForm.id ? payload : s);
+        addLog(currentUser?.name, 'Update Pajak', `${taxForm.type} - ${taxForm.month} ${taxForm.year}`);
       } else {
-        await api.createTaxSummary(payload);
-        addLog(currentUser?.name, 'Create Pajak', `${taxForm.month} ${taxForm.year}`);
+        // Create - Ensure ID
+        const newRecord = { ...payload, id: Date.now().toString() };
+        updatedList = [...taxSummaries, newRecord];
+        addLog(currentUser?.name, 'Create Pajak', `${taxForm.type} - ${taxForm.month} ${taxForm.year}`);
       }
-      const data = await db.getTaxSummaries();
-      setTaxSummaries(data);
+
+      setTaxSummaries(updatedList);
+      localStorage.setItem('tax_summaries', JSON.stringify(updatedList));
       setIsModalOpen(false);
     } catch (e) { alert(e.message); }
   };
