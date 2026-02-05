@@ -1716,7 +1716,7 @@ export default function App() {
             </button>
           </div>
 
-          <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto">
+          <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto no-scrollbar">
             {[
               { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
               { id: 'inventory', icon: Grid3X3, label: 'Gudang' },
@@ -1751,12 +1751,12 @@ export default function App() {
               </button>
             ))}
           </nav>
-          <div className="p-4 mx-4 mb-6 rounded-2xl bg-white/20 dark:bg-slate-800/20 border border-white/20 dark:border-white/5 backdrop-blur-sm">
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 p-2.5 rounded-xl text-gray-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors`}>
+          <div className={`${isSidebarCollapsed ? 'mx-2 p-1.5' : 'mx-4 p-4'} mb-6 rounded-2xl bg-white/20 dark:bg-slate-800/20 border border-white/20 dark:border-white/10 backdrop-blur-sm`}>
+            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 ${isSidebarCollapsed ? 'p-2' : 'p-2.5'} rounded-xl text-gray-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors`}>
               {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
               {!isSidebarCollapsed && <span className="text-sm font-medium">{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
             </button>
-            <button onClick={handleLogout} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 p-2.5 rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors mt-1`}>
+            <button onClick={handleLogout} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 ${isSidebarCollapsed ? 'p-2' : 'p-2.5'} rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors mt-1`}>
               <LogOut size={20} />
               {!isSidebarCollapsed && <span className="text-sm font-medium">Logout</span>}
             </button>
