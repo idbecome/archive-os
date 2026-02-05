@@ -76,7 +76,8 @@ function initDb() {
             privacy VARCHAR(50),
             allowedDepts TEXT,
             allowedUsers TEXT,
-            owner VARCHAR(100)
+            owner VARCHAR(100),
+            createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
         )`,
         `CREATE TABLE IF NOT EXISTS documents (
             id VARCHAR(255) PRIMARY KEY,
@@ -120,6 +121,15 @@ function initDb() {
             extraPph TEXT,
             extraPpnIn TEXT,
             extraPpnOut TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS external_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            boxId VARCHAR(100),
+            destination VARCHAR(255),
+            sentDate DATETIME,
+            sender VARCHAR(100),
+            boxData TEXT,
+            history TEXT
         )`
     ];
 

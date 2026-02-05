@@ -37,6 +37,9 @@ export const api = {
     // Inventory
     getInventory: () => fetchAPI('/inventory'),
     updateInventory: (id, data) => fetchAPI(`/inventory/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+    getExternalItems: () => fetchAPI('/inventory/external'),
+    createExternalItem: (data) => fetchAPI('/inventory/external', { method: 'POST', body: JSON.stringify(data) }),
+    deleteExternalItem: (id) => fetchAPI(`/inventory/external/${id}`, { method: 'DELETE' }),
 
     // Logs
     getLogs: () => fetchAPI('/logs'),

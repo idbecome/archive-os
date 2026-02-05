@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
     HardDrive, ChevronRight, ChevronLeft, Search, Plus, UploadCloud, FolderOpen,
     Trash2, Edit3, FileDigit, FileText, Highlighter, History, PenLine, User, Clock,
-    Copy, Move, RefreshCw, X
+    Copy, Move, RefreshCw, X, Lock, Users, Building, Shield
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
 import { api } from '../api';
@@ -16,9 +16,13 @@ export default function Documents({
     hasPermission, docStats,
     getSearchSnippet, logs,
     navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex,
-    onRefresh
+    onRefresh, users, departments, currentUser, handleEditFolder
 }) {
     const [showHistory, setShowHistory] = useState(false);
+
+    // --- FOLDER MODAL STATE ---
+    const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
+    const [folderForm, setFolderForm] = useState({ id: '', name: '', privacy: 'public', allowedDepts: [], allowedUsers: [], owner: '' }); // privacy: 'public' | 'private' | 'dept' | 'user'
 
     // --- MANAGEMENT OPS STATE ---
     const [mgmtOp, setMgmtOp] = useState(null); // { type: 'copy' | 'move', itemType: 'file' | 'folder', item: any }
@@ -134,7 +138,12 @@ export default function Documents({
                     </button>
                     {hasPermission('documents', 'create') && (
                         <>
-                            <button onClick={handleCreateFolder} className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg font-medium flex items-center justify-center gap-2 transition-all">
+                            <button
+                                onClick={() => {
+                                    setFolderForm({ id: '', name: '', privacy: 'public', allowedDepts: [], allowedUsers: [], owner: '' });
+                                    setIsFolderModalOpen(true);
+                                }}
+                                className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg font-medium flex items-center justify-center gap-2 transition-all">
                                 <Plus size={18} /> Folder
                             </button>
                             <button
@@ -179,30 +188,73 @@ export default function Documents({
                     <h3 className="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wider">Folders</h3>
                 )}
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8 gap-4">
-                    {(folders || []).filter(f => (String(f.parentId) === String(currentFolderId) || (!f.parentId && currentFolderId === null)) && f.name.toLowerCase().includes(searchQuery.toLowerCase())).map(folder => (
+                    {(folders || []).filter(f => {
+                        // 1. Structure filter
+                        const structureMatch = (String(f.parentId) === String(currentFolderId) || (!f.parentId && currentFolderId === null));
+                        // 2. Search filter
+                        const searchMatch = f.name.toLowerCase().includes(searchQuery.toLowerCase());
+
+                        // 3. Permission Filter
+                        let accessMatch = true;
+                        if (currentUser?.role === 'admin') {
+                            accessMatch = true;
+                        } else if (f.privacy === 'private') {
+                            accessMatch = f.owner === currentUser?.name || f.owner === currentUser?.username;
+                        } else if (f.privacy === 'dept') {
+                            accessMatch = (f.allowedDepts || []).includes(currentUser?.department) || f.owner === currentUser?.name;
+                        } else if (f.privacy === 'user') {
+                            accessMatch = (f.allowedUsers || []).includes(currentUser?.username) || f.owner === currentUser?.name;
+                        }
+
+                        return structureMatch && searchMatch && accessMatch;
+                    }).map(folder => (
                         <div key={folder.id}
                             onClick={() => navigateFolder(folder.id)}
                             className="group relative flex flex-col items-center p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/10 hover:border-indigo-200 dark:hover:border-indigo-800 cursor-pointer transition-all shadow-sm aspect-[1/1.1]"
                         >
-                            <div className="flex-1 flex items-center justify-center w-full">
+                            <div className="flex-1 flex items-center justify-center w-full relative">
                                 <div className="w-16 h-16 rounded-2xl bg-amber-100 dark:bg-amber-900/30 text-amber-500 flex items-center justify-center group-hover:scale-110 transition-transform">
                                     <FolderOpen size={36} fill="currentColor" className="opacity-80" />
                                 </div>
+                                {/* Privacy Indicator Badge */}
+                                {folder.privacy !== 'public' && (
+                                    <div className="absolute -top-1 -right-1 w-6 h-6 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center border border-gray-200 dark:border-slate-700 shadow-sm" title={folder.privacy === 'private' ? 'Private' : folder.privacy === 'dept' ? 'Department' : 'Specific Users'}>
+                                        {folder.privacy === 'private' && <Lock size={12} className="text-red-500" />}
+                                        {folder.privacy === 'dept' && <Building size={12} className="text-blue-500" />}
+                                        {folder.privacy === 'user' && <User size={12} className="text-purple-500" />}
+                                    </div>
+                                )}
                             </div>
-                            <span className="font-medium text-gray-700 dark:text-gray-200 text-sm mt-3 text-center line-clamp-2 w-full break-words leading-tight px-1">
-                                {folder.name}
-                            </span>
+                            <div className="w-full text-center mt-3">
+                                <span className="font-medium text-gray-700 dark:text-gray-200 text-sm line-clamp-2 break-words leading-tight px-1">
+                                    {folder.name}
+                                </span>
+                                {/* Creator Info Tooltip/Text */}
+                                <div className="text-[10px] text-gray-400 mt-1 truncate">
+                                    Author: {folder.owner || 'Unknown'}
+                                </div>
+                            </div>
 
-                            {/* Actions Overlay */}
+                            {/* Actions Overlay - Only Check Edit/Delete Permissions + Ownership for some */}
                             <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                 {hasPermission('documents', 'edit') && (
                                     <>
                                         <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); }} className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600" title="Copy Folder"><Copy size={14} /></button>
                                         <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'folder', folder); }} className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600" title="Move Folder"><Move size={14} /></button>
                                         <button
-                                            onClick={(e) => { e.stopPropagation(); handleRenameFolder(e, folder); }}
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setFolderForm({
+                                                    id: folder.id,
+                                                    name: folder.name,
+                                                    privacy: folder.privacy || 'public',
+                                                    allowedDepts: folder.allowedDepts || [],
+                                                    allowedUsers: folder.allowedUsers || []
+                                                });
+                                                setIsFolderModalOpen(true);
+                                            }}
                                             className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-blue-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600"
-                                            title="Rename"
+                                            title="Edit Folder"
                                         >
                                             <PenLine size={14} />
                                         </button>
@@ -353,6 +405,125 @@ export default function Documents({
                                 </div>
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            {/* FOLDER MODAL */}
+            {isFolderModalOpen && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-md border border-gray-200 dark:border-slate-800 flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-200">
+                        <div className="p-6 border-b border-gray-100 dark:border-slate-800 flex justify-between items-center">
+                            <h3 className="text-xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                                {folderForm.id ? <Edit3 size={20} className="text-indigo-600" /> : <Plus size={20} className="text-indigo-600" />}
+                                {folderForm.id ? 'Edit Folder' : 'Buat Folder Baru'}
+                            </h3>
+                            <button onClick={() => setIsFolderModalOpen(false)} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-400 transition-colors"><X size={20} /></button>
+                        </div>
+                        <div className="p-6 space-y-4 overflow-y-auto">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Nama Folder</label>
+                                <input
+                                    value={folderForm.name}
+                                    onChange={(e) => setFolderForm({ ...folderForm, name: e.target.value })}
+                                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-950 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500"
+                                    placeholder="Contoh: Laporan Keuangan"
+                                    autoFocus
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Privasi & Akses</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {[
+                                        { id: 'public', label: 'Umum (Public)', icon: Users, desc: 'Semua user bisa lihat' },
+                                        { id: 'private', label: 'Pribadi (Private)', icon: Lock, desc: 'Hanya saya yang bisa lihat' },
+                                        { id: 'dept', label: 'Departemen', icon: Building, desc: 'Hanya departemen tertentu' },
+                                        { id: 'user', label: 'User Spesifik', icon: User, desc: 'Hanya user tertentu' }
+                                    ].map(type => (
+                                        <button
+                                            key={type.id}
+                                            onClick={() => setFolderForm({ ...folderForm, privacy: type.id })}
+                                            className={`p-3 rounded-lg border text-left transition-all ${folderForm.privacy === type.id
+                                                ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/20 ring-1 ring-indigo-500'
+                                                : 'border-gray-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-slate-600'
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <type.icon size={16} className={folderForm.privacy === type.id ? 'text-indigo-600' : 'text-gray-400'} />
+                                                <span className={`text-sm font-semibold ${folderForm.privacy === type.id ? 'text-indigo-700 dark:text-indigo-300' : 'text-gray-700 dark:text-gray-200'}`}>{type.label}</span>
+                                            </div>
+                                            <p className="text-[10px] text-gray-500 dark:text-slate-400 leading-tight">{type.desc}</p>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Conditional Inputs based on Privacy */}
+                            {folderForm.privacy === 'dept' && (
+                                <div className="animate-in slide-in-from-top-1">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Pilih Departemen</label>
+                                    <div className="max-h-40 overflow-y-auto border border-gray-200 dark:border-slate-700 rounded-lg p-2 space-y-1">
+                                        {(departments || []).map(dept => (
+                                            <label key={dept.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-slate-800 rounded cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={folderForm.allowedDepts.includes(dept.name)} // Ensure dept.name is consistent with DB
+                                                    onChange={(e) => {
+                                                        const newDepts = e.target.checked
+                                                            ? [...folderForm.allowedDepts, dept.name]
+                                                            : folderForm.allowedDepts.filter(d => d !== dept.name);
+                                                        setFolderForm({ ...folderForm, allowedDepts: newDepts });
+                                                    }}
+                                                    className="rounded text-indigo-600"
+                                                />
+                                                <span className="text-sm dark:text-white">{dept.name}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {folderForm.privacy === 'user' && (
+                                <div className="animate-in slide-in-from-top-1">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Pilih User</label>
+                                    <div className="max-h-40 overflow-y-auto border border-gray-200 dark:border-slate-700 rounded-lg p-2 space-y-1">
+                                        {(users || []).filter(u => u.username !== currentUser?.username).map(user => (
+                                            <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-gray-50 dark:hover:bg-slate-800 rounded cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={folderForm.allowedUsers.includes(user.username)}
+                                                    onChange={(e) => {
+                                                        const newUsers = e.target.checked
+                                                            ? [...folderForm.allowedUsers, user.username]
+                                                            : folderForm.allowedUsers.filter(u => u !== user.username);
+                                                        setFolderForm({ ...folderForm, allowedUsers: newUsers });
+                                                    }}
+                                                    className="rounded text-indigo-600"
+                                                />
+                                                <span className="text-sm dark:text-white">{user.name} ({user.department})</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <div className="p-6 border-t border-gray-100 dark:border-slate-800 flex justify-end gap-3 rounded-b-2xl bg-gray-50 dark:bg-slate-900/50">
+                            <button onClick={() => setIsFolderModalOpen(false)} className="px-4 py-2 text-gray-600 hover:bg-gray-200 dark:text-gray-300 dark:hover:bg-slate-700 rounded-lg text-sm font-medium">Batal</button>
+                            <button
+                                onClick={() => {
+                                    if (folderForm.id) {
+                                        handleEditFolder(null, { id: folderForm.id }, folderForm);
+                                    } else {
+                                        handleCreateFolder(folderForm);
+                                    }
+                                    setIsFolderModalOpen(false);
+                                }}
+                                disabled={!folderForm.name}
+                                className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium shadow-lg shadow-indigo-500/20 disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                {folderForm.id ? 'Simpan Perubahan' : 'Buat Folder'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

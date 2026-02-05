@@ -394,10 +394,15 @@ export default function App() {
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('inventory');
   const [selectedSlotId, setSelectedSlotId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState('details');
+  const [showExternalForm, setShowExternalForm] = useState(false);
+  const [externalDate, setExternalDate] = useState('');
+  const [showRestoreForm, setShowRestoreForm] = useState(false);
+  const [restoreTargetSlot, setRestoreTargetSlot] = useState('');
+  const [selectedExternalItem, setSelectedExternalItem] = useState(null);
   const fileInputRef = useRef(null);
   const excelInputRef = useRef(null);
 
@@ -439,6 +444,9 @@ export default function App() {
   // New Features State
   const [taxAudits, setTaxAudits] = useState([]);
   const [taxSummaries, setTaxSummaries] = useState([]);
+  const [activeInvTab, setActiveInvTab] = useState('internal'); // 'internal' | 'external'
+  const [externalItems, setExternalItems] = useState([]);
+
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
   const [departments, setDepartments] = useState([]);
@@ -460,6 +468,7 @@ export default function App() {
   });
 
   const [isLoading, setIsLoading] = useState(!!currentUser); // Start loading only if user is logged in
+  const [stats, setStats] = useState({ stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 });
 
 
   // --- DATA INITIALIZATION FROM API ---
@@ -483,6 +492,22 @@ export default function App() {
     setTaxAudits(data);
   };
 
+  const fetchInventory = async () => {
+    try {
+      const data = await api.getInventory();
+      setInventory(data);
+      const extData = await api.getExternalItems();
+      setExternalItems(extData);
+
+      const emptyCount = data.filter(s => s.status === 'EMPTY').length;
+      const borrowedCount = data.filter(s => s.status === 'BORROWED').length;
+      const auditCount = data.filter(s => s.status === 'AUDIT').length;
+      setStats({ empty: emptyCount, borrowed: borrowedCount, audit: auditCount });
+    } catch (error) {
+      console.error("Failed to fetch inventory", error);
+    }
+  };
+
   useEffect(() => {
     if (!currentUser) return; // Only fetch data if logged in
 
@@ -493,7 +518,7 @@ export default function App() {
         fetchFolders(),
         fetchLogs(),
         fetchTaxAudits(),
-        db.getInventory().then(setInventory),
+        fetchInventory(),
         db.getTaxSummaries().then(setTaxSummaries),
         db.getUsers().then(setUsers),
         db.getRoles().then(setRoles),
@@ -588,8 +613,12 @@ export default function App() {
 
     // Check granular permissions from roles state
     const userRoleData = roles.find(r => r.id === currentUser.role);
-    if (userRoleData && userRoleData.permissions && userRoleData.permissions[moduleId]) {
-      return userRoleData.permissions[moduleId].includes(action);
+    // Note: The database column is 'access', heavily dependent on server/db.js schema.
+    // Let's support both 'access' (from DB) and 'permissions' (legacy state?)
+    const rolePerms = userRoleData ? (userRoleData.access || userRoleData.permissions) : null;
+
+    if (rolePerms && rolePerms[moduleId]) {
+      return rolePerms[moduleId].includes(action);
     }
 
     // Simple role-based fallback
@@ -620,16 +649,6 @@ export default function App() {
     note,
     user: currentUser?.name || 'Admin'
   });
-
-  const stats = useMemo(() => {
-    if (!Array.isArray(inventory)) return { stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 };
-    const stored = inventory.filter(s => s.status === 'STORED').length;
-    const borrowed = inventory.filter(s => s.status === 'BORROWED').length;
-    const audit = inventory.filter(s => s.status === 'AUDIT').length;
-    const empty = inventory.filter(s => s.status === 'EMPTY').length;
-    const occupancy = ((stored + borrowed + audit) / TOTAL_SLOTS) * 100;
-    return { stored, borrowed, audit, empty, occupancy };
-  }, [inventory]);
 
   const docStats = useMemo(() => {
     if (!Array.isArray(docList)) return { totalDocs: 0, totalRevisions: 0, totalSizeMB: '0' };
@@ -678,6 +697,9 @@ export default function App() {
     setEditingItem(null);
     setShowMoveInput(false);
     setMoveTargetSlot('');
+    setMoveTargetSlot('');
+    setShowExternalForm(false);
+    setExternalDate('');
     setModalTab('details');
     setIsModalOpen(true);
   };
@@ -711,6 +733,21 @@ export default function App() {
   const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
 
   const handleSaveBox = async () => {
+    // Validation: Unique Box ID Check
+    const activeDuplicate = inventory.find(slot =>
+      slot.boxData?.id === boxForm.boxId && slot.id !== selectedSlotId
+    );
+    const externalDuplicate = externalItems.find(item => item.boxId === boxForm.boxId);
+
+    if (activeDuplicate) {
+      alert(`Box ID "${boxForm.boxId}" sudah ada di Slot #${activeDuplicate.id}. ID Box harus unik.`);
+      return;
+    }
+    if (externalDuplicate) {
+      alert(`Box ID "${boxForm.boxId}" sudah ada di Indoarsip/Eksternal. ID Box harus unik.`);
+      return;
+    }
+
     if (!selectedSlotId) return;
     const slotIndex = selectedSlotId - 1;
     const currentSlot = inventory[slotIndex];
@@ -786,21 +823,80 @@ export default function App() {
     }
   };
 
-  const handleExternalTransfer = async (destination) => {
-    if (!window.confirm(`Kirim ke ${destination}?`)) return;
+  const handleExternalTransfer = async (destination, date) => {
+    if (!window.confirm(`Kirim ke ${destination} pada tanggal ${date}?`)) return;
     const currentSlot = inventory[selectedSlotId - 1];
 
-    const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem(destination === 'Indoarsip' ? 'EXTERNAL' : 'REMOVED', `Dikirim ke ${destination}`)] };
-
     try {
+      // 1. Save to External Items
+      if (currentSlot.boxData) {
+        await api.createExternalItem({
+          boxId: currentSlot.boxData.id,
+          destination: destination,
+          sentDate: date ? new Date(date).toISOString() : new Date().toISOString(),
+          sender: currentUser?.name || 'Admin',
+          boxData: currentSlot.boxData,
+          history: currentSlot.history || []
+        });
+      }
+
+      // 2. Clear Internal Slot
+      const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem(destination === 'Indoarsip' ? 'EXTERNAL' : 'REMOVED', `Dikirim ke ${destination} (${date})`)] };
+
       await api.updateInventory(selectedSlotId, updatedSlot);
-      const updatedData = await api.getInventory();
-      setInventory(updatedData);
+      await fetchInventory();
       addLog(currentUser?.name || 'Admin', 'Barang Keluar', `Kardus ke ${destination}`);
       setIsModalOpen(false);
+      setShowExternalForm(false);
     } catch (error) {
       alert("Gagal transfer keluar: " + error.message);
     }
+  };
+
+  const handleRestoreExternal = async () => {
+    if (!restoreTargetSlot) return alert("Pilih slot tujuan!");
+    const targetId = parseInt(restoreTargetSlot);
+    if (isNaN(targetId) || targetId < 1 || targetId > TOTAL_SLOTS) return alert("Slot tidak valid!");
+
+    const targetSlot = inventory[targetId - 1];
+    if (targetSlot.status !== 'EMPTY') return alert(`Slot #${targetId} tidak kosong!`);
+
+    if (!window.confirm(`Kembalikan Box ${selectedExternalItem.boxId} ke Slot #${targetId}?`)) return;
+
+    try {
+      // 1. Update Inventory Slot
+      const updatedSlot = {
+        ...targetSlot,
+        status: 'STORED',
+        boxData: { ...selectedExternalItem.boxData }, // Restore box data
+        lastUpdated: new Date().toISOString(),
+        history: [...(selectedExternalItem.history || []), createHistoryItem('RESTORED', `Dikembalikan dari ${selectedExternalItem.destination}`)]
+      };
+
+      await api.updateInventory(targetId, updatedSlot);
+
+      // 2. Delete from External
+      await api.deleteExternalItem(selectedExternalItem.id);
+
+      await fetchInventory();
+      addLog(currentUser?.name || 'Admin', 'Barang Masuk (Restore)', `Restore ${selectedExternalItem.boxId} dari ${selectedExternalItem.destination}`);
+
+      setShowRestoreForm(false);
+      setRestoreTargetSlot('');
+      setSelectedExternalItem(null);
+      setIsModalOpen(false); // Close generic modal if open?
+    } catch (error) {
+      alert("Gagal restore: " + error.message);
+    }
+  };
+
+  const handleViewExternal = (item) => {
+    setBoxForm({ boxId: item.boxId, ordners: item.boxData?.ordners || [] });
+    setSelectedExternalItem(item); // Set this so we can access history
+    setModalTab('details');
+    setSelectedSlotId(null);
+    setEditingItem(null);
+    setIsModalOpen(true);
   };
 
   const handleEmptySlot = async () => {
@@ -1263,24 +1359,32 @@ export default function App() {
     addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
   };
 
-  const handleCreateFolder = async () => {
-    const name = prompt("Nama Folder Baru:");
-    if (name) {
-      await db.createFolder({ name, parent_id: currentFolderId, created_by: currentUser?.name });
+  const handleCreateFolder = async (folderData) => {
+    // folderData = { name, privacy, allowedDepts, allowedUsers }
+    if (!folderData || !folderData.name) return;
+
+    try {
+      await api.createFolder({
+        ...folderData,
+        parent_id: currentFolderId,
+        owner: currentUser?.name || 'Admin'
+      });
       await fetchFolders();
       await fetchLogs();
-      addLog(currentUser?.name, 'Create Folder', name);
-    }
+      addLog(currentUser?.name, 'Create Folder', `Folder: ${folderData.name} (${folderData.privacy})`);
+    } catch (e) { alert(e.message); }
   };
 
-  const handleRenameFolder = async (e, folder) => {
-    e.stopPropagation();
-    const newName = prompt("Nama Folder Baru:", folder.name);
-    if (newName && newName !== folder.name) {
-      await db.updateFolder(folder.id, { name: newName });
-      setFolders(await db.getFolders());
-      addLog(currentUser?.name, 'Rename Folder', `${folder.name} -> ${newName}`);
-    }
+  const handleEditFolder = async (e, folder, newData) => {
+    // newData = { name, privacy, allowedDepts, allowedUsers }
+    if (e) e.stopPropagation();
+    if (!newData || !newData.name) return;
+
+    try {
+      await api.updateFolder(folder.id, newData);
+      setFolders(await api.getFolders());
+      addLog(currentUser?.name, 'Update Folder', `${folder.name} -> ${newData.name}`);
+    } catch (e) { alert(e.message); }
   };
 
   const handleRenameDoc = async (e, doc) => {
@@ -1358,7 +1462,10 @@ export default function App() {
                 { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Pemeriksaan' },
                 { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
                 { id: 'master', icon: Settings, label: 'Master Data' },
-              ].map(item => (
+              ].filter(item => {
+                if (item.id === 'master') return hasPermission('master', 'view');
+                return true;
+              }).map(item => (
                 <button
                   key={item.id}
                   onClick={() => setActiveTab(item.id)}
@@ -1427,7 +1534,19 @@ export default function App() {
                   handleExcelImport={handleExcelImport} // Note: handleExcelImport might need to be created if it was inline or missing? wait, checking
                   downloadTemplate={downloadTemplate} // check if exists
                   excelInputRef={excelInputRef}
+                  handleExportInventory={handleExportInventory}
+                  inventorySearchQuery={inventorySearchQuery}
+                  setInventorySearchQuery={setInventorySearchQuery}
                   hasPermission={hasPermission}
+                  activeInvTab={activeInvTab}
+                  setActiveInvTab={setActiveInvTab}
+                  externalItems={externalItems}
+                  onRestoreExternal={(item) => {
+                    setSelectedExternalItem(item);
+                    setRestoreTargetSlot(''); // Reset selection
+                    setShowRestoreForm(true);
+                  }}
+                  onViewExternal={handleViewExternal}
                 />
               )}
               {activeTab === 'documents' && (
@@ -1445,7 +1564,8 @@ export default function App() {
                   setSearchQuery={setSearchQuery}
                   handleCreateFolder={handleCreateFolder}
                   handleDeleteFolder={handleDeleteFolder}
-                  handleRenameFolder={handleRenameFolder}
+                  // handleRenameFolder removed, replaced by handleEditFolder passed below
+                  // handleRenameFolder={handleRenameFolder} 
                   handleViewDoc={handleViewDoc}
                   handleEditDoc={handleEditDoc}
                   handleDeleteDoc={handleDeleteDoc}
@@ -1458,6 +1578,10 @@ export default function App() {
                   getSearchSnippet={getSearchSnippet}
                   logs={logs}
                   onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
+                  users={users}
+                  departments={departments}
+                  currentUser={currentUser}
+                  handleEditFolder={handleEditFolder}
                 />
               )}
               {activeTab === 'tax-monitoring' && (
@@ -1508,6 +1632,41 @@ export default function App() {
         </div>
 
         {/* MODAL SYSTEM */}
+        {/* Restore Modal Overlay - Moved to Top Level */}
+        {showRestoreForm && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in">
+            <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-2xl w-full max-w-sm border border-indigo-200 dark:border-indigo-900">
+              <h3 className="text-lg font-bold mb-4 dark:text-white">Kembalikan ke Gudang Internal</h3>
+              <p className="text-sm text-gray-500 mb-4">Pilih slot kosong untuk menyimpan kembali Box <b>{selectedExternalItem?.boxId}</b>:</p>
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-bold text-gray-700 dark:text-gray-300">Pilih Slot Kosong:</label>
+                  <select
+                    className="w-full border rounded p-2 dark:bg-slate-800 dark:text-white text-sm"
+                    value={restoreTargetSlot}
+                    onChange={(e) => setRestoreTargetSlot(e.target.value)}
+                  >
+                    <option value="">-- Pilih Slot --</option>
+                    {inventory.filter(s => s.status === 'EMPTY').map(s => (
+                      <option key={s.id} value={s.id}>Slot #{s.id}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex gap-2 justify-end mt-4">
+                  <button onClick={() => setShowRestoreForm(false)} className="px-3 py-2 text-gray-500 hover:bg-gray-100 rounded text-sm">Batal</button>
+                  <button
+                    onClick={handleRestoreExternal}
+                    disabled={!restoreTargetSlot}
+                    className={`px-3 py-2 text-white rounded text-sm ${!restoreTargetSlot ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+                  >
+                    Konfirmasi Masuk Gudang
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <Modal
           isOpen={isModalOpen}
           onClose={() => setIsModalOpen(false)}
@@ -1519,7 +1678,7 @@ export default function App() {
                     : 'Master Data')
               : activeTab === 'documents'
                 ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
-                : `Slot #${selectedSlotId}`
+                : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
           }
         >
           {activeTab === 'documents' && modalTab === 'upload' && (
@@ -1586,7 +1745,7 @@ export default function App() {
             <div className="space-y-6">
               <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
                 <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-                  <Package size={16} /> Slot #{selectedSlotId}
+                  <Package size={16} /> {selectedSlotId ? `Slot #${selectedSlotId}` : 'External Item'}
                   <ChevronRight size={14} />
                   <input
                     type="text"
@@ -1687,7 +1846,7 @@ export default function App() {
 
                 {modalTab === 'history' && (
                   <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
-                    {inventory[selectedSlotId - 1]?.history?.slice().reverse().map((hist, idx) => (
+                    {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
                       <div key={idx} className="relative">
                         <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
                         <div className="text-sm">
@@ -1698,7 +1857,7 @@ export default function App() {
                         <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
                       </div>
                     ))}
-                    {(!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
+                    {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
                   </div>
                 )}
               </div>
@@ -1707,7 +1866,7 @@ export default function App() {
               <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
                 {/* Row 1: Save & Primary Actions */}
                 <div className="flex justify-end gap-2">
-                  {hasPermission('inventory', 'edit') && (
+                  {selectedSlotId && hasPermission('inventory', 'edit') && (
                     <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
                       <ArrowLeftRight size={16} /> Pindah Slot
                     </button>
@@ -1715,7 +1874,7 @@ export default function App() {
                   <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
                     <Printer size={16} /> Cetak Label
                   </button>
-                  {hasPermission('inventory', 'edit') && (
+                  {selectedSlotId && hasPermission('inventory', 'edit') && (
                     <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
                       <CheckCircle2 size={16} /> Simpan Data
                     </button>
@@ -1738,11 +1897,11 @@ export default function App() {
                 )}
 
                 {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
-                {inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
+                {selectedSlotId && inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
                   <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
                     {hasPermission('inventory', 'edit') && (
                       <>
-                        {inventory[selectedSlotId - 1]?.status === 'BORROWED' ? (
+                        {(inventory[selectedSlotId - 1]?.status === 'BORROWED' || inventory[selectedSlotId - 1]?.status === 'AUDIT') ? (
                           <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
                             <CheckCircle2 size={14} /> Kembalikan (Return)
                           </button>
@@ -1754,7 +1913,10 @@ export default function App() {
                         <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
                           <AlertCircle size={14} /> Set Audit
                         </button>
-                        <button onClick={() => handleExternalTransfer('Indoarsip')} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
+                        <button onClick={() => {
+                          setShowExternalForm(true);
+                          setExternalDate(new Date().toISOString().split('T')[0]);
+                        }} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
                           <Truck size={14} /> Kirim ke Indoarsip
                         </button>
                       </>
@@ -1764,6 +1926,31 @@ export default function App() {
                         <LogOut size={14} /> Hapus / Kosongkan
                       </button>
                     )}
+                  </div>
+                )}
+
+                {/* Date Picker for External Transfer */}
+                {showExternalForm && (
+                  <div className="flex gap-2 items-center bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
+                    <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Tanggal Kirim:</span>
+                    <input
+                      type="date"
+                      value={externalDate}
+                      onChange={(e) => setExternalDate(e.target.value)}
+                      className="text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                    />
+                    <button
+                      onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
+                      className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
+                    >
+                      Kirim
+                    </button>
+                    <button
+                      onClick={() => setShowExternalForm(false)}
+                      className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-slate-400 text-xs"
+                    >
+                      Batal
+                    </button>
                   </div>
                 )}
               </div>

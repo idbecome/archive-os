@@ -147,6 +147,38 @@ app.put('/api/inventory/:id', (req, res) => {
     );
 });
 
+// --- EXTERNAL ITEMS (INDOARSIP) ---
+app.get('/api/inventory/external', (req, res) => {
+    db.all("SELECT * FROM external_items ORDER BY sentDate DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows.map(r => ({
+            ...r,
+            boxData: JSON.parse(r.boxData || '{}'),
+            history: JSON.parse(r.history || '[]')
+        })));
+    });
+});
+
+app.post('/api/inventory/external', (req, res) => {
+    const { boxId, destination, sentDate, sender, boxData, history } = req.body;
+    db.run("INSERT INTO external_items (boxId, destination, sentDate, sender, boxData, history) VALUES (?, ?, ?, ?, ?, ?)",
+        [boxId, destination, sentDate, sender, JSON.stringify(boxData), JSON.stringify(history)],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.delete('/api/inventory/external/:id', (req, res) => {
+    db.run("DELETE FROM external_items WHERE id = ?", [req.params.id],
+        (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
 // --- LOGS ---
 app.get('/api/logs', (req, res) => {
     db.all("SELECT * FROM logs ORDER BY id DESC LIMIT 100", [], (err, rows) => {
