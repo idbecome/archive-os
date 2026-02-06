@@ -1846,12 +1846,23 @@ export default function App() {
             ) : (
               <>
                 <div
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
+                  className={`group relative flex flex-col items-center justify-center border-dashed rounded-2xl p-10 text-center transition-all duration-300 cursor-pointer ${uploadForm.fileData ? 'border-2 border-indigo-500 bg-indigo-50/30 dark:bg-indigo-900/10' : 'border border-slate-200 dark:border-slate-700 hover:border-indigo-300 hover:bg-slate-50/50 dark:hover:bg-slate-800/30'}`}
                   onClick={() => fileInputRef.current.click()}
                 >
                   <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-                  <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
-                  <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
+
+                  <div className="mb-4 p-4 rounded-full bg-slate-50 dark:bg-slate-800 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition-colors duration-300">
+                    <UploadCloud className="text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors duration-300" size={32} />
+                  </div>
+
+                  <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                    {uploadForm.title || 'Klik di sini untuk upload file'}
+                  </p>
+                  {!uploadForm.title && (
+                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-medium uppercase tracking-wider">
+                      PDF atau Gambar (Max 30MB)
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
