@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
 import { api } from '../api';
+import Modal from '../components/common/Modal';
 
 const AUDIT_STEPS = [
     { id: 1, title: "Persiapan", description: "Pemeriksaan & Penerbitan SP2" },
@@ -272,22 +273,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                         reader.readAsDataURL(newAuditFile);
                     });
 
-                        const doc = {
-                            id: String(Date.now() + 1),
-                            title: newAuditFile.name,
-                            type: newAuditFile.type,
-                            size: (newAuditFile.size / 1024).toFixed(1) + ' KB',
-                            uploadDate: new Date().toISOString(),
-                            auditId: currentAuditId,
-                            stepIndex: 0,
-                            fileData: base64,
-                            file_data: base64, // RESTORED: Pastikan data terkirim ke backend
-                            filedata: base64, // RESTORED: Backend mungkin menggunakan lowercase
-                            folderId: folderId,
-                            department: 'Tax',
-                            owner: currentUser?.name || 'Admin',
-                            ocrContent: 'Initial attachment'
-                        };
+                    const doc = {
+                        id: String(Date.now() + 1),
+                        title: newAuditFile.name,
+                        type: newAuditFile.type,
+                        size: (newAuditFile.size / 1024).toFixed(1) + ' KB',
+                        uploadDate: new Date().toISOString(),
+                        auditId: currentAuditId,
+                        stepIndex: 0,
+                        fileData: base64,
+                        file_data: base64, // RESTORED: Pastikan data terkirim ke backend
+                        filedata: base64, // RESTORED: Backend mungkin menggunakan lowercase
+                        folderId: folderId,
+                        department: 'Tax',
+                        owner: currentUser?.name || 'Admin',
+                        ocrContent: 'Initial attachment'
+                    };
                     await api.createDocument(doc);
                 }
             }
@@ -860,7 +861,17 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                 </div>
                                 {hasPermission('tax-monitoring', 'create') && (
                                     <label className="block w-full cursor-pointer">
-                                        <div className="w-full py-3 border-2 border-dashed border-indigo-300 dark:border-indigo-800 rounded-lg flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 transition-colors">{isUploadingFile ? <span className="animate-pulse">Uploading...</span> : <><UploadCloud size={24} className="mb-1" /><span className="text-xs font-semibold">Upload File</span></>}</div>
+                                        <div className="w-full py-6 px-6 bg-white dark:bg-slate-800 border-2 border-dashed border-indigo-300 dark:border-indigo-700 rounded-2xl flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all shadow-sm group">
+                                            {isUploadingFile ? (
+                                                <span className="animate-pulse font-bold text-sm">Uploading...</span>
+                                            ) : (
+                                                <>
+                                                    <UploadCloud size={32} className="mb-2 group-hover:scale-110 transition-transform" />
+                                                    <span className="text-sm font-bold">Upload File</span>
+                                                    <span className="text-xs text-slate-400 mt-1">Klik untuk pilih file</span>
+                                                </>
+                                            )}
+                                        </div>
                                         <input type="file" className="hidden" onChange={handleFileUpload} />
                                     </label>
                                 )}
@@ -872,35 +883,98 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             }
 
             {/* SINGLE MODAL AT THE END */}
-            {
-                isCreateModalOpen && (
-                    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-xl w-[500px]">
-                            <h3 className="font-bold text-lg mb-4 dark:text-white">{editingAudit ? 'Edit Pemeriksaan' : 'Pemeriksaan Baru'}</h3>
-                            <div className="space-y-3">
-                                <input className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" placeholder="Judul / Nama WP" value={newAuditTitle} onChange={e => setNewAuditTitle(e.target.value)} />
-                                <input className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" placeholder="Nomor Surat Perintah (SP2)" value={newAuditLetter} onChange={e => setNewAuditLetter(e.target.value)} />
-                                <div className="flex gap-2">
-                                    <div className="flex-1">
-                                        <label className="text-xs text-gray-500 block mb-1">Tanggal Mulai</label>
-                                        <input type="date" className="w-full p-2 border rounded-lg bg-gray-50 dark:bg-slate-800 dark:text-white dark:border-slate-700" value={newAuditDate} onChange={e => setNewAuditDate(e.target.value)} />
-                                    </div>
-                                    {!editingAudit && (
-                                        <div className="flex-1">
-                                            <label className="text-xs text-gray-500 block mb-1">Upload Surat (Opsional)</label>
-                                            <input type="file" className="w-full text-xs" onChange={e => setNewAuditFile(e.target.files[0])} />
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                            <div className="flex justify-end gap-2 mt-6">
-                                <button onClick={() => setIsCreateModalOpen(false)} className="px-4 py-2 text-gray-500 hover:bg-gray-100 rounded-lg">Batal</button>
-                                <button onClick={handleSaveAudit} disabled={!newAuditTitle || isSaving} className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:opacity-50">{isSaving ? 'Menyimpan...' : 'Simpan'}</button>
-                            </div>
+            <Modal
+                isOpen={isCreateModalOpen}
+                onClose={() => setIsCreateModalOpen(false)}
+                title={editingAudit ? 'Edit Pemeriksaan' : 'Pemeriksaan Baru'}
+                size="max-w-xl"
+            >
+                <div className="space-y-6">
+                    <div className="flex justify-between items-center mb-6">
+                        <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center shadow-inner">
+                            <ClipboardCheck size={28} />
+                        </div>
+                        <div className="text-right">
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Status Pemeriksaan</p>
+                            <span className="px-3 py-1 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded-full text-xs font-black uppercase tracking-tight">On Progress</span>
                         </div>
                     </div>
-                )
-            }
+
+                    <div className="space-y-5">
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">Judul / Nama Wajib Pajak</label>
+                            <input
+                                className="w-full px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-2xl focus:border-indigo-500 transition-all outline-none dark:text-white font-black text-lg"
+                                placeholder="Contoh: PT. Sumber Makmur - PPN 2023"
+                                value={newAuditTitle}
+                                onChange={e => setNewAuditTitle(e.target.value)}
+                            />
+                        </div>
+
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">Nomor Surat Perintah (SP2)</label>
+                            <input
+                                className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-xl focus:border-indigo-500 transition-all outline-none dark:text-white font-bold"
+                                placeholder="No. PRIN-000/WPJ.00/KP.0000/2024"
+                                value={newAuditLetter}
+                                onChange={e => setNewAuditLetter(e.target.value)}
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">Tanggal Mulai</label>
+                                <div className="relative">
+                                    <input
+                                        type="date"
+                                        className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-xl focus:border-indigo-500 transition-all outline-none dark:text-white font-bold"
+                                        value={newAuditDate}
+                                        onChange={e => setNewAuditDate(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                            {!editingAudit && (
+                                <div className="space-y-2">
+                                    <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">Lampiran SP2 (Opsional)</label>
+                                    <label className="flex items-center gap-3 px-5 py-3 bg-white dark:bg-slate-800 border-2 border-dashed border-indigo-300 dark:border-indigo-700 rounded-2xl cursor-pointer hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all group shadow-sm">
+                                        <UploadCloud size={20} className="text-indigo-500 group-hover:scale-110 transition-transform" />
+                                        <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 truncate">
+                                            {newAuditFile ? newAuditFile.name : 'Pilih File...'}
+                                        </span>
+                                        <input type="file" className="hidden" onChange={e => setNewAuditFile(e.target.files[0])} />
+                                    </label>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="flex gap-3 pt-6 mt-2 border-t border-slate-100 dark:border-slate-800">
+                        <button
+                            onClick={() => setIsCreateModalOpen(false)}
+                            className="flex-1 py-4 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white text-xs font-black uppercase tracking-widest transition-all"
+                        >
+                            Batalkan
+                        </button>
+                        <button
+                            onClick={handleSaveAudit}
+                            disabled={!newAuditTitle || isSaving}
+                            className="flex-[2] py-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-xl shadow-indigo-600/30 hover:shadow-indigo-600/50 hover:-translate-y-0.5 transition-all active:scale-95 disabled:opacity-50"
+                        >
+                            {isSaving ? (
+                                <span className="flex items-center justify-center gap-2">
+                                    <div className="w-3 h-3 border-2 border-white rounded-full animate-spin border-t-transparent" />
+                                    Menyimpan...
+                                </span>
+                            ) : (
+                                <span className="flex items-center justify-center gap-2">
+                                    <Save size={16} />
+                                    {editingAudit ? 'Simpan Perubahan' : 'Mulai Pemeriksaan'}
+                                </span>
+                            )}
+                        </button>
+                    </div>
+                </div>
+            </Modal>
         </div >
     );
 }

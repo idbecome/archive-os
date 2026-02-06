@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { api } from './api';
-import { performAdvancedOCR } from './utils/ocr';
 import * as XLSX from 'xlsx';
+import { db as api } from './services/database';
+import { TOTAL_SLOTS, getStatusStyle } from './utils/constants'; // Import constants
+import { checkPermission, APP_MODULES } from './utils/permissions';
+import { performAdvancedOCR } from './utils/ocr';
+import Sidebar from './components/layout/Sidebar';
+import Modal from './components/common/Modal';
 
 import {
   Package,
@@ -66,310 +70,20 @@ import TaxMonitoring from './pages/TaxMonitoring';
 import TaxSummary from './pages/TaxSummary';
 import MasterData from './pages/MasterData';
 
-// --- DATABASE ADAPTER (LAYER DATA) ---
+// --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
 const API_URL = 'http://localhost:5000/api';
+// The `db` object definition is removed here as it is imported.
+// The `// --- DATABASE ADAPTER (LAYER DATA) ---` block is removed.
 
-const db = {
-  async getInventory() {
-    try {
-      const response = await fetch(`${API_URL}/inventory`);
-      if (!response.ok) throw new Error('Gagal mengambil data');
-      const data = await response.json();
 
-      return data.map(slot => ({
-        ...slot,
-        history: slot.history || [],
-        boxData: slot.box_data || slot.boxData
-      }));
-    } catch (error) {
-      console.error("DB Error (Inventory):", error);
-      return [];
-    }
-  },
+// Database adapter imported from ./services/database
 
-  async saveInventory(data) {
-    try {
-      await fetch(`${API_URL}/inventory`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal menyimpan inventory", e); }
-  },
-
-  async getLogs() {
-    try {
-      const response = await fetch(`${API_URL}/logs`);
-      return await response.json();
-    } catch { return []; }
-  },
-
-  async saveLogs(data) {
-    try {
-      const latestLog = data[0];
-      await fetch(`${API_URL}/logs`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(latestLog)
-      });
-    } catch (e) { console.error("Gagal menyimpan logs", e); }
-  },
-
-  async getDocs() {
-    try {
-      const response = await fetch(`${API_URL}/documents`);
-      const data = await response.json();
-      return data.map(doc => ({
-        ...doc,
-        fileData: doc.fileData || doc.file_data || doc.filedata,
-        versionsHistory: doc.versions_history || []
-      }));
-    } catch { return []; }
-  },
-
-  // NEW: Ambil detail dokumen (termasuk fileData) jika di list kosong
-  async getDocumentById(id) {
-    try {
-      const response = await fetch(`${API_URL}/documents/${id}`);
-      if (!response.ok) throw new Error('Gagal mengambil detail dokumen');
-      const doc = await response.json();
-      return {
-        ...doc,
-        fileData: doc.fileData || doc.file_data || doc.filedata
-      };
-    } catch (e) { console.error(e); return null; }
-  },
-
-  async saveDocs(data) {
-    try {
-      await fetch(`${API_URL}/documents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal menyimpan dokumen", e); }
-
-  },
-
-  async getFolders() {
-    try {
-      const response = await fetch(`${API_URL}/folders`);
-      return await response.json();
-    } catch { return []; }
-  },
-
-  async createFolder(folder) {
-    try {
-      await fetch(`${API_URL}/folders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(folder)
-      });
-    } catch (e) { console.error("Gagal membuat folder", e); }
-  },
-
-  async updateFolder(id, data) {
-    try {
-      await fetch(`${API_URL}/folders/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal update folder", e); }
-  },
-
-  async deleteFolder(id) {
-    try {
-      await fetch(`${API_URL}/folders/${id}`, { method: 'DELETE' });
-    } catch (e) { console.error("Gagal hapus folder", e); }
-  },
-
-  async getTaxAudits() {
-    try {
-      const response = await fetch(`${API_URL}/tax-audits`);
-      return await response.json();
-    } catch { return []; }
-  },
-  async getTaxSummaries() {
-    return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
-  },
-  async getUsers() {
-    try {
-      const response = await fetch(`${API_URL}/users`);
-      return await response.json();
-    } catch { return []; }
-  },
-  async getRoles() {
-    try {
-      const response = await fetch(`${API_URL}/roles`);
-      return await response.json();
-    } catch { return []; }
-  },
-  async getDepartments() {
-    try {
-      const response = await fetch(`${API_URL}/departments`);
-      return await response.json();
-    } catch { return []; }
-  },
-
-  async createUser(data) {
-    try {
-      await fetch(`${API_URL}/users`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal membuat user", e); }
-  },
-
-  async updateUser(id, data) {
-    try {
-      await fetch(`${API_URL}/users/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal update user", e); }
-  },
-
-  async deleteUser(id) {
-    try {
-      await fetch(`${API_URL}/users/${id}`, { method: 'DELETE' });
-    } catch (e) { console.error("Gagal hapus user", e); }
-  },
-
-  async createRole(data) {
-    try {
-      await fetch(`${API_URL}/roles`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal membuat role", e); }
-  },
-
-  async updateRole(id, data) {
-    try {
-      await fetch(`${API_URL}/roles/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal update role", e); }
-  },
-
-  async deleteRole(id) {
-    try {
-      await fetch(`${API_URL}/roles/${id}`, { method: 'DELETE' });
-    } catch (e) { console.error("Gagal hapus role", e); }
-  },
-
-  async saveTaxSummary(data) {
-    try {
-      await fetch(`${API_URL}/tax-summaries`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-      });
-    } catch (e) { console.error("Gagal menyimpan tax summary", e); }
-  },
-
-  async createDepartment(name) {
-    try {
-      await fetch(`${API_URL}/departments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name })
-      });
-    } catch (e) { console.error("Gagal membuat dept", e); }
-  },
-
-  async deleteDepartment(id) {
-    try {
-      await fetch(`${API_URL}/departments/${id}`, { method: 'DELETE' });
-    } catch (e) { console.error("Gagal hapus dept", e); }
-  }
-};
-
-// --- INITIAL DATA & CONSTANTS ---
-
-const TOTAL_SLOTS = 100;
-
-const getStatusStyle = (status) => {
-  switch (status) {
-    case 'STORED': return {
-      label: 'Tersimpan',
-      color: 'bg-emerald-100 border-emerald-300 text-emerald-700 dark:bg-emerald-500/20 dark:border-emerald-500/50 dark:text-emerald-400',
-      icon: CheckCircle2
-    };
-    case 'BORROWED': return {
-      label: 'Dipinjam',
-      color: 'bg-amber-100 border-amber-300 text-amber-700 dark:bg-amber-500/20 dark:border-amber-500/50 dark:text-amber-400',
-      icon: Clock
-    };
-    case 'AUDIT': return {
-      label: 'Sedang Audit',
-      color: 'bg-purple-100 border-purple-300 text-purple-700 dark:bg-purple-500/20 dark:border-purple-500/50 dark:text-purple-400',
-      icon: AlertCircle
-    };
-    case 'MOVED': return {
-      label: 'Pindah Rak',
-      color: 'bg-blue-100 border-blue-300 text-blue-700 dark:bg-blue-500/20 dark:border-blue-500/50 dark:text-blue-400',
-      icon: ArrowLeftRight
-    };
-    case 'EXTERNAL': return {
-      label: 'Indoarsip',
-      color: 'bg-indigo-100 border-indigo-300 text-indigo-700 dark:bg-indigo-500/20 dark:border-indigo-500/50 dark:text-indigo-400',
-      icon: Truck
-    };
-    case 'REMOVED': return {
-      label: 'Keluar',
-      color: 'bg-red-100 border-red-300 text-red-700 dark:bg-red-500/20 dark:border-red-500/50 dark:text-red-400',
-      icon: LogOut
-    };
-    case 'IMPORTED': return {
-      label: 'Import Excel',
-      color: 'bg-green-100 border-green-300 text-green-700 dark:bg-green-500/20 dark:border-green-500/50 dark:text-green-400',
-      icon: FileSpreadsheet
-    };
-    default: return {
-      label: 'Tersedia',
-      color: 'bg-slate-100 border-slate-300 text-slate-500 dark:bg-slate-800/50 dark:border-slate-700 dark:text-slate-500',
-      icon: null
-    };
-  }
-};
-
-// --- PERMISSIONS SYSTEM ---
-const APP_MODULES = {
-  DASHBOARD: { id: 'dashboard', label: 'Dashboard', actions: ['view'] },
-  INVENTORY: { id: 'inventory', label: 'Rak Gudang', actions: ['view', 'create', 'edit', 'delete'] },
-  DOCUMENTS: { id: 'documents', label: 'Dokumen Digital', actions: ['view', 'create', 'edit', 'delete'] },
-  TAX_MONITORING: { id: 'tax-monitoring', label: 'Monitoring Pemeriksaan', actions: ['view', 'create', 'edit', 'delete'] },
-  TAX_SUMMARY: { id: 'tax-summary', label: 'Tax Summary', actions: ['view', 'create', 'edit', 'delete'] },
-  MASTER_DATA: { id: 'master', label: 'Master Data', actions: ['view', 'create', 'edit', 'delete'] }
-};
+// Constants imported from ./utils/constants
+// Permissions logic imported from ./utils/permissions
 
 // --- COMPONENTS ---
 
-const Modal = ({ isOpen, onClose, title, children, size = 'max-w-4xl' }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className={`bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 w-full ${size} max-h-[90vh] overflow-y-auto rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 transition-colors duration-300`}>
-        <div className="flex justify-between items-center p-6 border-b border-gray-200 dark:border-slate-800 sticky top-0 bg-white dark:bg-slate-900 z-10">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white">{title}</h2>
-          <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white transition-colors">
-            <X size={20} />
-          </button>
-        </div>
-        <div className="p-6">
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-};
+// Modal imported from ./components/common/Modal
 
 // --- MAIN APPLICATION ---
 
@@ -472,22 +186,22 @@ export default function App() {
 
   // --- DATA INITIALIZATION FROM API ---
   const fetchDocs = async () => {
-    const data = await db.getDocs();
+    const data = await api.getDocs();
     setDocList(data);
   };
 
   const fetchFolders = async () => {
-    const data = await db.getFolders();
+    const data = await api.getFolders();
     setFolders(data);
   };
 
   const fetchLogs = async () => {
-    const data = await db.getLogs();
+    const data = await api.getLogs();
     setLogs(data);
   };
 
   const fetchTaxAudits = async () => {
-    const data = await db.getTaxAudits();
+    const data = await api.getTaxAudits();
     setTaxAudits(data);
   };
 
@@ -498,10 +212,10 @@ export default function App() {
       const extData = await api.getExternalItems();
       setExternalItems(extData);
 
-      const emptyCount = data.filter(s => s.status === 'EMPTY').length;
-      const borrowedCount = data.filter(s => s.status === 'BORROWED').length;
-      const auditCount = data.filter(s => s.status === 'AUDIT').length;
-      const storedCount = data.filter(s => s.status === 'STORED').length;
+      const emptyCount = data.filter(s => (s.status || 'EMPTY').toUpperCase() === 'EMPTY').length;
+      const borrowedCount = data.filter(s => (s.status || '').toUpperCase() === 'BORROWED').length;
+      const auditCount = data.filter(s => (s.status || '').toUpperCase() === 'AUDIT').length;
+      const storedCount = data.filter(s => (s.status || '').toUpperCase() === 'STORED').length;
       const occupancyRate = ((TOTAL_SLOTS - emptyCount) / TOTAL_SLOTS) * 100;
 
       setStats({
@@ -527,10 +241,10 @@ export default function App() {
         fetchLogs(),
         fetchTaxAudits(),
         fetchInventory(),
-        db.getTaxSummaries().then(setTaxSummaries),
-        db.getUsers().then(setUsers),
-        db.getRoles().then(setRoles),
-        db.getDepartments().then(setDepartments)
+        api.getTaxSummaries().then(setTaxSummaries),
+        api.getUsers().then(setUsers),
+        api.getRoles().then(setRoles),
+        api.getDepartments().then(setDepartments)
       ]);
       setIsLoading(false);
     };
@@ -572,37 +286,11 @@ export default function App() {
   // Temp State
   const [newOrdner, setNewOrdner] = useState({ noOrdner: '', period: '' });
   const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '', paymentDate: '' });
-  const [activeOrdnerId, setActiveOrdnerId] = useState(null);
+  const [expandedOrdnerIds, setExpandedOrdnerIds] = useState([]);
 
   // --- INITIALIZATION ---
 
-  useEffect(() => {
-    // 1. Load PDF.js
-    const loadPdfJs = async () => {
-      if (!window.pdfjsLib) {
-        const script = document.createElement('script');
-        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
-        script.async = true;
-        script.onload = () => {
-          if (window.pdfjsLib) window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-        };
-        document.body.appendChild(script);
-      }
-    };
 
-    // 2. Load Tesseract.js for OCR (Scanned PDF support)
-    const loadTesseract = async () => {
-      if (!window.Tesseract) {
-        const script = document.createElement('script');
-        script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
-        script.async = true;
-        document.body.appendChild(script);
-      }
-    };
-
-    loadPdfJs();
-    loadTesseract();
-  }, []);
 
   const getSearchSnippet = (text, query) => {
     if (!query) return text.substring(0, 120) + "...";
@@ -619,31 +307,7 @@ export default function App() {
 
   // --- PERMISSIONS HELPERS ---
   const hasPermission = (moduleId, action = 'view') => {
-    if (!currentUser) return false;
-    if (currentUser.role === 'admin') return true;
-
-    // Check granular permissions from roles state
-    const userRoleData = roles.find(r => r.id === currentUser.role || r.name === currentUser.role || r.label === currentUser.role);
-    // Note: The database column is 'access', heavily dependent on server/db.js schema.
-    // Let's support both 'access' (from DB) and 'permissions' (legacy state?)
-    let rolePerms = userRoleData ? (userRoleData.access || userRoleData.permissions) : null;
-
-    // Handle stringified JSON from DB
-    if (typeof rolePerms === 'string') {
-      try { rolePerms = JSON.parse(rolePerms); } catch (e) { rolePerms = {}; }
-    }
-
-    if (userRoleData && rolePerms) {
-      return rolePerms[moduleId] ? rolePerms[moduleId].includes(action) : false;
-    }
-
-    // Simple role-based fallback
-    if (currentUser.role === 'staff') {
-      if (moduleId === 'master') return false;
-      if (action === 'delete') return false;
-      return true;
-    }
-    return false;
+    return checkPermission(currentUser, roles, moduleId, action);
   };
 
   // --- HELPERS (RESTORED) ---
@@ -709,7 +373,7 @@ export default function App() {
     }
     setNewOrdner({ noOrdner: '', period: '' });
     setNewInvoice({ invoiceNo: '', vendor: '' });
-    setActiveOrdnerId(null);
+    setExpandedOrdnerIds(slot.status !== 'EMPTY' ? slot.boxData.ordners.map(o => o.id) : []);
     setEditingItem(null);
     setShowMoveInput(false);
     setMoveTargetSlot('');
@@ -726,7 +390,9 @@ export default function App() {
       setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === editingItem.id ? { ...o, noOrdner: newOrdner.noOrdner, period: newOrdner.period } : o) }));
       setEditingItem(null);
     } else {
-      setBoxForm(prev => ({ ...prev, ordners: [...prev.ordners, { ...newOrdner, id: Date.now(), invoices: [] }] }));
+      const ordId = Date.now();
+      setBoxForm(prev => ({ ...prev, ordners: [...prev.ordners, { ...newOrdner, id: ordId, invoices: [] }] }));
+      setExpandedOrdnerIds(prev => [...prev, ordId]);
     }
     setNewOrdner({ noOrdner: '', period: '' });
   };
@@ -765,11 +431,10 @@ export default function App() {
     }
 
     if (!selectedSlotId) return;
-    const slotIndex = selectedSlotId - 1;
-    const currentSlot = inventory[slotIndex];
+    const currentSlot = inventory.find(s => Number(s.id) === Number(selectedSlotId));
     if (!currentSlot) return;
 
-    const isNew = currentSlot.status === 'EMPTY';
+    const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
     const oldBoxId = currentSlot.boxData?.id;
 
     let newHistory = isNew
@@ -778,7 +443,7 @@ export default function App() {
 
     const updatedSlot = {
       ...currentSlot,
-      status: currentSlot.status === 'EMPTY' ? 'STORED' : currentSlot.status,
+      status: (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY' ? 'STORED' : currentSlot.status.toUpperCase(),
       lastUpdated: new Date().toISOString(),
       history: [...(currentSlot.history || []), ...newHistory],
       boxData: { id: boxForm.boxId, ordners: boxForm.ordners }
@@ -912,6 +577,7 @@ export default function App() {
     setModalTab('details');
     setSelectedSlotId(null);
     setEditingItem(null);
+    setExpandedOrdnerIds(item.boxData?.ordners?.map(o => o.id) || []);
     setIsModalOpen(true);
   };
 
@@ -1176,8 +842,8 @@ export default function App() {
   const handleDeleteUser = async (id) => {
     if (!window.confirm("Hapus user ini?")) return;
     try {
-      await db.deleteUser(id);
-      setUsers(await db.getUsers());
+      await api.deleteUser(id);
+      setUsers(await api.getUsers());
       addLog(currentUser?.name, 'Delete User', `ID ${id}`);
     } catch (e) { alert(e.message); }
   };
@@ -1255,56 +921,7 @@ export default function App() {
     try { await api.deleteRole(id); setRoles(await api.getRoles()); } catch (e) { alert(e.message); }
   };
 
-  // --- PDF TEXT EXTRACTION (RESTORED) ---
-  const extractTextFromPDF = async (file) => {
-    if (!window.pdfjsLib) return "Engine OCR PDF sedang dimuat...";
-    try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      let fullText = "";
-      let totalChars = 0;
-      let isScanned = false;
 
-      const metadata = await pdf.getMetadata().catch(e => null);
-      fullText += `[ANALISIS DOKUMEN DIGITAL]\nNama File: ${file.name}\n`;
-      if (metadata?.info?.Title) fullText += `Judul Meta: ${metadata.info.Title}\n`;
-      fullText += `------------------------------------------------\n\n[EKSTRAKSI TEKS ISI]\n`;
-
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        let pageText = textContent.items.map(item => item.str).join(' ');
-
-        // Jika teks sangat sedikit (< 50 char), asumsikan scan gambar dan coba OCR dengan Tesseract
-        if (pageText.trim().length < 50 && window.Tesseract) {
-          try {
-            setUploadForm(prev => ({ ...prev, processingMessage: `OCR Halaman ${i}/${pdf.numPages} (Mode Scan)...` }));
-
-            const viewport = page.getViewport({ scale: 2.0 }); // Scale up for better OCR
-            const canvas = document.createElement('canvas');
-            const context = canvas.getContext('2d');
-            canvas.height = viewport.height;
-            canvas.width = viewport.width;
-
-            await page.render({ canvasContext: context, viewport: viewport }).promise;
-
-            const { data: { text } } = await window.Tesseract.recognize(canvas, 'eng+ind');
-            if (text.trim().length > pageText.trim().length) {
-              pageText = `[OCR Result]\n${text}`;
-              isScanned = true;
-            }
-          } catch (err) { console.warn("OCR Error:", err); }
-        }
-
-        totalChars += pageText.length;
-        fullText += `--- Halaman ${i} ---\n${pageText.trim() ? pageText : "(Gambar/Kosong)"}\n\n`;
-      }
-      const summary = `[RINGKASAN]\nTotal Karakter: ${totalChars}\nStatus OCR: ${isScanned ? "Berhasil (Mode Scan)" : (totalChars > 50 ? "Berhasil" : "Terbatas")}\n\n`;
-      return summary + fullText;
-    } catch (e) {
-      return "Gagal membaca PDF. File mungkin rusak.";
-    }
-  };
 
   // --- DOC HANDLERS (API INTEGRATED) ---
 
@@ -1441,7 +1058,7 @@ export default function App() {
     // CRITICAL FIX: Jika data file kosong (karena optimasi list), ambil full data dari server dulu
     if (!doc.fileData && !doc.file_data && !doc.filedata) {
       try {
-        const fetched = await db.getDocumentById(doc.id);
+        const fetched = await api.getDocumentById(doc.id);
         if (fetched) fullDoc = fetched;
       } catch (err) {
         console.error("Gagal mengambil data lengkap dokumen untuk edit:", err);
@@ -1490,7 +1107,7 @@ export default function App() {
         // Tampilkan status loading kecil (opsional) atau log
         console.log("Mengambil data lengkap dokumen dari server...", doc.id);
 
-        const fullDoc = await db.getDocumentById(doc.id);
+        const fullDoc = await api.getDocumentById(doc.id);
 
         if (fullDoc) {
           // Update state viewDocData dengan data lengkap (termasuk fileData)
@@ -1516,7 +1133,7 @@ export default function App() {
       if (!base64Content || (typeof base64Content === 'string' && base64Content.length < 1)) {
         console.log("Data file lokal kosong, mencoba fetch ulang dari server...", doc.id);
         try {
-          const fullDoc = await db.getDocumentById(doc.id);
+          const fullDoc = await api.getDocumentById(doc.id);
           if (fullDoc) {
             base64Content = fullDoc.fileData || fullDoc.file_data || fullDoc.filedata || fullDoc.previewUrl;
           }
@@ -1723,7 +1340,7 @@ export default function App() {
   const handleDeleteFolder = async (e, id) => {
     e.stopPropagation();
     if (window.confirm("Hapus folder ini beserta isinya?")) {
-      await db.deleteFolder(id);
+      await api.deleteFolder(id);
       await fetchFolders();
       await fetchLogs();
       addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
@@ -1935,118 +1552,17 @@ export default function App() {
     <div className="flex h-screen overflow-hidden p-3 gap-3 md:gap-4 md:p-4 selection:bg-indigo-500/30 selection:text-indigo-600 bg-[#F4F7FE] dark:bg-[#0B1437]">
 
       {/* FLOATING SIDEBAR */}
-      <aside
-        className={`
-            fixed inset-y-0 left-0 z-50 md:static md:z-0 transition-all duration-300 ease-spring
-            ${isSidebarCollapsed ? 'w-20' : 'w-72'}
-            bg-white/80 dark:bg-[#111C44]/80 backdrop-blur-2xl border border-white/20 dark:border-white/5 
-            rounded-[2rem] shadow-2xl shadow-indigo-500/10 flex flex-col justify-between
-            ${!isSidebarCollapsed && 'md:w-72'}
-            transform ${!isSidebarCollapsed ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
-          `}
-      >
-        {/* Logo Section */}
-        <div className="flex items-center justify-between p-6">
-          <div className={`flex items-center gap-3 ${isSidebarCollapsed ? 'justify-center w-full' : ''}`}>
-            <div className="relative">
-              <div className="absolute inset-0 bg-indigo-500 blur-lg opacity-40 rounded-full animate-pulse-slow"></div>
-              <img src="/vite.svg" alt="Logo" className="w-9 h-9 relative z-10 drop-shadow-md" />
-            </div>
-            {!isSidebarCollapsed && (
-              <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-                <h1 className="text-xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[#2B3674] to-[#A3AED0] dark:from-white dark:to-slate-400">
-                  Archive OS
-                </h1>
-              </div>
-            )}
-          </div>
-          <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="hidden md:flex w-8 h-8 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm">
-            {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
-          </button>
-        </div>
-
-        {/* Navigation */}
-        <nav className="flex-1 px-4 py-2 space-y-2 overflow-y-auto no-scrollbar">
-          {[
-            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-            { id: 'inventory', icon: Grid3X3, label: 'Warehouse Slots' },
-            { id: 'documents', icon: FileStack, label: 'Documents' },
-            { id: 'tax-monitoring', icon: ShieldCheck, label: 'Compliance' },
-            { id: 'tax-summary', icon: PieChart, label: 'Reporting' },
-            { id: 'master', icon: Settings, label: 'Settings' },
-          ].filter(item => hasPermission(item.id, 'view')).map(item => (
-            <button
-              key={item.id}
-              onClick={() => {
-                setActiveTab(item.id);
-                if (window.innerWidth < 768) setIsSidebarCollapsed(true);
-              }}
-              className={`
-                  w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3.5 
-                  rounded-2xl transition-all duration-300 relative group overflow-hidden
-                  ${activeTab === item.id
-                  ? 'bg-gradient-to-r from-[#4318FF] to-[#868CFF] text-white shadow-lg shadow-indigo-500/30'
-                  : 'text-[#A3AED0] dark:text-slate-400 hover:text-[#2B3674] dark:hover:text-white hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
-                }
-                `}
-            >
-              {/* Active Indicator Line */}
-              {activeTab === item.id && (
-                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white/30 rounded-l-full"></div>
-              )}
-
-              <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} className="relative z-10 transition-transform group-hover:scale-110" />
-
-              {!isSidebarCollapsed && (
-                <span className={`relative z-10 font-bold tracking-tight text-sm ${activeTab === item.id ? 'font-bold' : 'font-medium'}`}>
-                  {item.label}
-                </span>
-              )}
-
-              {/* Tooltip for collapsed state */}
-              {isSidebarCollapsed && (
-                <div className="absolute left-full ml-4 px-3 py-1.5 bg-[#1B254B] dark:bg-white text-white dark:text-[#1B254B] text-xs font-bold rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 shadow-xl translate-x-2 group-hover:translate-x-0 duration-200">
-                  {item.label}
-                </div>
-              )}
-            </button>
-          ))}
-        </nav>
-
-        {/* User Profile Footer */}
-        <div className="px-4 pb-6 pt-2">
-          <div className={`
-                relative overflow-hidden rounded-3xl p-4 transition-all duration-300 group
-                ${isSidebarCollapsed ? 'bg-transparent' : 'bg-gradient-to-b from-[#868CFF]/10 to-[#4318FF]/5 dark:from-indigo-900/20 dark:to-indigo-900/10'}
-            `}>
-            <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
-              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#4318FF] to-[#868CFF] p-0.5 shadow-lg shadow-indigo-500/20">
-                <div className="w-full h-full rounded-full bg-white dark:bg-[#111C44] flex items-center justify-center">
-                  <User size={18} className="text-[#4318FF]" />
-                </div>
-              </div>
-
-              {!isSidebarCollapsed && (
-                <div className="flex-1 min-w-0">
-                  <h4 className="font-bold text-sm text-[#2B3674] dark:text-white truncate">{currentUser?.name || 'Guest'}</h4>
-                  <p className="text-xs text-gray-500 truncate">{currentUser?.role || 'Viewer'}</p>
-                </div>
-              )}
-            </div>
-
-            {!isSidebarCollapsed && (
-              <div className="flex items-center gap-1 mt-3 pt-3 border-t border-indigo-100 dark:border-white/10">
-                <button onClick={() => setIsDarkMode(!isDarkMode)} className="flex-1 flex items-center justify-center p-2 rounded-xl text-gray-400 hover:bg-white hover:text-yellow-500 shadow-sm hover:shadow-md transition-all">
-                  {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
-                </button>
-                <button onClick={handleLogout} className="flex-1 flex items-center justify-center p-2 rounded-xl text-gray-400 hover:bg-white hover:text-red-500 shadow-sm hover:shadow-md transition-all">
-                  <LogOut size={18} />
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      </aside>
+      <Sidebar
+        isSidebarCollapsed={isSidebarCollapsed}
+        setIsSidebarCollapsed={setIsSidebarCollapsed}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        hasPermission={hasPermission}
+        currentUser={currentUser}
+        isDarkMode={isDarkMode}
+        setIsDarkMode={setIsDarkMode}
+        handleLogout={handleLogout}
+      />
 
       {/* MOBILE OVERLAY */}
       {!isSidebarCollapsed && (
@@ -2067,20 +1583,20 @@ export default function App() {
         </button>
       </div>
 
-      <main className="flex-1 overflow-y-auto relative bg-transparent pt-16 md:pt-0 scroll-smooth md:z-40">
+      <main className="flex-1 overflow-y-auto relative bg-transparent pt-16 md:pt-0 scroll-smooth z-10">
         <div className="p-6 lg:p-10 max-w-7xl mx-auto">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
             <div>
               <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
                 {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' :
-                  activeTab === 'inventory' ? 'Manajemen Slot' :
+                  activeTab === 'inventory' ? 'Manajemen Rak' :
                     activeTab === 'documents' ? 'Dokumen Digital' :
                       activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
                         activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
                           activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
-                {activeTab === 'dashboard' ? 'Gudang Arsip Utama • Lantai 1' :
+                {activeTab === 'dashboard' ? 'Dashboard' :
                   activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
                     activeTab === 'documents' ? 'Secure Digital Storage' :
                       activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
@@ -2092,748 +1608,975 @@ export default function App() {
 
 
 
-          {activeTab === 'dashboard' && (
-            <Dashboard
-              stats={stats}
-              docList={docList}
-              docStats={docStats}
-              logs={logs}
-              TOTAL_SLOTS={TOTAL_SLOTS}
-              isDarkMode={isDarkMode}
-              handleViewDoc={handleViewDoc}
-            />
-          )}
-          {activeTab === 'inventory' && (
-            <Inventory
-              inventory={inventory}
-              stats={stats}
-              TOTAL_SLOTS={TOTAL_SLOTS}
-              getStatusStyle={getStatusStyle}
-              handleSlotClick={handleSlotClick}
-              handleExcelImport={handleExcelImport}
-              downloadTemplate={downloadTemplate}
-              excelInputRef={excelInputRef}
-              handleExportInventory={handleExportInventory}
-              inventorySearchQuery={inventorySearchQuery}
-              setInventorySearchQuery={setInventorySearchQuery}
-              hasPermission={hasPermission}
-              activeInvTab={activeInvTab}
-              setActiveInvTab={setActiveInvTab}
-              externalItems={externalItems}
-              onRestoreExternal={(item) => {
-                setSelectedExternalItem(item);
-                setRestoreTargetSlot(''); // Reset selection
-                setShowRestoreForm(true);
-              }}
-              onViewExternal={handleViewExternal}
-            />
-          )}
-          {activeTab === 'documents' && (
-            <Documents
-              docList={docList}
-              folders={folders}
-              currentFolderId={currentFolderId}
-              setCurrentFolderId={setCurrentFolderId}
-              folderHistory={folderHistory}
-              historyIndex={historyIndex}
-              navigateFolder={navigateFolder}
-              navigateBack={navigateBack}
-              navigateForward={navigateForward}
-              searchQuery={searchQuery}
-              setSearchQuery={setSearchQuery}
-              handleCreateFolder={handleCreateFolder}
-              handleDeleteFolder={handleDeleteFolder}
-              handleViewDoc={handleViewDoc}
-              handleEditDoc={handleEditDoc}
-              handleDeleteDoc={handleDeleteDoc}
-              handleRenameDoc={handleRenameDoc}
-              setUploadForm={setUploadForm}
-              setModalTab={setModalTab}
-              setIsModalOpen={setIsModalOpen}
-              hasPermission={hasPermission}
-              docStats={docStats}
-              getSearchSnippet={getSearchSnippet}
-              logs={logs}
-              onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
-              users={users}
-              departments={departments}
-              currentUser={currentUser}
-              handleEditFolder={handleEditFolder}
-              handleDownload={handleDownload}
-            />
-          )}
-          {activeTab === 'tax-monitoring' && (
-            <TaxMonitoring
-              taxAudits={taxAudits}
-              onRefresh={() => { fetchTaxAudits(); fetchDocs(); fetchFolders(); fetchLogs(); }}
-              hasPermission={hasPermission}
-              currentUser={currentUser}
-            />
-          )}
-          {activeTab === 'tax-summary' && (
-            <TaxSummary
-              taxSummaries={taxSummaries}
-              hasPermission={hasPermission}
-              setTaxForm={setTaxForm}
-              setModalTab={setModalTab}
-              setIsModalOpen={setIsModalOpen}
-              config={taxConfig}
-              saveConfig={saveTaxConfig}
-              handleDeleteRecord={handleDeleteTaxRecord}
-              handleRenameTaxType={handleRenameTaxType}
-              onImport={handleTaxImport}
-            />
-          )}
-          {activeTab === 'master' && (
-            <MasterData
-              masterTab={masterTab}
-              setMasterTab={setMasterTab}
-              users={users}
-              roles={roles}
-              departments={departments}
-              userSearchQuery={userSearchQuery}
-              setUserSearchQuery={setUserSearchQuery}
-              handleDeleteUser={handleDeleteUser}
-              handleCreateUser={handleCreateUser}
-              handleEditUser={handleEditUser}
-              handleEditRole={handleEditRole}
-              handleDeleteRole={handleDeleteRole}
-              handleCreateRole={handleCreateRole}
-              handleCreateDept={handleCreateDept}
-              handleEditDept={handleEditDept}
-              handleDeleteDept={handleDeleteDept}
-              setIsModalOpen={setIsModalOpen}
-              setModalTab={setModalTab}
-              setRoles={setRoles}
-              setDepartments={setDepartments}
-              hasPermission={hasPermission}
-            />
-          )}
+          <div key={activeTab} className="animate-fade-in-up">
+            {activeTab === 'dashboard' && (
+              <Dashboard
+                stats={stats}
+                docList={docList}
+                docStats={docStats}
+                logs={logs}
+                TOTAL_SLOTS={TOTAL_SLOTS}
+                isDarkMode={isDarkMode}
+                handleViewDoc={handleViewDoc}
+              />
+            )}
+            {activeTab === 'inventory' && (
+              <Inventory
+                inventory={inventory}
+                stats={stats}
+                TOTAL_SLOTS={TOTAL_SLOTS}
+                getStatusStyle={getStatusStyle}
+                handleSlotClick={handleSlotClick}
+                handleExcelImport={handleExcelImport}
+                downloadTemplate={downloadTemplate}
+                excelInputRef={excelInputRef}
+                handleExportInventory={handleExportInventory}
+                inventorySearchQuery={inventorySearchQuery}
+                setInventorySearchQuery={setInventorySearchQuery}
+                hasPermission={hasPermission}
+                activeInvTab={activeInvTab}
+                setActiveInvTab={setActiveInvTab}
+                externalItems={externalItems}
+                onRestoreExternal={(item) => {
+                  setSelectedExternalItem(item);
+                  setRestoreTargetSlot(''); // Reset selection
+                  setShowRestoreForm(true);
+                }}
+                onViewExternal={handleViewExternal}
+              />
+            )}
+            {activeTab === 'documents' && (
+              <Documents
+                docList={docList}
+                folders={folders}
+                currentFolderId={currentFolderId}
+                setCurrentFolderId={setCurrentFolderId}
+                folderHistory={folderHistory}
+                historyIndex={historyIndex}
+                navigateFolder={navigateFolder}
+                navigateBack={navigateBack}
+                navigateForward={navigateForward}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                handleCreateFolder={handleCreateFolder}
+                handleDeleteFolder={handleDeleteFolder}
+                handleViewDoc={handleViewDoc}
+                handleEditDoc={handleEditDoc}
+                handleDeleteDoc={handleDeleteDoc}
+                handleRenameDoc={handleRenameDoc}
+                setUploadForm={setUploadForm}
+                setModalTab={setModalTab}
+                setIsModalOpen={setIsModalOpen}
+                hasPermission={hasPermission}
+                docStats={docStats}
+                getSearchSnippet={getSearchSnippet}
+                logs={logs}
+                onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
+                users={users}
+                departments={departments}
+                currentUser={currentUser}
+                handleEditFolder={handleEditFolder}
+                handleDownload={handleDownload}
+              />
+            )}
+            {activeTab === 'tax-monitoring' && (
+              <TaxMonitoring
+                taxAudits={taxAudits}
+                onRefresh={() => { fetchTaxAudits(); fetchDocs(); fetchFolders(); fetchLogs(); }}
+                hasPermission={hasPermission}
+                currentUser={currentUser}
+              />
+            )}
+            {activeTab === 'tax-summary' && (
+              <TaxSummary
+                taxSummaries={taxSummaries}
+                hasPermission={hasPermission}
+                setTaxForm={setTaxForm}
+                setModalTab={setModalTab}
+                setIsModalOpen={setIsModalOpen}
+                config={taxConfig}
+                saveConfig={saveTaxConfig}
+                handleDeleteRecord={handleDeleteTaxRecord}
+                handleRenameTaxType={handleRenameTaxType}
+                onImport={handleTaxImport}
+              />
+            )}
+            {activeTab === 'master' && (
+              <MasterData
+                masterTab={masterTab}
+                setMasterTab={setMasterTab}
+                users={users}
+                roles={roles}
+                departments={departments}
+                userSearchQuery={userSearchQuery}
+                setUserSearchQuery={setUserSearchQuery}
+                handleDeleteUser={handleDeleteUser}
+                handleCreateUser={handleCreateUser}
+                handleEditUser={handleEditUser}
+                handleEditRole={handleEditRole}
+                handleDeleteRole={handleDeleteRole}
+                handleCreateRole={handleCreateRole}
+                handleCreateDept={handleCreateDept}
+                handleEditDept={handleEditDept}
+                handleDeleteDept={handleDeleteDept}
+                setIsModalOpen={setIsModalOpen}
+                setModalTab={setModalTab}
+                setRoles={setRoles}
+                setDepartments={setDepartments}
+                hasPermission={hasPermission}
+              />
+            )}
+          </div>
 
         </div>
       </main>
-    </div>
 
-      {/* MODAL SYSTEM */ }
-  {/* Restore Modal Overlay - Moved to Top Level */ }
-  {
-    showRestoreForm && (
-      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in">
-        <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl p-6 rounded-3xl shadow-3xl w-full max-w-sm border border-white/40 dark:border-white/10 ring-1 ring-black/5">
-          <h3 className="text-lg font-bold mb-4 dark:text-white">Kembalikan ke Gudang Internal</h3>
-          <p className="text-sm text-gray-500 mb-4">Pilih slot kosong untuk menyimpan kembali Box <b>{selectedExternalItem?.boxId}</b>:</p>
-          <div className="space-y-3">
+
+      {/* MODAL SYSTEM */}
+      <Modal
+        isOpen={showRestoreForm}
+        onClose={() => setShowRestoreForm(false)}
+        title="Restore Box"
+        size="max-w-md"
+      >
+        <div className="relative z-10">
+          <div className="flex justify-between items-center mb-6">
             <div>
-              <label className="text-xs font-bold text-gray-700 dark:text-gray-300">Pilih Slot Kosong:</label>
-              <select
-                className="w-full border rounded p-2 dark:bg-slate-800 dark:text-white text-sm"
-                value={restoreTargetSlot}
-                onChange={(e) => setRestoreTargetSlot(e.target.value)}
-              >
-                <option value="">-- Pilih Slot --</option>
-                {inventory.filter(s => s.status === 'EMPTY').map(s => (
-                  <option key={s.id} value={s.id}>Slot #{s.id}</option>
-                ))}
-              </select>
+              <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide uppercase mt-1">
+                Kembalikan ke Gudang
+              </p>
             </div>
-            <div className="flex gap-2 justify-end mt-4">
-              <button onClick={() => setShowRestoreForm(false)} className="px-3 py-2 text-gray-500 hover:bg-gray-100 rounded text-sm">Batal</button>
-              <button
-                onClick={handleRestoreExternal}
-                disabled={!restoreTargetSlot}
-                className={`px-3 py-2 text-white rounded text-sm ${!restoreTargetSlot ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-              >
-                Konfirmasi Masuk Gudang
-              </button>
+            <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+              <Truck className="text-white" size={24} />
             </div>
           </div>
-        </div>
-      </div>
-    )
-  }
 
-  <Modal
-    isOpen={isModalOpen}
-    onClose={() => setIsModalOpen(false)}
-    title={
-      activeTab === 'master'
-        ? (modalTab === 'user-create' ? 'Manajemen User'
-          : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
-            : modalTab === 'dept-form' ? 'Manajemen Departemen'
-              : 'Master Data')
-        : modalTab === 'tax-form' ? 'Input Data Pajak'
-          : modalTab === 'tax-form-pph' ? 'Input Data PPh'
-            : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
-              : activeTab === 'documents'
-                ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
-                : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
-    }
-  >
-    {activeTab === 'documents' && modalTab === 'upload' && (
-      <div className="space-y-6">
-        {uploadForm.isProcessing ? (
-          <div className="text-center py-12">
-            <div className="relative mx-auto mb-4 w-16 h-16">
-              <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-              <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
-            </div>
-            <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
-            <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
-          </div>
-        ) : (
-          <>
-            <div
-              className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
-              onClick={() => fileInputRef.current.click()}
-            >
-              <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-              <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
-              <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
+          {/* Item Summary Card */}
+          <div className="bg-white/50 dark:bg-slate-800/50 rounded-2xl p-4 border border-white/40 dark:border-white/5 mb-6 flex gap-4 items-center">
+            <div className="w-10 h-10 rounded-xl bg-indigo-100 dark:bg-indigo-900/30 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+              <Package size={20} />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
-              <input
-                value={uploadForm.title}
-                onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-              />
+              <h4 className="font-bold text-slate-800 dark:text-white text-lg">{selectedExternalItem?.boxId}</h4>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Dari: <span className="font-semibold text-indigo-500">{selectedExternalItem?.destination}</span>
+              </p>
             </div>
-            <div className="flex justify-end gap-3 pt-4">
-              {/* Tombol OCR Manual */}
-              <button
-                onClick={handleRunOCR}
-                disabled={!uploadForm.fileData}
-                className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg flex items-center gap-2 disabled:opacity-50"
-              >
-                <ScanLine size={16} /> Proses OCR
-              </button>
-              <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
-            </div>
-          </>
-        )}
-      </div>
-    )}
-
-    {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
-      <div className="space-y-6">
-        <div className="flex gap-4">
-          <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
-            {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
-          </div>
-          <div className="flex-1">
-            <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
-            <div className="flex gap-4 text-sm text-gray-500 mt-2">
-              <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
-              <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
-              <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
-            </div>
-            <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
-          </div>
-        </div>
-        <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-          <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
-          <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
-        </div>
-      </div>
-    )}
-
-    {activeTab === 'inventory' && (
-      <div className="space-y-6">
-        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
-          <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-            <Package size={16} /> {selectedSlotId ? `Slot #${selectedSlotId}` : 'External Item'}
-            <ChevronRight size={14} />
-            <input
-              type="text"
-              value={boxForm.boxId}
-              onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
-              className="font-bold text-gray-900 dark:text-white bg-transparent border-b border-gray-300 dark:border-slate-700 focus:outline-none focus:border-indigo-500 w-full"
-              placeholder="Ketik Nama Kardus..."
-            />
           </div>
 
-          <div className="flex border-b border-gray-200 dark:border-slate-800 mb-4">
-            <button onClick={() => setModalTab('details')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'details' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Isi Kardus</button>
-            <button onClick={() => setModalTab('history')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'history' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Riwayat Mutasi (Flow Trail)</button>
-          </div>
-
-          {modalTab === 'details' && (
-            <div className="space-y-4">
-              {/* Input Area - Changes based on edit mode */}
-              {hasPermission('inventory', 'edit') && (
-                <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-500 ml-1">No Ordner</label>
-                    <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
-                  </div>
-                  <div className="flex-1">
-                    <label className="text-xs text-gray-500 ml-1">Periode</label>
-                    <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
-                  </div>
-                  <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-                    {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
-                  </button>
-                </div>
-              )}
-
-              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                {boxForm.ordners.map(ord => (
-                  <div key={ord.id} className="border border-gray-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800/50">
-                    <div className="flex justify-between items-center cursor-pointer" onClick={() => setActiveOrdnerId(activeOrdnerId === ord.id ? null : ord.id)}>
-                      <div className="flex items-center gap-2">
-                        <FolderOpen size={18} className="text-amber-500" />
-                        <div>
-                          <span className="font-bold dark:text-white text-sm">{ord.noOrdner}</span>
-                          <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500 ml-2">{ord.period}</span>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        {hasPermission('inventory', 'edit') && (
-                          <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
-                        )}
-                        {hasPermission('inventory', 'delete') && (
-                          <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
-                        )}
-                        <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
-                      </div>
-                    </div>
-
-                    {/* Nested Invoice */}
-                    {activeOrdnerId === ord.id && (
-                      <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
-                        {hasPermission('inventory', 'edit') && (
-                          <>
-                            <div className="flex gap-2 items-center mb-2 flex-wrap">
-                              <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                              <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                              <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
-                              <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
-                                {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
-                              </button>
-                            </div>
-                          </>
-                        )}
-                        {ord.invoices.map(inv => (
-                          <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
-                            <div className="flex items-center gap-2">
-                              <FileText size={12} />
-                              <span className="font-mono font-medium">{inv.invoiceNo}</span>
-                              <span className="text-gray-300">|</span>
-                              <span>{inv.vendor}</span>
-                              {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
-                            </div>
-                            <div className="flex gap-1">
-                              {hasPermission('inventory', 'edit') && (
-                                <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
-                              )}
-                              {hasPermission('inventory', 'delete') && (
-                                <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider ml-1">
+                Pilih Slot Tujuan (Kosong)
+              </label>
+              <div className="relative">
+                <select
+                  className="w-full appearance-none bg-white/50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-sm font-semibold text-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all cursor-pointer hover:bg-white/80 dark:hover:bg-slate-800/80"
+                  value={restoreTargetSlot}
+                  onChange={(e) => setRestoreTargetSlot(e.target.value)}
+                >
+                  <option value="">-- Pilih Slot Kosong --</option>
+                  {inventory.filter(s => s.status === 'EMPTY').map(s => (
+                    <option key={s.id} value={s.id}>Slot #{String(s.id).padStart(3, '0')}</option>
+                  ))}
+                </select>
+                <ChevronRight className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 rotate-90 pointer-events-none" size={16} />
               </div>
-            </div>
-          )}
-
-          {modalTab === 'history' && (
-            <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
-              {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
-                <div key={idx} className="relative">
-                  <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
-                  <div className="text-sm">
-                    <span className={`font-bold ${hist.action === 'REMOVED' ? 'text-red-500' : hist.action === 'MOVED' ? 'text-blue-500' : hist.action === 'IMPORTED' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{hist.action}</span>
-                    <span className="text-xs text-gray-500 ml-2">{new Date(hist.timestamp).toLocaleString()}</span>
-                  </div>
-                  <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{hist.note}</p>
-                  <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
-                </div>
-              ))}
-              {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
-            </div>
-          )}
-        </div>
-
-        {/* FOOTER ACTIONS */}
-        <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
-          {/* Row 1: Save & Primary Actions */}
-          <div className="flex justify-end gap-2">
-            {selectedSlotId && hasPermission('inventory', 'edit') && (
-              <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
-                <ArrowLeftRight size={16} /> Pindah Slot
-              </button>
-            )}
-            <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
-              <Printer size={16} /> Cetak Label
-            </button>
-            {selectedSlotId && hasPermission('inventory', 'edit') && (
-              <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
-                <CheckCircle2 size={16} /> Simpan Data
-              </button>
-            )}
-          </div>
-
-          {/* Row 2: Move Input (Conditional) */}
-          {showMoveInput && (
-            <div className="flex gap-2 items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
-              <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Pindah ke Slot:</span>
-              <input
-                type="number"
-                placeholder="No. Slot (1-100)"
-                value={moveTargetSlot}
-                onChange={(e) => setMoveTargetSlot(e.target.value)}
-                className="w-32 px-2 py-1 text-sm border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
-              />
-              <button onClick={handleMoveBox} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Konfirmasi Pindah</button>
-            </div>
-          )}
-
-          {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
-          {selectedSlotId && inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
-            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
-              {hasPermission('inventory', 'edit') && (
-                <>
-                  {(inventory[selectedSlotId - 1]?.status === 'BORROWED' || inventory[selectedSlotId - 1]?.status === 'AUDIT') ? (
-                    <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
-                      <CheckCircle2 size={14} /> Kembalikan (Return)
-                    </button>
-                  ) : (
-                    <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
-                      <Clock size={14} /> Set Dipinjam
-                    </button>
-                  )}
-                  <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
-                    <AlertCircle size={14} /> Set Audit
-                  </button>
-                  <button onClick={() => {
-                    setShowExternalForm(true);
-                    setExternalDate(new Date().toISOString().split('T')[0]);
-                  }} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
-                    <Truck size={14} /> Kirim ke Indoarsip
-                  </button>
-                </>
-              )}
-              {hasPermission('inventory', 'delete') && (
-                <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
-                  <LogOut size={14} /> Hapus / Kosongkan
-                </button>
+              {restoreTargetSlot && (
+                <p className="text-[10px] text-green-500 font-bold ml-1 flex items-center gap-1 animate-in fade-in slide-in-from-left-2">
+                  <CheckCircle2 size={10} /> Slot tersedia
+                </p>
               )}
             </div>
-          )}
 
-          {/* Date Picker for External Transfer */}
-          {showExternalForm && (
-            <div className="flex gap-2 items-center bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
-              <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Tanggal Kirim:</span>
-              <input
-                type="date"
-                value={externalDate}
-                onChange={(e) => setExternalDate(e.target.value)}
-                className="text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
-              />
+            <div className="flex gap-3 pt-4">
               <button
-                onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
-                className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
-              >
-                Kirim
-              </button>
-              <button
-                onClick={() => setShowExternalForm(false)}
-                className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-slate-400 text-xs"
+                onClick={() => setShowRestoreForm(false)}
+                className="flex-1 px-4 py-3 rounded-xl text-sm font-bold text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5 transition-all"
               >
                 Batal
               </button>
-            </div>
-          )}
-        </div>
-      </div>
-    )}
-
-    {/* MASTER DATA MODALS */}
-    {activeTab === 'master' && (
-      <>
-        {modalTab === 'user-create' && (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1 dark:text-white">Username</label>
-              <input
-                value={userForm.username}
-                onChange={e => setUserForm({ ...userForm, username: e.target.value })}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                placeholder="Username untuk login"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1 dark:text-white">Password</label>
-              <input
-                type="password"
-                value={userForm.password}
-                onChange={e => setUserForm({ ...userForm, password: e.target.value })}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                placeholder={userForm.id ? "Kosongkan jika tidak ingin mengubah" : "Password login"}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1 dark:text-white">Nama Lengkap</label>
-              <input
-                value={userForm.name}
-                onChange={e => setUserForm({ ...userForm, name: e.target.value })}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-              />
-            </div>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1 dark:text-white">Role</label>
-                <select
-                  value={userForm.role}
-                  onChange={e => setUserForm({ ...userForm, role: e.target.value })}
-                  className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                >
-                  {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1 dark:text-white">Departemen</label>
-                <select
-                  value={userForm.department}
-                  onChange={e => setUserForm({ ...userForm, department: e.target.value })}
-                  className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                >
-                  <option value="">- Pilih Dept -</option>
-                  {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="flex justify-end pt-4">
-              <button onClick={handleSaveUser} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan User</button>
-            </div>
-          </div>
-        )}
-
-        {modalTab === 'dept-form' && (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1 dark:text-white">Nama Departemen</label>
-              <input
-                value={deptForm.name}
-                onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                placeholder="Contoh: Finance"
-              />
-            </div>
-            <div className="flex justify-end pt-4">
-              <button onClick={handleSaveDept} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Departemen</button>
-            </div>
-          </div>
-        )}
-
-        {(modalTab === 'role-create' || modalTab === 'role-edit') && (
-          <div className="space-y-6">
-            <div>
-              <label className="block text-sm font-medium mb-1 dark:text-white">Nama Role</label>
-              <input
-                value={roleForm.name}
-                onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
-                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-              />
-            </div>
-            <div className="border rounded-xl overflow-hidden border-gray-200 dark:border-slate-700">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-50 dark:bg-slate-800">
-                  <tr>
-                    <th className="px-4 py-2 text-left dark:text-white">Modul</th>
-                    <th className="px-4 py-2 text-center dark:text-white">View</th>
-                    <th className="px-4 py-2 text-center dark:text-white">Create</th>
-                    <th className="px-4 py-2 text-center dark:text-white">Edit</th>
-                    <th className="px-4 py-2 text-center dark:text-white">Delete</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
-                  {Object.values(APP_MODULES).map(mod => (
-                    <tr key={mod.id} className="dark:bg-slate-900">
-                      <td className="px-4 py-3 font-medium dark:text-white">{mod.label}</td>
-                      {['view', 'create', 'edit', 'delete'].map(action => (
-                        <td key={action} className="text-center">
-                          <input
-                            type="checkbox"
-                            checked={roleForm.permissions[mod.id]?.includes(action) || false}
-                            onChange={() => handleTogglePermission(mod.id, action)}
-                            className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="flex justify-end pt-4">
-              <button onClick={handleSaveRole} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Role</button>
-            </div>
-          </div>
-        )}
-      </>
-    )}
-
-    {/* TAX FORM MODAL */}
-    {(modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
-      <div className="space-y-6">
-        <div className="grid grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm font-medium mb-1 dark:text-white">Bulan</label>
-            <select
-              value={taxForm.month}
-              onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
-              className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-            >
-              <option value="">- Pilih Bulan -</option>
-              {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1 dark:text-white">Tahun</label>
-            <input
-              type="number"
-              value={taxForm.year}
-              onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
-              className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1 dark:text-white">Pembetulan Ke-</label>
-            <input
-              type="number"
-              min="0"
-              value={taxForm.pembetulan || 0}
-              onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
-              className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-            />
-          </div>
-        </div>
-
-        {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
-          <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="font-bold dark:text-white flex items-center gap-2"><Percent size={16} className="text-indigo-500" /> PPh (Pajak Penghasilan)</h4>
-              <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-medium px-2 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
-                <Plus size={12} /> Tambah Field
+              <button
+                onClick={handleRestoreExternal}
+                disabled={!restoreTargetSlot}
+                className={`
+                  flex-[2] px-4 py-3 rounded-xl text-sm font-bold text-white flex items-center justify-center gap-2 shadow-lg transition-all
+                  ${!restoreTargetSlot
+                    ? 'bg-slate-300 dark:bg-slate-700 cursor-not-allowed text-slate-400'
+                    : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 hover:shadow-indigo-500/25 hover:scale-[1.02] active:scale-95'
+                  }
+                `}
+              >
+                <ArrowRight size={18} />
+                Konfirmasi
               </button>
             </div>
-            <div className="grid grid-cols-2 gap-4">
-              {Object.keys(taxForm.data?.pph || {}).map(key => (
-                <div key={key}>
-                  <div className="flex justify-between items-center mb-1">
-                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                    <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                  </div>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        title={
+          activeTab === 'master'
+            ? (modalTab === 'user-create' ? 'Manajemen User'
+              : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
+                : modalTab === 'dept-form' ? 'Manajemen Departemen'
+                  : 'Master Data')
+            : modalTab === 'tax-form' ? 'Input Data Pajak'
+              : modalTab === 'tax-form-pph' ? 'Input Data PPh'
+                : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
+                  : activeTab === 'documents'
+                    ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
+                    : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
+        }
+      >
+        {activeTab === 'documents' && modalTab === 'upload' && (
+          <div className="space-y-6">
+            {uploadForm.isProcessing ? (
+              <div className="text-center py-12">
+                <div className="relative mx-auto mb-4 w-16 h-16">
+                  <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                  <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
+                </div>
+                <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
+                <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
+              </div>
+            ) : (
+              <>
+                <div
+                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
+                  onClick={() => fileInputRef.current.click()}
+                >
+                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                  <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
+                  <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
                   <input
-                    type="text"
-                    value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
-                    onChange={e => {
-                      const val = e.target.value.replace(/[^\d]/g, '');
-                      setTaxForm({
-                        ...taxForm,
-                        data: {
-                          ...taxForm.data,
-                          pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
-                        }
-                      })
-                    }}
-                    className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    placeholder="0"
+                    value={uploadForm.title}
+                    onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                   />
                 </div>
-              ))}
+                <div className="flex justify-end gap-3 pt-4">
+                  {/* Tombol OCR Manual */}
+                  <button
+                    onClick={handleRunOCR}
+                    disabled={!uploadForm.fileData}
+                    className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg flex items-center gap-2 disabled:opacity-50"
+                  >
+                    <ScanLine size={16} /> Proses OCR
+                  </button>
+                  <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
+          <div className="space-y-6">
+            <div className="flex gap-4">
+              <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
+                {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
+              </div>
+              <div className="flex-1">
+                <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
+                <div className="flex gap-4 text-sm text-gray-500 mt-2">
+                  <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
+                  <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
+                  <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
+                </div>
+                <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
+              </div>
+            </div>
+            <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
+              <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
             </div>
           </div>
         )}
 
-        {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
-          <>
-            <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-              <div className="flex justify-between items-center mb-3">
-                <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowDownRight size={16} className="text-emerald-500" /> PPN Masukan (Input)</h4>
-                <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="text-xs flex items-center gap-1 text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 font-medium px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
-                  <Plus size={12} /> Tambah Field
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
-                  <div key={key}>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                      <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                    </div>
-                    <input
-                      type="text"
-                      value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
-                      onChange={e => {
-                        const val = e.target.value.replace(/[^\d]/g, '');
-                        setTaxForm({
-                          ...taxForm,
-                          data: {
-                            ...taxForm.data,
-                            ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
-                          }
-                        })
-                      }}
-                      className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      placeholder="0"
-                    />
-                  </div>
-                ))}
+        {activeTab === 'inventory' && (
+          <div className="space-y-6 animate-in fade-in duration-500">
+            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -z-10 animate-pulse"></div>
+
+            {/* Header Box ID - Capsule Style */}
+            <div className="bg-white/40 dark:bg-slate-900/40 p-5 rounded-[2rem] border border-white/60 dark:border-white/5 shadow-sm mb-8 backdrop-blur-sm">
+              <div className="flex items-center gap-4">
+                <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-600 shadow-inner">
+                  <Package size={24} />
+                </div>
+                <div className="flex flex-col min-w-[120px]">
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 mb-0.5">Status Lokasi</span>
+                  <span className="font-black text-slate-800 dark:text-white text-sm whitespace-nowrap">{selectedSlotId ? `INTERNAL SLOT #${selectedSlotId}` : 'EXTERNAL ITEM'}</span>
+                </div>
+                <div className="h-8 w-px bg-slate-200 dark:bg-white/10 mx-2"></div>
+                <div className="flex-1 relative group/input">
+                  <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 mb-0.5 block ml-1">Nama Kardus</span>
+                  <input
+                    type="text"
+                    value={boxForm.boxId}
+                    onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
+                    className="text-base font-black text-slate-900 dark:text-white bg-transparent border-0 focus:ring-0 w-full placeholder:text-slate-300 focus:outline-none transition-all p-1"
+                    placeholder="KETIK NAMA KARDUS..."
+                  />
+                </div>
               </div>
             </div>
 
-            <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-              <div className="flex justify-between items-center mb-3">
-                <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowUpRight size={16} className="text-amber-500" /> PPN Keluaran (Output)</h4>
-                <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="text-xs flex items-center gap-1 text-amber-600 hover:text-amber-800 dark:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
-                  <Plus size={12} /> Tambah Field
-                </button>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
-                  <div key={key}>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                      <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+            {/* TAB SELECTOR */}
+            <div className="flex bg-slate-100/50 dark:bg-slate-800/50 p-1.5 rounded-2xl mb-8 backdrop-blur-sm border border-white/20 dark:border-white/5">
+              <button
+                onClick={() => setModalTab('details')}
+                className={`flex-1 py-3 text-sm font-black rounded-xl transition-all duration-300 flex items-center justify-center gap-2 ${modalTab === 'details' ? 'bg-white dark:bg-slate-700 shadow-xl text-indigo-600 dark:text-white scale-[1.02] ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'}`}
+              >
+                <Package size={18} /> Detail Isi Kardus
+              </button>
+              <button
+                onClick={() => setModalTab('history')}
+                className={`flex-1 py-3 text-sm font-black rounded-xl transition-all duration-300 flex items-center justify-center gap-2 ${modalTab === 'history' ? 'bg-white dark:bg-slate-700 shadow-xl text-indigo-600 dark:text-white scale-[1.02] ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'}`}
+              >
+                <History size={18} /> Riwayat Mutasi
+              </button>
+            </div>
+
+            {modalTab === 'details' && (
+              <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-500">
+                {/* Input Area - Integrated Row */}
+                {hasPermission('inventory', 'edit') && (
+                  <div className="flex gap-4 items-end bg-indigo-500/5 dark:bg-indigo-500/10 p-6 rounded-3xl border border-indigo-500/10 group/input transition-all hover:bg-indigo-500/[0.08]">
+                    <div className="flex-1">
+                      <label className="text-[10px] uppercase font-black text-slate-400 ml-1 mb-2 block tracking-[0.2em]">No Ordner</label>
+                      <input
+                        value={newOrdner.noOrdner}
+                        onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })}
+                        className="w-full px-4 py-3 border-b-2 border-transparent bg-white/50 dark:bg-slate-900/50 rounded-xl focus:border-indigo-500 dark:text-white text-sm font-black transition-all outline-none"
+                        placeholder="ORD-001"
+                      />
                     </div>
-                    <input
-                      type="text"
-                      value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
-                      onChange={e => {
-                        const val = e.target.value.replace(/[^\d]/g, '');
-                        setTaxForm({
-                          ...taxForm,
-                          data: {
-                            ...taxForm.data,
-                            ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
-                          }
-                        })
-                      }}
-                      className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                      placeholder="0"
-                    />
+                    <div className="flex-1">
+                      <label className="text-[10px] uppercase font-black text-slate-400 ml-1 mb-2 block tracking-[0.2em]">Periode</label>
+                      <input
+                        value={newOrdner.period}
+                        onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })}
+                        className="w-full px-4 py-3 border-b-2 border-transparent bg-white/50 dark:bg-slate-900/50 rounded-xl focus:border-indigo-500 dark:text-white text-sm font-black transition-all outline-none"
+                        placeholder="2024"
+                      />
+                    </div>
+                    <button
+                      onClick={addOrdner}
+                      className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'}`}
+                    >
+                      {editingItem?.type === 'ordner' ? <Save size={20} /> : <Plus size={20} />}
+                    </button>
+                  </div>
+                )}
+
+                <div className="space-y-3 max-h-[450px] overflow-y-auto pr-3 custom-scrollbar">
+                  {boxForm.ordners.length === 0 && (
+                    <div className="text-center py-16 text-slate-300">
+                      <Package size={48} className="mx-auto mb-4 opacity-20" />
+                      <p className="font-black text-sm tracking-widest uppercase opacity-40">Kardus Kosong</p>
+                    </div>
+                  )}
+                  {boxForm.ordners.map(ord => (
+                    <div key={ord.id} className={`group transition-all duration-300 rounded-3xl border ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-500/10 border-indigo-500/30 shadow-lg shadow-indigo-500/5' : 'bg-white/40 dark:bg-slate-800/40 border-white/50 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-800/60'}`}>
+                      <div className="flex justify-between items-center p-4 cursor-pointer" onClick={() => setExpandedOrdnerIds(prev => prev.includes(ord.id) ? prev.filter(id => id !== ord.id) : [...prev, ord.id])}>
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-500 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/40'}`}>
+                            {expandedOrdnerIds.includes(ord.id) ? <FolderOpen size={20} /> : <Package size={20} />}
+                          </div>
+                          <div>
+                            <div className="font-black dark:text-white text-base text-slate-800 tracking-tight">{ord.noOrdner}</div>
+                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{ord.period}</div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0 mr-2">
+                            {hasPermission('inventory', 'edit') && (
+                              <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 transition-all"><Edit3 size={14} /></button>
+                            )}
+                            {hasPermission('inventory', 'delete') && (
+                              <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 transition-all"><Trash2 size={14} /></button>
+                            )}
+                          </div>
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'}`}>
+                            <ChevronRight size={22} className={`transition-transform duration-300 ${expandedOrdnerIds.includes(ord.id) ? 'rotate-90' : ''}`} />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Nested Invoice - Minimalist List */}
+                      {expandedOrdnerIds.includes(ord.id) && (
+                        <div className="px-4 pb-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
+                          {hasPermission('inventory', 'edit') && (
+                            <div className="flex gap-3 items-center bg-white/50 dark:bg-slate-900/50 p-3 rounded-2xl border border-white/50 dark:border-white/5">
+                              <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
+                              <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
+                              <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black focus:ring-0" />
+                              <button onClick={() => addInvoice(ord.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                                {editingItem?.type === 'invoice' ? <Save size={14} /> : <Plus size={14} />}
+                              </button>
+                            </div>
+                          )}
+                          <div className="space-y-1">
+                            {ord.invoices.map(inv => (
+                              <div key={inv.id} className="group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5">
+                                <div className="flex items-center gap-3">
+                                  <FileText size={14} className="text-slate-400 group-hover/inv:text-indigo-500 transition-colors" />
+                                  <div className="flex flex-col">
+                                    <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo}</span>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                      <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor}</span>
+                                      {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{inv.paymentDate}</span>}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
+                                  {hasPermission('inventory', 'edit') && (
+                                    <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
+                                  )}
+                                  {hasPermission('inventory', 'delete') && (
+                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"><X size={12} /></button>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* FOOTER ACTIONS - Capsule Style */}
+                <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-6">
+                    <div className="flex gap-4">
+                      {selectedSlotId && hasPermission('inventory', 'edit') && (
+                        <button
+                          onClick={() => setShowMoveInput(!showMoveInput)}
+                          className={`px-8 py-4 rounded-2xl text-[10px] font-black flex items-center gap-3 transition-all active:scale-95 ${showMoveInput ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-500/30' : 'bg-white dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 hover:text-indigo-600 border border-slate-200 dark:border-white/5 shadow-sm'}`}
+                        >
+                          <ArrowLeftRight size={18} /> PINDAH SLOT
+                        </button>
+                      )}
+                    </div>
+
+                    {selectedSlotId && hasPermission('inventory', 'edit') && (
+                      <button
+                        onClick={handleSaveBox}
+                        className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded-2xl shadow-2xl shadow-indigo-500/20 flex items-center gap-3 text-[10px] font-black transition-all hover:shadow-indigo-500/40 active:scale-95 hover:-translate-y-1"
+                      >
+                        <Save size={18} /> SIMPAN DATA
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Row 2: Move Input */}
+                  {showMoveInput && (
+                    <div className="mt-6 flex gap-4 items-center bg-indigo-500/5 dark:bg-indigo-500/10 p-5 rounded-3xl border border-indigo-500/10 animate-in slide-in-from-top-2 duration-300">
+                      <div className="w-12 h-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
+                        <ArrowLeftRight size={20} />
+                      </div>
+                      <div className="flex-1">
+                        <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-300 uppercase tracking-widest block mb-1 ml-1">Slot Tujuan</span>
+                        <input
+                          type="number"
+                          placeholder="1-100"
+                          value={moveTargetSlot}
+                          onChange={(e) => setMoveTargetSlot(e.target.value)}
+                          className="w-full bg-transparent border-0 text-lg font-black dark:text-white placeholder:text-slate-300 focus:ring-0 p-0"
+                        />
+                      </div>
+                      <button
+                        onClick={handleMoveBox}
+                        className="px-8 py-3 bg-indigo-600 text-white text-[10px] font-black rounded-xl hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
+                      >
+                        KONFIRMASI
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Row 3: Status & External Actions - Capsule Style */}
+                  {selectedSlotId && (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' && (
+                    <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
+                      <div className="grid grid-cols-2 gap-4">
+                        {hasPermission('inventory', 'edit') && (
+                          <>
+                            {((inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status === 'BORROWED' || (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status === 'AUDIT') ? (
+                              <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-5 border-2 border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
+                                <CheckCircle2 size={24} className="group-hover:scale-110 transition-transform" /> KEMBALIKAN
+                              </button>
+                            ) : (
+                              <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-5 border-2 border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
+                                <Clock size={24} className="group-hover:scale-110 transition-transform" /> SET DIPINJAM
+                              </button>
+                            )}
+                            <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-5 border-2 border-purple-500/20 bg-purple-500/5 hover:bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
+                              <AlertCircle size={24} className="group-hover:scale-110 transition-transform" /> SET AUDIT
+                            </button>
+                            <button onClick={() => {
+                              setShowExternalForm(true);
+                              setExternalDate(new Date().toISOString().split('T')[0]);
+                            }} className="p-5 border-2 border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
+                              <Truck size={24} className="group-hover:scale-110 transition-transform" /> KIRIM KE INDOARSIP
+                            </button>
+                          </>
+                        )}
+                        {hasPermission('inventory', 'delete') && (
+                          <button onClick={handleEmptySlot} className="p-5 border-2 border-red-500/20 bg-red-500/5 hover:bg-red-500/10 text-red-600 dark:text-red-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
+                            <LogOut size={24} className="group-hover:scale-110 transition-transform" /> KOSONGKAN
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+
+
+                </div>
+              </div>
+            )}
+
+            {modalTab === 'history' && (
+              <div className="space-y-8 pl-4 py-4 animate-in fade-in duration-500 relative">
+                <div className="absolute left-[39px] top-6 bottom-6 w-0.5 bg-gradient-to-b from-indigo-500/50 via-indigo-200/20 to-transparent dark:from-indigo-600/50 dark:via-indigo-900/20"></div>
+
+                {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
+                  <div key={idx} className="relative pl-12 group">
+                    <div className={`absolute left-0 top-1.5 w-6 h-6 rounded-full border-4 border-white dark:border-slate-800 shadow-xl z-10 transition-all group-hover:scale-125 ring-4 ring-transparent group-hover:ring-indigo-500/10 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500 shadow-red-500/30' :
+                      hist.action === 'MOVED' ? 'bg-blue-500 shadow-blue-500/30' :
+                        hist.action === 'IMPORTED' ? 'bg-emerald-500 shadow-emerald-500/30' :
+                          'bg-indigo-600 shadow-indigo-500/30'
+                      }`}></div>
+                    <div className="bg-white/40 dark:bg-slate-800/40 p-5 rounded-3xl border border-white/40 dark:border-white/5 backdrop-blur-md shadow-lg hover:shadow-2xl transition-all transform hover:-translate-y-1">
+                      <div className="flex justify-between items-start mb-3">
+                        <span className={`font-black text-xs px-3 py-1 rounded-full uppercase tracking-widest ${hist.action === 'REMOVED' ? 'bg-red-100 text-red-600' :
+                          hist.action === 'MOVED' ? 'bg-blue-100 text-blue-600' :
+                            hist.action === 'IMPORTED' ? 'bg-emerald-100 text-emerald-600' :
+                              'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
+                          }`}>
+                          {hist.action}
+                        </span>
+                        <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 bg-slate-100/50 dark:bg-slate-900/50 px-3 py-1 rounded-full">
+                          <Clock size={10} /> {new Date(hist.timestamp).toLocaleString()}
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-600 dark:text-slate-300 font-medium leading-relaxed italic">"{hist.note}"</p>
+                      <div className="mt-4 pt-3 border-t border-white/20 dark:border-white/5 flex items-center justify-between">
+                        <div className="text-[10px] text-indigo-600 dark:text-indigo-300 flex items-center gap-2 font-black bg-indigo-500/10 px-3 py-1 rounded-lg">
+                          <User size={12} fill="currentColor" className="opacity-40" /> {hist.user}
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
+                {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && (
+                  <div className="text-center py-20 text-slate-400 italic">
+                    <div className="flex justify-center mb-4 opacity-20"><History size={64} /></div>
+                    <p className="font-black tracking-widest uppercase text-xs">Belum ada riwayat tercatat.</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* FOOTER ACTIONS removed from common area */}
+          </div>
+        )
+        }
+
+        {/* MASTER DATA MODALS */}
+        {
+          activeTab === 'master' && (
+            <>
+              {modalTab === 'user-create' && (
+                <div className="space-y-5 animate-in slide-in-from-bottom-2 duration-300">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Username</label>
+                      <input
+                        value={userForm.username}
+                        onChange={e => setUserForm({ ...userForm, username: e.target.value })}
+                        className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner placeholder:text-slate-400 font-bold"
+                        placeholder="Username untuk login"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
+                      <input
+                        type="password"
+                        value={userForm.password}
+                        onChange={e => setUserForm({ ...userForm, password: e.target.value })}
+                        className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner placeholder:text-slate-400"
+                        placeholder={userForm.id ? "••••••••" : "Password login"}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Nama Lengkap</label>
+                    <input
+                      value={userForm.name}
+                      onChange={e => setUserForm({ ...userForm, name: e.target.value })}
+                      className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-bold"
+                      placeholder="Nama lengkap user"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Role</label>
+                      <div className="relative">
+                        <select
+                          value={userForm.role}
+                          onChange={e => setUserForm({ ...userForm, role: e.target.value })}
+                          className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
+                        >
+                          {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                          <ChevronRight size={16} className="rotate-90" />
+                        </div>
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Departemen</label>
+                      <div className="relative">
+                        <select
+                          value={userForm.department}
+                          onChange={e => setUserForm({ ...userForm, department: e.target.value })}
+                          className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
+                        >
+                          <option value="">- Pilih Dept -</option>
+                          {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                          <ChevronRight size={16} className="rotate-90" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-6 border-t border-white/20 dark:border-white/5">
+                    <button
+                      onClick={handleSaveUser}
+                      className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl font-black shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5"
+                    >
+                      Simpan User
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {modalTab === 'dept-form' && (
+                <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
+                  <div className="bg-white/30 dark:bg-slate-800/30 p-6 rounded-2xl border border-white/20 dark:border-white/5">
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Nama Departemen</label>
+                    <div className="relative">
+                      <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input
+                        value={deptForm.name}
+                        onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                        className="w-full pl-12 pr-4 py-4 border-0 bg-white/50 dark:bg-slate-900/50 rounded-2xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-black text-lg"
+                        placeholder="Contoh: IT Support"
+                      />
+                    </div>
+                  </div>
+                  <div className="flex justify-end pt-4">
+                    <button
+                      onClick={handleSaveDept}
+                      className="px-10 py-3.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5"
+                    >
+                      Simpan Departemen
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {(modalTab === 'role-create' || modalTab === 'role-edit') && (
+                <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+                  <div className="bg-white/30 dark:bg-slate-800/30 p-6 rounded-2xl border border-white/20 dark:border-white/5">
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Nama Role</label>
+                    <div className="relative">
+                      <Shield className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+                      <input
+                        value={roleForm.name}
+                        onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
+                        className="w-full pl-12 pr-4 py-4 border-0 bg-white/50 dark:bg-slate-900/50 rounded-2xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-black text-lg"
+                        placeholder="Contoh: Manager"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="border border-white/20 dark:border-white/5 rounded-[2rem] overflow-hidden shadow-xl bg-white/20 dark:bg-slate-900/20 backdrop-blur-md">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-slate-100/50 dark:bg-slate-800/50">
+                          <th className="px-6 py-4 text-left text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Modul</th>
+                          <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">View</th>
+                          <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Create</th>
+                          <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Edit</th>
+                          <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Delete</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/10 dark:divide-white/5">
+                        {Object.values(APP_MODULES).map(mod => (
+                          <tr key={mod.id} className="hover:bg-white/30 dark:hover:bg-slate-800/30 transition-colors">
+                            <td className="px-6 py-4">
+                              <span className="font-black text-slate-700 dark:text-slate-200">{mod.label}</span>
+                            </td>
+                            {['view', 'create', 'edit', 'delete'].map(action => (
+                              <td key={action} className="text-center py-4">
+                                <label className="relative inline-flex items-center cursor-pointer group">
+                                  <input
+                                    type="checkbox"
+                                    checked={roleForm.permissions[mod.id]?.includes(action) || false}
+                                    onChange={() => handleTogglePermission(mod.id, action)}
+                                    className="sr-only peer"
+                                  />
+                                  <div className="w-10 h-5 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                                </label>
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      onClick={handleSaveRole}
+                      className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5 active:scale-95"
+                    >
+                      Simpan Role & Izin
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          )
+        }
+
+        {/* TAX FORM MODAL */}
+        {
+          (modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
+            <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+              <div className="grid grid-cols-3 gap-6 bg-white/30 dark:bg-slate-800/30 p-6 rounded-3xl border border-white/20 dark:border-white/5">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Bulan</label>
+                  <div className="relative">
+                    <select
+                      value={taxForm.month}
+                      onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
+                      className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-900/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
+                    >
+                      <option value="">- Pilih Bulan -</option>
+                      {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                      <ChevronRight size={16} className="rotate-90" />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Tahun</label>
+                  <input
+                    type="number"
+                    value={taxForm.year}
+                    onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
+                    className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-900/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Pembetulan Ke-</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={taxForm.pembetulan || 0}
+                    onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
+                    className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-900/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-bold"
+                  />
+                </div>
+              </div>
+
+              {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
+                <div className="bg-white/20 dark:bg-slate-900/40 p-6 rounded-[2rem] border border-white/20 dark:border-white/5 shadow-inner">
+                  <div className="flex justify-between items-center mb-5">
+                    <h4 className="font-black text-slate-800 dark:text-white flex items-center gap-3 text-lg">
+                      <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-500"><Percent size={18} /></div>
+                      PPh (Pajak Penghasilan)
+                    </h4>
+                    <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="flex items-center gap-2 text-xs font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-all border border-indigo-100/50">
+                      <Plus size={14} /> TAMBAH FIELD
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 gap-6">
+                    {Object.keys(taxForm.data?.pph || {}).map(key => (
+                      <div key={key} className="group relative">
+                        <div className="flex justify-between items-center mb-1.5 px-1">
+                          <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{key}</label>
+                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100" title="Hapus Field"><Trash2 size={12} /></button>
+                        </div>
+                        <input
+                          type="text"
+                          value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
+                          onChange={e => {
+                            const val = e.target.value.replace(/[^\d]/g, '');
+                            setTaxForm({
+                              ...taxForm,
+                              data: {
+                                ...taxForm.data,
+                                pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
+                              }
+                            })
+                          }}
+                          className="w-full px-4 py-3.5 border-0 bg-white/60 dark:bg-slate-900/60 rounded-2xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-sm font-black text-right pr-6"
+                          placeholder="0"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
+                <div className="space-y-8">
+                  <div className="bg-emerald-500/[0.03] dark:bg-emerald-500/[0.05] p-6 rounded-[2.5rem] border border-emerald-500/10">
+                    <div className="flex justify-between items-center mb-5 px-2">
+                      <h4 className="font-black text-slate-800 dark:text-white flex items-center gap-3 text-lg">
+                        <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500"><ArrowDownRight size={18} /></div>
+                        PPN Masukan (Input)
+                      </h4>
+                      <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="flex items-center gap-2 text-xs font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition-all border border-emerald-100/50">
+                        <Plus size={14} /> TAMBAH FIELD
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-6">
+                      {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
+                        <div key={key} className="group relative">
+                          <div className="flex justify-between items-center mb-1.5 px-1">
+                            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{key}</label>
+                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100" title="Hapus Field"><Trash2 size={12} /></button>
+                          </div>
+                          <input
+                            type="text"
+                            value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
+                            onChange={e => {
+                              const val = e.target.value.replace(/[^\d]/g, '');
+                              setTaxForm({
+                                ...taxForm,
+                                data: {
+                                  ...taxForm.data,
+                                  ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
+                                }
+                              })
+                            }}
+                            className="w-full px-4 py-3.5 border-0 bg-white/60 dark:bg-slate-900/60 rounded-2xl focus:ring-2 focus:ring-emerald-500 dark:text-white shadow-sm font-black text-right pr-6"
+                            placeholder="0"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-amber-500/[0.03] dark:bg-amber-500/[0.05] p-6 rounded-[2.5rem] border border-amber-500/10">
+                    <div className="flex justify-between items-center mb-5 px-2">
+                      <h4 className="font-black text-slate-800 dark:text-white flex items-center gap-3 text-lg">
+                        <div className="p-2 bg-amber-500/10 rounded-xl text-amber-500"><ArrowUpRight size={18} /></div>
+                        PPN Keluaran (Output)
+                      </h4>
+                      <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="flex items-center gap-2 text-xs font-black text-amber-600 dark:text-amber-400 bg-amber-50 px-3 py-1.5 rounded-full hover:bg-amber-100 transition-all border border-amber-100/50">
+                        <Plus size={14} /> TAMBAH FIELD
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-6">
+                      {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
+                        <div key={key} className="group relative">
+                          <div className="flex justify-between items-center mb-1.5 px-1">
+                            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{key}</label>
+                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100" title="Hapus Field"><Trash2 size={12} /></button>
+                          </div>
+                          <input
+                            type="text"
+                            value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
+                            onChange={e => {
+                              const val = e.target.value.replace(/[^\d]/g, '');
+                              setTaxForm({
+                                ...taxForm,
+                                data: {
+                                  ...taxForm.data,
+                                  ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
+                                }
+                              })
+                            }}
+                            className="w-full px-4 py-3.5 border-0 bg-white/60 dark:bg-slate-900/60 rounded-2xl focus:ring-2 focus:ring-amber-500 dark:text-white shadow-sm font-black text-right pr-6"
+                            placeholder="0"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end pt-8 border-t border-white/20 dark:border-white/5">
+                <button
+                  onClick={handleSaveTaxSummary}
+                  className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5 active:scale-95 flex items-center gap-3"
+                >
+                  <Save size={20} />
+                  SIMPAN DATA PAJAK
+                </button>
               </div>
             </div>
-          </>
-        )}
+          )
+        }
+      </Modal >
 
-        <div className="flex justify-end pt-6">
-          <button onClick={handleSaveTaxSummary} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-500/20">Simpan Data Pajak</button>
+      {/* GLOBAL POPUPS - Root Level */}
+      <Modal
+        isOpen={showExternalForm}
+        onClose={() => setShowExternalForm(false)}
+        title="Kirim ke Indoarsip"
+        size="max-w-sm"
+      >
+        <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center shadow-2xl shadow-indigo-600/30 mx-auto mb-6">
+          <Truck size={32} />
         </div>
-      </div>
-    )}
-  </Modal>
+
+        <p className="text-xs text-center text-slate-500 mb-8 font-black uppercase tracking-widest opacity-60">Tentukan Tanggal Pengiriman</p>
+
+        <div className="space-y-6">
+          <div className="relative group">
+            <input
+              type="date"
+              value={externalDate}
+              onChange={(e) => setExternalDate(e.target.value)}
+              className="w-full px-6 py-4 text-lg font-black border-2 border-indigo-500/10 bg-slate-50 dark:bg-slate-800/50 rounded-2xl focus:border-indigo-500 transition-all outline-none dark:text-white"
+            />
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
+              className="w-full py-4 bg-indigo-600 text-white text-xs font-black rounded-2xl hover:bg-indigo-500 shadow-xl shadow-indigo-500/30 transition-all transform active:scale-95 uppercase tracking-widest"
+            >
+              Konfirmasi Pengiriman
+            </button>
+            <button
+              onClick={() => setShowExternalForm(false)}
+              className="w-full py-4 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-800 dark:hover:text-white text-xs font-black rounded-2xl transition-all uppercase tracking-widest"
+            >
+              Batalkan
+            </button>
+          </div>
+        </div>
+      </Modal>
     </div >
   );
 }

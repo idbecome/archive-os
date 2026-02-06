@@ -134,18 +134,32 @@ app.delete('/api/roles/:id', (req, res) => {
 app.get('/api/inventory', (req, res) => {
     db.all("SELECT * FROM inventory", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => ({
-            ...r,
-            boxData: r.boxData ? JSON.parse(r.boxData) : null,
-            history: r.history ? JSON.parse(r.history) : []
-        })));
+        res.json(rows.map(r => {
+            // Robust Mapping for redundant columns
+            const rawBoxData = r.boxData || r.box_data || r.boxdata;
+            const rawHistory = r.history || r.history_data; // in case of future changes
+            const rawLastUpdated = r.lastUpdated || r.last_updated || r.lastupdated;
+
+            return {
+                ...r,
+                status: (r.status || 'EMPTY').toUpperCase(),
+                lastUpdated: rawLastUpdated,
+                boxData: rawBoxData ? (typeof rawBoxData === 'string' ? JSON.parse(rawBoxData) : rawBoxData) : null,
+                history: rawHistory ? (typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory) : []
+            };
+        }));
     });
 });
 
 app.put('/api/inventory/:id', (req, res) => {
-    const { status, lastUpdated, boxData, history } = req.body;
-    db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
-        [status, lastUpdated, JSON.stringify(boxData), JSON.stringify(history), req.params.id],
+    let { status, lastUpdated, boxData, history } = req.body;
+    status = (status || 'EMPTY').toUpperCase();
+    const boxDataJson = JSON.stringify(boxData);
+    const historyJson = JSON.stringify(history);
+
+    db.run(
+        "UPDATE inventory SET status = ?, lastUpdated = ?, last_updated = ?, boxData = ?, box_data = ?, history = ? WHERE id = ?",
+        [status, lastUpdated, lastUpdated, boxDataJson, boxDataJson, historyJson, req.params.id],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });
