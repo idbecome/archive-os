@@ -9,17 +9,16 @@ const pool = mysql.createPool({
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
-    multipleStatements: true // Allow multiple statements for init if needed
+    multipleStatements: true
 });
 
 console.log('Connecting to MySQL database...');
 
-// Wrapper to mimic SQLite API for existing index.js compatibility
+// Wrapper to mimic SQLite API
 const db = {
     run: (sql, params, callback) => {
         pool.query(sql, params, function (err, results) {
             if (callback) {
-                // Mimic SQLite 'this' context for lastID and changes
                 const context = {
                     lastID: results ? results.insertId : 0,
                     changes: results ? results.affectedRows : 0
@@ -92,16 +91,20 @@ function initDb() {
             ocrContent LONGTEXT,
             auditId VARCHAR(255),
             stepIndex INT,
-            fileData LONGTEXT
+            fileData LONGTEXT,
+            versionsHistory LONGTEXT,
+            version INT DEFAULT 1
         )`,
         `CREATE TABLE IF NOT EXISTS logs (
             id INT AUTO_INCREMENT PRIMARY KEY,
             timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
             user VARCHAR(100),
             action VARCHAR(100),
-            details TEXT
+            details TEXT,
+            oldValue TEXT,
+            newValue TEXT
         )`,
-        `CREATE TABLE IF NOT EXISTS tax_audits (
+        `CREATE TABLE IF NOT EXISTS tax_audits(
             id VARCHAR(255) PRIMARY KEY,
             title VARCHAR(255),
             status VARCHAR(50),
@@ -110,20 +113,20 @@ function initDb() {
             letterNumber VARCHAR(100),
             startDate DATETIME
         )`,
-        `CREATE TABLE IF NOT EXISTS tax_summaries (
+        `CREATE TABLE IF NOT EXISTS tax_summaries(
             id INT AUTO_INCREMENT PRIMARY KEY,
             month VARCHAR(50),
             year INT,
-            pph23 DECIMAL(15,2),
-            pph42 DECIMAL(15,2),
-            pph26 DECIMAL(15,2),
+            pph23 DECIMAL(15, 2),
+            pph42 DECIMAL(15, 2),
+            pph26 DECIMAL(15, 2),
             ppnIn TEXT,
             ppnOut TEXT,
             extraPph TEXT,
             extraPpnIn TEXT,
             extraPpnOut TEXT
         )`,
-        `CREATE TABLE IF NOT EXISTS external_items (
+        `CREATE TABLE IF NOT EXISTS external_items(
             id INT AUTO_INCREMENT PRIMARY KEY,
             boxId VARCHAR(100),
             destination VARCHAR(255),
@@ -135,32 +138,55 @@ function initDb() {
     ];
 
     tables.forEach(sql => {
-        pool.query(sql, (err) => {
-            if (err) console.error("Error creating table:", err.message);
+        db.run(sql, [], (err) => {
+            if (err) console.error("Error init table:", err);
         });
     });
 
-    // Seed Data Check
-    pool.query("SELECT count(*) as count FROM users", (err, rows) => {
-        if (!err && rows[0].count === 0) {
-            console.log("Seeding initial data...");
-            pool.query("INSERT INTO users (username, password, name, role, department) VALUES ('admin', '123', 'Administrator', 'admin', 'IT')");
-            pool.query("INSERT INTO users (username, password, name, role, department) VALUES ('staff', '123', 'Staff Gudang', 'staff', 'Warehouse')");
-            pool.query("INSERT INTO users (username, password, name, role, department) VALUES ('viewer', '123', 'Tamu', 'viewer', 'General')");
+    // MIGRATION: Add columns if missing
+    db.all("SHOW COLUMNS FROM logs LIKE 'oldValue'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating logs table: Adding oldValue/newValue columns...");
+            db.run("ALTER TABLE logs ADD COLUMN oldValue TEXT");
+            db.run("ALTER TABLE logs ADD COLUMN newValue TEXT");
         }
     });
 
-    pool.query("SELECT count(*) as count FROM departments", (err, rows) => {
+    db.all("SHOW COLUMNS FROM documents LIKE 'versionsHistory'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating documents table: Adding versionsHistory column...");
+            db.run("ALTER TABLE documents ADD COLUMN versionsHistory LONGTEXT");
+        }
+    });
+
+    db.all("SHOW COLUMNS FROM documents LIKE 'version'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating documents table: Adding version column...");
+            db.run("ALTER TABLE documents ADD COLUMN version INT DEFAULT 1");
+        }
+    });
+
+    // Seed Data
+    db.all("SELECT count(*) as count FROM users", [], (err, rows) => {
+        if (!err && rows[0].count === 0) {
+            console.log("Seeding initial data...");
+            db.run("INSERT INTO users (username, password, name, role, department) VALUES ('admin', '123', 'Administrator', 'admin', 'IT')");
+            db.run("INSERT INTO users (username, password, name, role, department) VALUES ('staff', '123', 'Staff Gudang', 'staff', 'Warehouse')");
+            db.run("INSERT INTO users (username, password, name, role, department) VALUES ('viewer', '123', 'Tamu', 'viewer', 'General')");
+        }
+    });
+
+    db.all("SELECT count(*) as count FROM departments", [], (err, rows) => {
         if (!err && rows[0].count === 0) {
             ['IT', 'Finance', 'HR', 'Warehouse', 'General'].forEach(dept => {
-                pool.query("INSERT INTO departments (name) VALUES (?)", [dept]);
+                db.run("INSERT INTO departments (name) VALUES (?)", [dept]);
             });
         }
     });
 
-    pool.query("SELECT count(*) as count FROM roles", (err, rows) => {
+    db.all("SELECT count(*) as count FROM roles", [], (err, rows) => {
         if (!err && rows[0].count === 0) {
-            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['admin', 'Administrator', JSON.stringify({
+            db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['admin', 'Administrator', JSON.stringify({
                 dashboard: ['view'],
                 inventory: ['view', 'create', 'edit', 'delete'],
                 documents: ['view', 'create', 'edit', 'delete'],
@@ -168,14 +194,14 @@ function initDb() {
                 'tax-summary': ['view', 'create', 'edit', 'delete'],
                 master: ['view', 'create', 'edit', 'delete']
             })]);
-            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['staff', 'Staff Gudang', JSON.stringify({
+            db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['staff', 'Staff Gudang', JSON.stringify({
                 dashboard: ['view'],
                 inventory: ['view', 'create', 'edit'],
                 documents: ['view', 'create'],
                 'tax-monitoring': ['view'],
                 'tax-summary': ['view']
             })]);
-            pool.query("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['viewer', 'Tamu / Viewer', JSON.stringify({
+            db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['viewer', 'Tamu / Viewer', JSON.stringify({
                 dashboard: ['view'],
                 inventory: ['view'],
                 documents: ['view'],
@@ -185,17 +211,15 @@ function initDb() {
         }
     });
 
-    pool.query("SELECT count(*) as count FROM inventory", (err, rows) => {
+    db.all("SELECT count(*) as count FROM inventory", [], (err, rows) => {
         if (!err && rows[0].count === 0) {
             for (let i = 1; i <= 100; i++) {
-                pool.query("INSERT INTO inventory (id, status, lastUpdated, boxData, history) VALUES (?, ?, ?, ?, ?)", [i, 'EMPTY', null, null, JSON.stringify([])]);
+                db.run("INSERT INTO inventory (id, status, lastUpdated, boxData, history) VALUES (?, ?, ?, ?, ?)", [i, 'EMPTY', null, null, JSON.stringify([])]);
             }
-            // Seed first slot logic can be added here if really needed, but keeping it simple for now
         }
     });
 }
 
-// Initial connection test and setup
 pool.getConnection((err, connection) => {
     if (err) {
         console.error('Database connection failed:', err.code, err.message);
@@ -208,4 +232,3 @@ pool.getConnection((err, connection) => {
 });
 
 export default db;
-

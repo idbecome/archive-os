@@ -2,6 +2,18 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import db from './db.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Ensure uploads directory exists
+const UPLOADS_DIR = path.join(__dirname, 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+    fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 const app = express();
 const PORT = 5000;
@@ -11,6 +23,32 @@ console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
+app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Helper: Save Base64 to File
+function saveBase64ToFile(base64Data, id, extension = 'bin') {
+    try {
+        const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        if (!matches || matches.length !== 3) {
+            // Not a base64 string, maybe already a path or raw content?
+            // If it doesn't look like base64, assume it's legacy content or invalid.
+            // For safety, we can return null or try to write raw.
+            // Let's assume valid base64 is sent from frontend.
+            return null;
+        }
+
+        const buffer = Buffer.from(matches[2], 'base64');
+        const filename = `DOC-${id}-${Date.now()}.${extension}`;
+        const filePath = path.join(UPLOADS_DIR, filename);
+
+        fs.writeFileSync(filePath, buffer);
+        console.log(`Saved file to disk: ${filename}`);
+        return `/uploads/${filename}`;
+    } catch (e) {
+        console.error("File save error:", e);
+        return null;
+    }
+}
 
 // INCREASE MYSQL PACKET SIZE (Critical for large uploads)
 db.run("SET GLOBAL max_allowed_packet = 67108864", [], (err) => { // 64MB
@@ -22,6 +60,18 @@ db.run("SET GLOBAL max_allowed_packet = 67108864", [], (err) => { // 64MB
 app.get('/api/users', (req, res) => {
     db.all("SELECT * FROM users", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.get('/api/folders', (req, res) => {
+    console.log('GET /api/folders REQUESTED');
+    db.all("SELECT * FROM folders ORDER BY name ASC", [], (err, rows) => {
+        if (err) {
+            console.error('GET /api/folders ERROR:', err);
+            return res.status(500).json({ error: err.message });
+        }
+        console.log('GET /api/folders SUCCESS:', rows ? rows.length : 0, 'folders found');
         res.json(rows);
     });
 });
@@ -39,13 +89,35 @@ app.post('/api/users', (req, res) => {
 
 app.put('/api/users/:id', (req, res) => {
     const { username, password, name, role, department } = req.body;
-    db.run("UPDATE users SET username = ?, password = ?, name = ?, role = ?, department = ? WHERE id = ?",
-        [username, password, name, role, department, req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
+
+    // Fetch OLD value for Audit
+    db.get("SELECT * FROM users WHERE id = ?", [req.params.id], (err, oldUser) => {
+        if (err || !oldUser) {
+            // Fallback if fetch fails, still update but no detailed audit
+            console.error("Failed to fetch old user for audit", err);
         }
-    );
+
+        db.run("UPDATE users SET username = ?, password = ?, name = ?, role = ?, department = ? WHERE id = ?",
+            [username, password, name, role, department, req.params.id],
+            async function (err) {
+                if (err) return res.status(500).json({ error: err.message });
+
+                // Detailed Audit Log
+                if (oldUser) {
+                    const changes = [];
+                    if (oldUser.username !== username) changes.push(`Username: ${oldUser.username} -> ${username}`);
+                    if (oldUser.role !== role) changes.push(`Role: ${oldUser.role} -> ${role}`);
+                    if (oldUser.department !== department) changes.push(`Dept: ${oldUser.department} -> ${department}`);
+
+                    if (changes.length > 0) {
+                        await systemLog(null, "Update User", `Update User: ${name}`, JSON.stringify(oldUser), JSON.stringify({ username, password, name, role, department }));
+                    }
+                }
+
+                res.json({ success: true, changes: this.changes });
+            }
+        );
+    });
 });
 
 app.delete('/api/users/:id', (req, res) => {
@@ -71,9 +143,18 @@ app.post('/api/departments', (req, res) => {
 });
 
 app.put('/api/departments/:id', (req, res) => {
-    db.run("UPDATE departments SET name = ? WHERE id = ?", [req.body.name, req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
+    const newName = req.body.name;
+    db.get("SELECT * FROM departments WHERE id = ?", [req.params.id], (err, oldDept) => {
+        if (err) console.error("Audit fetch failed for department:", err);
+
+        db.run("UPDATE departments SET name = ? WHERE id = ?", [newName, req.params.id], async (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+
+            if (oldDept && oldDept.name !== newName) {
+                await systemLog(null, "Update Department", `Department ID ${req.params.id} name changed: ${oldDept.name} -> ${newName}`, oldDept.name, newName);
+            }
+            res.json({ success: true });
+        });
     });
 });
 
@@ -114,13 +195,29 @@ app.post('/api/roles', (req, res) => {
 
 app.put('/api/roles/:id', (req, res) => {
     const { name, permissions } = req.body;
-    db.run("UPDATE roles SET label = ?, access = ? WHERE id = ?",
-        [name, JSON.stringify(permissions), req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
+    const newPermissionsJson = JSON.stringify(permissions);
+
+    db.get("SELECT * FROM roles WHERE id = ?", [req.params.id], (err, oldRole) => {
+        if (err) console.error("Audit fetch failed for role:", err);
+
+        db.run("UPDATE roles SET label = ?, access = ? WHERE id = ?",
+            [name, newPermissionsJson, req.params.id],
+            async (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                if (oldRole) {
+                    const changes = [];
+                    if (oldRole.label !== name) changes.push(`Name: ${oldRole.label} -> ${name}`);
+                    if (oldRole.access !== newPermissionsJson) changes.push(`Permissions changed`);
+
+                    if (changes.length > 0) {
+                        await systemLog(null, "Update Role", `Role ID ${req.params.id} updated: ${changes.join(', ')}`, JSON.stringify(oldRole), JSON.stringify({ id: req.params.id, name, permissions }));
+                    }
+                }
+                res.json({ success: true });
+            }
+        );
+    });
 });
 
 app.delete('/api/roles/:id', (req, res) => {
@@ -157,28 +254,32 @@ app.put('/api/inventory/:id', (req, res) => {
     const boxDataJson = JSON.stringify(boxData);
     const historyJson = JSON.stringify(history);
 
-    db.run(
-        "UPDATE inventory SET status = ?, lastUpdated = ?, last_updated = ?, boxData = ?, box_data = ?, history = ? WHERE id = ?",
-        [status, lastUpdated, lastUpdated, boxDataJson, boxDataJson, historyJson, req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
-});
+    // Fetch OLD value
+    db.get("SELECT * FROM inventory WHERE id = ?", [req.params.id], (err, oldItem) => {
+        if (err) console.error("Audit fetch failed", err);
 
-// --- EXTERNAL ITEMS (INDOARSIP) ---
-app.get('/api/inventory/external', (req, res) => {
-    db.all("SELECT * FROM external_items ORDER BY sentDate DESC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => ({
-            ...r,
-            boxData: JSON.parse(r.boxData || '{}'),
-            history: JSON.parse(r.history || '[]')
-        })));
+        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
+            [status, lastUpdated, boxDataJson, historyJson, req.params.id],
+            async (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+
+                // Audit Log
+                if (oldItem && oldItem.status !== status) {
+                    await systemLog(null, "Inventory Update", `Slot #${req.params.id} Status: ${oldItem.status} -> ${status}`, oldItem.status, status);
+                }
+
+                db.all("SELECT * FROM inventory", [], (err, rows) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json(rows.map(r => ({
+                        ...r,
+                        boxData: JSON.parse(r.boxData || '{}'),
+                        history: JSON.parse(r.history || '[]')
+                    })));
+                });
+            }
+        );
     });
 });
-
 app.post('/api/inventory/external', (req, res) => {
     const { boxId, destination, sentDate, sender, boxData, history } = req.body;
     db.run("INSERT INTO external_items (boxId, destination, sentDate, sender, boxData, history) VALUES (?, ?, ?, ?, ?, ?)",
@@ -214,24 +315,27 @@ app.get('/api/logs', (req, res) => {
 });
 
 // --- LOGGING HELPER ---
-function systemLog(user, action, details) {
-    const timestamp = new Date().toISOString();
+const systemLog = (user, action, details, oldValue = null, newValue = null) => {
     return new Promise((resolve, reject) => {
-        db.run("INSERT INTO logs (timestamp, user, action, details) VALUES (?, ?, ?, ?)",
-            [timestamp, user || 'System', action, details],
-            (err) => err ? reject(err) : resolve()
+        const timestamp = new Date().toISOString();
+        db.run("INSERT INTO logs (timestamp, user, action, details, oldValue, newValue) VALUES (?, ?, ?, ?, ?, ?)",
+            [timestamp, user || 'System', action, details, oldValue, newValue],
+            (err) => {
+                if (err) console.error("Logging failed:", err);
+                resolve();
+            }
         );
     });
-}
+};
 
 app.post('/api/logs', (req, res) => {
-    const { user, action, details } = req.body;
+    const { user, action, details, oldValue, newValue } = req.body;
     const timestamp = new Date().toISOString();
-    db.run("INSERT INTO logs (timestamp, user, action, details) VALUES (?, ?, ?, ?)",
-        [timestamp, user, action, details],
-        (err) => {
+    db.run("INSERT INTO logs (timestamp, user, action, details, oldValue, newValue) VALUES (?, ?, ?, ?, ?, ?)",
+        [timestamp, user, action, details, oldValue, newValue],
+        function (err) {
             if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
+            res.json({ id: this.lastID });
         }
     );
 });
@@ -329,12 +433,29 @@ app.post('/api/documents', (req, res) => {
     // Support multiple casing for fileData
     const content = fileData || file_data || filedata;
 
+    let fileUrl = url;
+    let savedPath = null;
+    let finalFileData = null; // Don't save base64 to DB
+
+    if (content) {
+        // Determine extension
+        const ext = title.split('.').pop() || 'bin';
+        const savedUrl = saveBase64ToFile(content, id, ext);
+        if (savedUrl) {
+            fileUrl = savedUrl;
+            savedPath = savedUrl;
+        } else {
+            console.warn("Failed to save file to disk, falling back to legacy DB storage (not recommended)");
+            finalFileData = content;
+        }
+    }
+
     db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, content],
+        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, ocrContent, auditId, stepIndex, finalFileData],
         async (err) => {
             if (err) return res.status(500).json({ error: err.message });
-            await systemLog(owner, "Upload", `Mengunggah dokumen: "${title}"`);
-            res.json({ success: true });
+            await systemLog(owner, "Upload", `Mengunggah dokumen: "${title}" (Storage: ${savedPath ? 'Disk' : 'DB'})`);
+            res.json({ success: true, url: fileUrl });
         }
     );
 });
@@ -344,15 +465,61 @@ app.put('/api/documents/:id', (req, res) => {
     const content = fileData || file_data || filedata;
 
     if (content) {
-        // Full update with file content
-        db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ? WHERE id = ?",
-            [title, folderId, department, ocrContent, content, req.params.id],
-            async (err) => {
-                if (err) return res.status(500).json({ error: err.message });
-                await systemLog(null, "Rename/Update", `Update file: "${title}"`);
-                res.json({ success: true });
+        // Full update with file content -> SAVE VERSION
+        db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, oldDoc) => {
+            if (err) return res.status(500).json({ error: err.message });
+
+            let versionsHistory = [];
+            try {
+                versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : [];
+            } catch (e) { }
+
+            // Save OLD version
+            if (oldDoc) {
+                let archivedUrl = oldDoc.url;
+                let archivedFileData = null;
+
+                // MIGRATION: If old doc has BLOB data, save it to disk now to free up DB space for history
+                if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
+                    const ext = oldDoc.title.split('.').pop() || 'bin';
+                    const archivedPath = saveBase64ToFile(oldDoc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
+                    if (archivedPath) {
+                        archivedUrl = archivedPath; // Point to new disk file
+                        console.log("Migrated old version to disk:", archivedPath);
+                    } else {
+                        archivedFileData = oldDoc.fileData; // Fallback: keep BLOB if save fails
+                    }
+                } else if (oldDoc.fileData) {
+                    // Non-base64 data? Keep it.
+                    archivedFileData = oldDoc.fileData;
+                }
+
+                versionsHistory.push({
+                    timestamp: oldDoc.uploadDate || new Date().toISOString(),
+                    size: oldDoc.size,
+                    type: oldDoc.type,
+                    fileData: archivedFileData, // Should be null if migrated
+                    url: archivedUrl,           // Should point to disk if migrated or already there
+                    title: oldDoc.title,
+                    user: oldDoc.owner || 'System'
+                });
             }
-        );
+
+            // Save NEW version
+            const ext = title.split('.').pop() || 'bin';
+            const newSavedUrl = saveBase64ToFile(content, req.params.id, ext);
+            const finalUrl = newSavedUrl || url || oldDoc.url;
+            const finalFileData = newSavedUrl ? null : content; // Fallback to BLOB if save failed
+
+            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
+                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), req.params.id],
+                async (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+                    await systemLog(null, "Update/Version", `Update file & save version: "${title}" (Storage: ${newSavedUrl ? 'Disk' : 'DB'})`);
+                    res.json({ success: true });
+                }
+            );
+        });
     } else {
         // Metadata only update
         db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ? WHERE id = ?",
@@ -456,9 +623,80 @@ app.post('/api/folders/copy', async (req, res) => {
 });
 
 app.delete('/api/documents/:id', (req, res) => {
-    db.run("DELETE FROM documents WHERE id = ?", [req.params.id], (err) => {
+    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, doc) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+
+        // Delete main file if exists on disk
+        if (doc.url && doc.url.startsWith('/uploads/')) {
+            const filePath = path.join(UPLOADS_DIR, path.basename(doc.url));
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath); // Sync is fine for delete
+                console.log("Deleted file from disk:", filePath);
+            }
+        }
+
+        // OPTIONAL: Clean up version history files? 
+        // For now, keep them as "Archive" or implement lazy cleanup later.
+
+        db.run("DELETE FROM documents WHERE id = ?", [req.params.id], (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        });
+    });
+});
+
+app.post('/api/documents/:id/restore', (req, res) => {
+    const { versionTimestamp } = req.body;
+
+    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, doc) => {
+        if (err || !doc) return res.status(404).json({ error: "Document not found" });
+
+        let versions = [];
+        try { versions = JSON.parse(doc.versionsHistory || '[]'); } catch (e) { }
+
+        const versionToRestore = versions.find(v => v.timestamp === versionTimestamp);
+        if (!versionToRestore) return res.status(404).json({ error: "Version not found" });
+
+        // Backup current before restore
+        let currentArchivedUrl = doc.url;
+        let currentArchivedData = null;
+
+        if (doc.fileData && doc.fileData.startsWith('data:')) {
+            // If current is BLOB, migrate to disk before archiving
+            const ext = doc.title.split('.').pop() || 'bin';
+            const archivedPath = saveBase64ToFile(doc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
+            if (archivedPath) currentArchivedUrl = archivedPath;
+            else currentArchivedData = doc.fileData;
+        } else {
+            currentArchivedData = doc.fileData;
+        }
+
+        versions.push({
+            timestamp: doc.uploadDate || new Date().toISOString(),
+            size: doc.size,
+            type: doc.type,
+            fileData: currentArchivedData,
+            url: currentArchivedUrl,
+            title: doc.title,
+            user: doc.owner || 'System',
+            restoredFrom: versionTimestamp
+        });
+
+        // Perform Restore
+        // If restoring a BLOB version, we could migrate it now, but respecting the history format is safer.
+        // If restoring a File version, fileData is null, url is set.
+        const newUrl = versionToRestore.url || doc.url; // Use restored URL or keep current if undefined (legacy)
+        const newFileData = versionToRestore.fileData || null;
+
+        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
+            [newFileData, newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), req.params.id],
+            async (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                await systemLog(null, "Restore Version", `Restore file "${doc.title}" ke versi ${new Date(versionTimestamp).toLocaleString()}`);
+                res.json({ success: true });
+            }
+        );
     });
 });
 
