@@ -147,7 +147,7 @@ export default function Inventory({
                                     className={`aspect-square rounded-xl flex flex-col items-center justify-center relative group transition-all duration-300 
                                     ${slot.status === 'EMPTY'
                                             ? 'bg-gray-50 dark:bg-slate-800/40 border-2 border-dashed border-gray-300 dark:border-slate-700 hover:border-indigo-500'
-                                            : `border ${statusStyle.color.split(' ')[1].replace('border-', 'border-')} ${statusStyle.color.split(' ')[0]} shadow-sm`
+                                            : `border ${statusStyle.color} shadow-sm`
                                         }
                                     ${!matched && inventorySearchQuery ? 'opacity-20 grayscale cursor-not-allowed hidden' : 'opacity-100'}
                                 `}
@@ -156,7 +156,7 @@ export default function Inventory({
 
                                     {slot.status !== 'EMPTY' ? (
                                         <div className="flex flex-col items-center gap-1 w-full px-1">
-                                            <Package size={20} className={statusStyle.color.split(' ')[2]} />
+                                            <Package size={20} />
                                             {slot.boxData?.id && (
                                                 <p className="text-[9px] md:text-[10px] font-bold truncate w-full text-center bg-white/50 dark:bg-black/20 rounded px-1">
                                                     {slot.boxData.id}

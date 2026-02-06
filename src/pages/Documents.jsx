@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
     HardDrive, ChevronRight, ChevronLeft, Search, Plus, UploadCloud, FolderOpen,
     Trash2, Edit3, FileDigit, FileText, Highlighter, History, PenLine, User, Clock,
-    Copy, Move, RefreshCw, X, Lock, Users, Building, Shield
+    Copy, Move, RefreshCw, X, Lock, Users, Building, Shield, Download, Eye, File, Image, MoreVertical
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
 import { api } from '../api';
@@ -16,9 +16,16 @@ export default function Documents({
     hasPermission, docStats,
     getSearchSnippet, logs,
     navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex,
-    onRefresh, users, departments, currentUser, handleEditFolder
+    onRefresh, users, departments, currentUser, handleEditFolder, handleDownload
 }) {
     const [showHistory, setShowHistory] = useState(false);
+    const [activeMenuId, setActiveMenuId] = useState(null); // ID of the document whose menu is open
+    const [activeFolderMenuId, setActiveFolderMenuId] = useState(null); // ID of the folder whose menu is open
+    const [menuLocation, setMenuLocation] = useState({ top: null, bottom: null, right: 0 }); // Coordinates for fixed menu positioning
+
+    // --- BULK SELECTION STATE ---
+    const [selectedDocIds, setSelectedDocIds] = useState(new Set());
+    const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
     // --- FOLDER MODAL STATE ---
     const [isFolderModalOpen, setIsFolderModalOpen] = useState(false);
@@ -66,6 +73,34 @@ export default function Documents({
             alert("Operasi gagal: " + e.message);
             setIsExecutingOp(false);
             setOpProgress(0);
+        }
+    };
+
+    // --- BULK HANDLERS ---
+    const toggleDocSelection = (id) => {
+        const newSet = new Set(selectedDocIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setSelectedDocIds(newSet);
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedDocIds.size === 0) return;
+        if (!window.confirm(`Yakin ingin menghapus ${selectedDocIds.size} dokumen terpilih?`)) return;
+
+        setIsBulkDeleting(true);
+        try {
+            const promises = Array.from(selectedDocIds).map(id => api.deleteDocument(id));
+            await Promise.all(promises);
+            setSelectedDocIds(new Set());
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            alert("Gagal menghapus beberapa file: " + e.message);
+        } finally {
+            setIsBulkDeleting(false);
         }
     };
 
@@ -147,7 +182,16 @@ export default function Documents({
                                 <Plus size={18} /> Folder
                             </button>
                             <button
-                                onClick={() => { setUploadForm(prev => ({ ...prev, id: '', title: '', editMode: false })); setModalTab('upload'); setIsModalOpen(true); }}
+                                onClick={() => {
+                                    // RESET TOTAL: Pastikan tidak ada sisa data dari edit sebelumnya
+                                    setUploadForm({
+                                        id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
+                                        previewUrl: null, fileData: null, fileBase64: null, isProcessing: false,
+                                        processingMessage: '', editMode: false, originalDoc: null
+                                    });
+                                    setModalTab('upload');
+                                    setIsModalOpen(true);
+                                }}
                                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium flex items-center justify-center gap-2 shadow-lg shadow-blue-500/20 transition-all hover:scale-105"
                             >
                                 <UploadCloud size={18} /> Upload
@@ -235,39 +279,92 @@ export default function Documents({
                                 </div>
                             </div>
 
-                            {/* Actions Overlay - Only Check Edit/Delete Permissions + Ownership for some */}
-                            <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                {hasPermission('documents', 'edit') && (
-                                    <>
-                                        <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); }} className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600" title="Copy Folder"><Copy size={14} /></button>
-                                        <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'folder', folder); }} className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600" title="Move Folder"><Move size={14} /></button>
-                                        <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                setFolderForm({
-                                                    id: folder.id,
-                                                    name: folder.name,
-                                                    privacy: folder.privacy || 'public',
-                                                    allowedDepts: folder.allowedDepts || [],
-                                                    allowedUsers: folder.allowedUsers || []
+                            {/* Actions Overlay - Minimalist Dropdown */}
+                            <div className="absolute top-2 right-2">
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (activeFolderMenuId === folder.id) {
+                                            setActiveFolderMenuId(null);
+                                        } else {
+                                            const rect = e.currentTarget.getBoundingClientRect();
+                                            const spaceBelow = window.innerHeight - rect.bottom;
+                                            // If less than 220px below, open upwards
+                                            if (spaceBelow < 220) {
+                                                setMenuLocation({
+                                                    top: null,
+                                                    bottom: window.innerHeight - rect.top + 5,
+                                                    right: window.innerWidth - rect.right
                                                 });
-                                                setIsFolderModalOpen(true);
-                                            }}
-                                            className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-blue-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600"
-                                            title="Edit Folder"
+                                            } else {
+                                                setMenuLocation({
+                                                    top: rect.bottom + 5,
+                                                    bottom: null,
+                                                    right: window.innerWidth - rect.right
+                                                });
+                                            }
+                                            setActiveFolderMenuId(folder.id);
+                                        }
+                                    }}
+                                    className="p-1.5 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-full transition-all opacity-0 group-hover:opacity-100"
+                                >
+                                    <MoreVertical size={16} />
+                                </button>
+
+                                {activeFolderMenuId === folder.id && (
+                                    <>
+                                        <div
+                                            className="fixed inset-0 z-40"
+                                            onClick={(e) => { e.stopPropagation(); setActiveFolderMenuId(null); }}
+                                        />
+                                        <div
+                                            className={`fixed w-40 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-gray-100 dark:border-slate-700 z-50 overflow-hidden animate-in zoom-in-95 duration-100 ${menuLocation.bottom ? 'origin-bottom-right' : 'origin-top-right'}`}
+                                            style={{ top: menuLocation.top, bottom: menuLocation.bottom, right: menuLocation.right }}
                                         >
-                                            <PenLine size={14} />
-                                        </button>
+                                            <div className="py-1">
+                                                {hasPermission('documents', 'create') && (
+                                                    <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); setActiveFolderMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                        <Copy size={14} /> Salin
+                                                    </button>
+                                                )}
+                                                {hasPermission('documents', 'edit') && (
+                                                    <>
+                                                        <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'folder', folder); setActiveFolderMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                            <Move size={14} /> Pindah
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setFolderForm({
+                                                                    id: folder.id,
+                                                                    name: folder.name,
+                                                                    privacy: folder.privacy || 'public',
+                                                                    allowedDepts: folder.allowedDepts || [],
+                                                                    allowedUsers: folder.allowedUsers || []
+                                                                });
+                                                                setIsFolderModalOpen(true);
+                                                                setActiveFolderMenuId(null);
+                                                            }}
+                                                            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                                        >
+                                                            <PenLine size={14} /> Edit
+                                                        </button>
+                                                    </>
+                                                )}
+                                                {hasPermission('documents', 'delete') && (
+                                                    <>
+                                                        <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
+                                                        <button
+                                                            onClick={(e) => { handleDeleteFolder(e, folder.id); setActiveFolderMenuId(null); }}
+                                                            className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 flex items-center gap-2"
+                                                        >
+                                                            <Trash2 size={14} /> Hapus
+                                                        </button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
                                     </>
-                                )}
-                                {hasPermission('documents', 'delete') && (
-                                    <button
-                                        onClick={(e) => handleDeleteFolder(e, folder.id)}
-                                        className="p-1.5 bg-white dark:bg-slate-700 text-gray-500 hover:text-red-600 rounded-md shadow-sm border border-gray-100 dark:border-slate-600"
-                                        title="Delete"
-                                    >
-                                        <Trash2 size={14} />
-                                    </button>
                                 )}
                             </div>
                         </div>
@@ -293,20 +390,119 @@ export default function Documents({
                         const isContentMatch = (doc.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()) && searchQuery.length > 0;
 
                         return (
-                            <div key={doc.id} onClick={() => handleViewDoc(doc)} className="group relative flex flex-col p-4 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl hover:border-indigo-400 dark:hover:border-indigo-500 hover:shadow-md cursor-pointer transition-all h-full">
+                            <div key={doc.id} className={`group relative flex flex-col p-4 glass-card rounded-2xl transition-all h-full ${selectedDocIds.has(doc.id) ? 'ring-2 ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20' : ''}`}>
+                                {/* Selection Checkbox */}
+                                {hasPermission('documents', 'delete') && (
+                                    <div className={`absolute top-3 left-3 z-30 ${selectedDocIds.has(doc.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                                        <input
+                                            type="checkbox"
+                                            checked={selectedDocIds.has(doc.id)}
+                                            onChange={(e) => { e.stopPropagation(); toggleDocSelection(doc.id); }}
+                                            className="w-5 h-5 rounded-md border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shadow-sm"
+                                        />
+                                    </div>
+                                )}
                                 {/* Actions Overlay */}
-                                <div className="absolute top-2 right-2 flex flex-col gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity bg-white/90 dark:bg-slate-900/90 rounded-lg p-1 shadow-sm backdrop-blur-sm">
-                                    <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'file', doc); }} className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Salin File (Copy)"><Copy size={14} /></button>
-                                    <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'file', doc); }} className="p-1.5 text-gray-500 hover:text-indigo-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Pindah File (Move)"><Move size={14} /></button>
-                                    <button onClick={(e) => handleRenameDoc(e, doc)} className="p-1.5 text-gray-500 hover:text-blue-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Ganti Nama File (Rename)"><PenLine size={14} /></button>
-                                    <button onClick={(e) => handleEditDoc(e, doc)} className="p-1.5 text-gray-500 hover:text-amber-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Update / Upload Ulang File"><UploadCloud size={14} /></button>
-                                    <button onClick={(e) => handleDeleteDoc(e, doc.id)} className="p-1.5 text-gray-500 hover:text-red-600 hover:bg-gray-100 dark:hover:bg-slate-800 rounded" title="Hapus File"><Trash2 size={14} /></button>
+                                { /* Minimalist Action Menu */}
+                                <div className="absolute top-2 right-2 z-20">
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            if (activeMenuId === doc.id) {
+                                                setActiveMenuId(null);
+                                            } else {
+                                                const rect = e.currentTarget.getBoundingClientRect();
+                                                const spaceBelow = window.innerHeight - rect.bottom;
+                                                // If less than 220px below, open upwards
+                                                if (spaceBelow < 220) {
+                                                    setMenuLocation({
+                                                        top: null,
+                                                        bottom: window.innerHeight - rect.top + 5,
+                                                        right: window.innerWidth - rect.right
+                                                    });
+                                                } else {
+                                                    setMenuLocation({
+                                                        top: rect.bottom + 5,
+                                                        bottom: null,
+                                                        right: window.innerWidth - rect.right
+                                                    });
+                                                }
+                                                setActiveMenuId(doc.id);
+                                            }
+                                        }}
+                                        className="p-1.5 text-gray-400 hover:text-gray-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition-colors"
+                                    >
+                                        <MoreVertical size={16} />
+                                    </button>
+
+                                    { /* Dropdown Menu */}
+                                    {activeMenuId === doc.id && (
+                                        <>
+                                            <div
+                                                className="fixed inset-0 z-40"
+                                                onClick={(e) => { e.stopPropagation(); setActiveMenuId(null); }}
+                                            />
+                                            <div
+                                                className={`fixed w-48 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-gray-100 dark:border-slate-700 z-50 overflow-hidden animate-in zoom-in-95 duration-100 ${menuLocation.bottom ? 'origin-bottom-right' : 'origin-top-right'}`}
+                                                style={{ top: menuLocation.top, bottom: menuLocation.bottom, right: menuLocation.right }}
+                                            >
+                                                <div className="py-1">
+                                                    <button onClick={(e) => { e.stopPropagation(); handleViewDoc(doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                        <Eye size={14} className="text-blue-500" /> Lihat Detail
+                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleDownload(doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                        <Download size={14} className="text-green-500" /> Download
+                                                    </button>
+                                                    <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
+
+                                                    {hasPermission('documents', 'create') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'file', doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                            <Copy size={14} /> Salin
+                                                        </button>
+                                                    )}
+                                                    {hasPermission('documents', 'edit') && (
+                                                        <>
+                                                            <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'file', doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                <Move size={14} /> Pindah
+                                                            </button>
+                                                            <button onClick={(e) => { handleRenameDoc(e, doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                <PenLine size={14} /> Ganti Nama
+                                                            </button>
+                                                            <button onClick={(e) => { handleEditDoc(e, doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                <UploadCloud size={14} /> Update File
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {hasPermission('documents', 'delete') && (
+                                                        <>
+                                                            <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
+                                                            <button onClick={(e) => { handleDeleteDoc(e, doc.id); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 flex items-center gap-2">
+                                                                <Trash2 size={14} /> Hapus
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
+
+                                {/* Quick Actions (Hover Only) */}
+                                <div className="absolute bottom-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-all duration-300 translate-y-2 group-hover:translate-y-0 z-10">
+                                    <button onClick={(e) => { e.stopPropagation(); handleViewDoc(doc); }} className="p-2 bg-white dark:bg-slate-800 text-gray-500 hover:text-blue-600 rounded-full shadow-md border border-gray-100 dark:border-slate-700" title="Lihat">
+                                        <Eye size={16} />
+                                    </button>
+                                    <button onClick={(e) => { e.stopPropagation(); handleDownload(doc); }} className="p-2 bg-white dark:bg-slate-800 text-gray-500 hover:text-green-600 rounded-full shadow-md border border-gray-100 dark:border-slate-700" title="Download">
+                                        <Download size={16} />
+                                    </button>
                                 </div>
 
                                 <div className="flex items-center justify-center py-4 mb-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
                                     {doc.type && doc.type.includes('pdf') ?
                                         <FileDigit size={40} className="text-red-500 drop-shadow-sm" strokeWidth={1.5} /> :
-                                        <FileText size={40} className="text-blue-500 drop-shadow-sm" strokeWidth={1.5} />
+                                        doc.type && doc.type.includes('image') ?
+                                            <Image size={40} className="text-purple-500 drop-shadow-sm" strokeWidth={1.5} /> :
+                                            <File size={40} className="text-blue-500 drop-shadow-sm" strokeWidth={1.5} />
                                     }
                                 </div>
 
@@ -527,7 +723,40 @@ export default function Documents({
                     </div>
                 </div>
             )}
+            {/* FLOATING BULK ACTIONS BAR */}
+            {selectedDocIds.size > 0 && (
+                <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white dark:bg-slate-900 shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 z-50 border border-gray-200 dark:border-slate-800 animate-in slide-in-from-bottom-4 duration-300">
+                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-200 pl-2 border-r border-gray-200 dark:border-slate-700 pr-4">
+                        {selectedDocIds.size} file dipilih
+                    </span>
+
+                    <button
+                        onClick={() => setSelectedDocIds(new Set())}
+                        className="text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 text-sm font-medium"
+                    >
+                        Batal
+                    </button>
+
+                    <button
+                        onClick={handleBulkDelete}
+                        disabled={isBulkDeleting}
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-1.5 rounded-full text-sm font-medium flex items-center gap-2 shadow-red-500/30 shadow-lg transition-transform active:scale-95"
+                    >
+                        {isBulkDeleting ? (
+                            <>
+                                <div className="w-3 h-3 border-2 border-white rounded-full animate-spin border-t-transparent" />
+                                Menghapus...
+                            </>
+                        ) : (
+                            <>
+                                <Trash2 size={16} />
+                                Hapus ({selectedDocIds.size})
+                            </>
+                        )}
+                    </button>
+                </div>
+            )}
+
         </div>
     );
 }
-

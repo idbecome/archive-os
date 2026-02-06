@@ -91,7 +91,8 @@ function initDb() {
             owner VARCHAR(100),
             ocrContent LONGTEXT,
             auditId VARCHAR(255),
-            stepIndex INT
+            stepIndex INT,
+            fileData LONGTEXT
         )`,
         `CREATE TABLE IF NOT EXISTS logs (
             id INT AUTO_INCREMENT PRIMARY KEY,

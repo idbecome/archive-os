@@ -12,6 +12,12 @@ console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 
+// INCREASE MYSQL PACKET SIZE (Critical for large uploads)
+db.run("SET GLOBAL max_allowed_packet = 67108864", [], (err) => { // 64MB
+    if (err) console.error("Warning: Failed to set max_allowed_packet:", err.message);
+    else console.log("MySQL Config: max_allowed_packet set to 64MB for large uploads");
+});
+
 // --- USERS ---
 app.get('/api/users', (req, res) => {
     db.all("SELECT * FROM users", [], (err, rows) => {
@@ -264,7 +270,9 @@ app.delete('/api/folders/:id', (req, res) => {
 // --- DOCUMENTS ---
 app.get('/api/documents', (req, res) => {
     const { auditId, stepIndex, folderId } = req.query;
-    let sql = "SELECT * FROM documents";
+    // OPTIMIZATION: Exclude fileData (LONGTEXT) from list view for performance
+    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex";
+    let sql = `SELECT ${columns} FROM documents`;
     let params = [];
     let whereClauses = [];
 
@@ -284,7 +292,6 @@ app.get('/api/documents', (req, res) => {
             params.push(stepIndex);
         }
     } else if (stepIndex !== undefined) {
-        // Fallback if no auditId/folderId but stepIndex exists (unlikely use case but safe)
         sql += " WHERE stepIndex = ?";
         params.push(stepIndex);
     }
@@ -295,10 +302,21 @@ app.get('/api/documents', (req, res) => {
     });
 });
 
+app.get('/api/documents/:id', (req, res) => {
+    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(404).json({ error: "Document not found" });
+        res.json(row);
+    });
+});
+
 app.post('/api/documents', (req, res) => {
-    const { id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex } = req.body;
-    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex],
+    const { id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, file_data, filedata } = req.body;
+    // Support multiple casing for fileData
+    const content = fileData || file_data || filedata;
+
+    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, content],
         async (err) => {
             if (err) return res.status(500).json({ error: err.message });
             await systemLog(owner, "Upload", `Mengunggah dokumen: "${title}"`);
@@ -308,15 +326,30 @@ app.post('/api/documents', (req, res) => {
 });
 
 app.put('/api/documents/:id', (req, res) => {
-    const { title, folderId, department, ocrContent } = req.body;
-    db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ? WHERE id = ?",
-        [title, folderId, department, ocrContent, req.params.id],
-        async (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            await systemLog(null, "Rename", `Ganti nama file: "${title}"`);
-            res.json({ success: true });
-        }
-    );
+    const { title, folderId, department, ocrContent, fileData, file_data, filedata } = req.body;
+    const content = fileData || file_data || filedata;
+
+    if (content) {
+        // Full update with file content
+        db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ? WHERE id = ?",
+            [title, folderId, department, ocrContent, content, req.params.id],
+            async (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                await systemLog(null, "Rename/Update", `Update file: "${title}"`);
+                res.json({ success: true });
+            }
+        );
+    } else {
+        // Metadata only update
+        db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ? WHERE id = ?",
+            [title, folderId, department, ocrContent, req.params.id],
+            async (err) => {
+                if (err) return res.status(500).json({ error: err.message });
+                await systemLog(null, "Rename", `Ganti nama/meta file: "${title}"`);
+                res.json({ success: true });
+            }
+        );
+    }
 });
 
 // --- MANAGEMENT OPS (COPY/MOVE) ---
@@ -326,8 +359,8 @@ app.post('/api/documents/copy', (req, res) => {
         if (err || !doc) return res.status(500).json({ error: err ? err.message : "Document not found" });
         const newId = String(Date.now()) + "_" + Math.floor(Math.random() * 1000);
         const newDoc = { ...doc, id: newId, folderId: targetFolderId, title: "Copy of " + doc.title, uploadDate: new Date().toISOString() };
-        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [newDoc.id, newDoc.title, newDoc.type, newDoc.size, newDoc.uploadDate, newDoc.url, newDoc.folderId, newDoc.department, newDoc.owner, newDoc.ocrContent, newDoc.auditId, newDoc.stepIndex],
+        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [newDoc.id, newDoc.title, newDoc.type, newDoc.size, newDoc.uploadDate, newDoc.url, newDoc.folderId, newDoc.department, newDoc.owner, newDoc.ocrContent, newDoc.auditId, newDoc.stepIndex, doc.fileData],
             async (err2) => {
                 if (err2) return res.status(500).json({ error: err2.message });
                 await systemLog(newDoc.owner, "Copy", `Salin file: "${doc.title}" ke folder: ${targetFolderId || 'Root'}`);

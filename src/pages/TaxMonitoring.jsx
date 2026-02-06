@@ -19,6 +19,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const [auditFiles, setAuditFiles] = useState([]);
     const [isLoadingFiles, setIsLoadingFiles] = useState(false);
 
+    const [isUploadingFile, setIsUploadingFile] = useState(false); // New state for upload status
     // Checklist Edit State
     const [editingNoteId, setEditingNoteId] = useState(null);
     const [editingNoteText, setEditingNoteText] = useState('');
@@ -87,7 +88,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             if (folderId) params.folderId = folderId;
 
             const files = await api.getDocuments(params);
-            setAuditFiles(Array.isArray(files) ? files : []);
+            // Normalisasi data file agar terbaca dari berbagai format key
+            const normalizedFiles = (Array.isArray(files) ? files : []).map(f => ({
+                ...f,
+                fileData: f.fileData || f.file_data || f.filedata
+            }));
+            setAuditFiles(normalizedFiles);
         } catch (error) {
             console.error("Failed to load files", error);
             setAuditFiles([]);
@@ -118,16 +124,87 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         }
     };
 
-    const handleSecureDownload = (file) => {
-        const link = document.createElement('a');
-        link.href = file.fileData || file.url;
-        link.download = file.title || 'download';
-        if (!file.fileData && file.url) {
-            link.target = '_blank';
+    const handleSecureDownload = async (file) => {
+        try {
+            const link = document.createElement('a');
+            let downloadUrl;
+            let fileName = file.title || 'download';
+
+            // 1. Cek ketersediaan data file (File Data / Base64)
+            let base64Content = file.fileData || file.file_data || file.filedata;
+
+            // Jika data file lokal kosong, coba ambil paksa dari server
+            if (!base64Content || (typeof base64Content === 'string' && base64Content.length < 50)) {
+                console.log("Data file lokal kosong di TaxMonitoring, mencoba fetch ulang...", file.id);
+                try {
+                    const fullDoc = await api.getDocumentById(file.id);
+                    if (fullDoc) {
+                        base64Content = fullDoc.fileData || fullDoc.file_data || fullDoc.filedata;
+                    }
+                } catch (err) {
+                    console.error("Gagal fetch ulang di TaxMonitoring:", err);
+                }
+            }
+
+            if (base64Content && typeof base64Content === 'string' && base64Content.length > 50) {
+                try {
+                    let mime = file.type || 'application/pdf';
+
+                    // Deteksi dan bersihkan prefix Data URI
+                    if (base64Content.includes('base64,')) {
+                        const parts = base64Content.split('base64,');
+                        if (parts.length > 1) {
+                            const header = parts[0];
+                            const mimeMatch = header.match(/data:(.*);/);
+                            if (mimeMatch) {
+                                mime = mimeMatch[1];
+                            }
+                            base64Content = parts[1];
+                        }
+                    }
+
+                    // Bersihkan karakter whitespace
+                    const cleanBase64 = base64Content.replace(/[\n\r\s]/g, '');
+
+                    const binary = atob(cleanBase64);
+                    const len = binary.length;
+                    const buffer = new Uint8Array(len);
+                    for (let i = 0; i < len; i++) {
+                        buffer[i] = binary.charCodeAt(i);
+                    }
+                    const blob = new Blob([buffer], { type: mime });
+                    downloadUrl = URL.createObjectURL(blob);
+                } catch (err) {
+                    console.error("Gagal decode file tax monitoring", err);
+                }
+            }
+
+            // 2. Coba URL
+            if (!downloadUrl && file.url) {
+                downloadUrl = file.url;
+                link.target = '_blank';
+            }
+
+            if (!downloadUrl) {
+                alert("File asli tidak ditemukan di database (Mungkin file terlalu besar saat upload atau data corrupt). Mengunduh hasil OCR/Teks saja.");
+                const blob = new Blob([file.ocrContent || file.description || 'File tidak tersedia'], { type: 'text/plain' });
+                downloadUrl = URL.createObjectURL(blob);
+                fileName += '.txt';
+            }
+
+            link.href = downloadUrl;
+            link.download = fileName;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            if (downloadUrl && downloadUrl.startsWith('blob:')) {
+                setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+            }
+        } catch (e) {
+            console.error("Download error", e);
+            alert("Gagal download: " + e.message);
         }
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
     };
 
     // --- ACTIONS: AUDIT CRUD ---
@@ -135,7 +212,6 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         setEditingAudit(null);
         setNewAuditTitle('');
         setNewAuditLetter('');
-        setNewAuditDate(new Date().toISOString().split('T')[0]);
         setNewAuditFile(null);
         setIsCreateModalOpen(true);
     };
@@ -154,6 +230,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         setIsSaving(true);
 
         try {
+            let currentAuditId;
+
             // Defensive mapping to ensure values are sent
             const payload_letterNumber = String(newAuditLetter || '').trim();
             const payload_startDate = String(newAuditDate || '').trim() || null;
@@ -169,6 +247,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 if (selectedAudit && selectedAudit.id === editingAudit.id) {
                     setSelectedAudit({ ...selectedAudit, ...updatedAudit });
                 }
+                currentAuditId = updatedAudit.id;
             } else {
                 const auditId = String(Date.now());
                 const newAudit = {
@@ -182,36 +261,34 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 };
 
                 await api.createTaxAudit(newAudit);
+                currentAuditId = auditId;
 
                 if (newAuditFile) {
                     const folderId = await getOrCreateAuditFolder(newAuditTitle);
-                    const reader = new FileReader();
-                    reader.readAsDataURL(newAuditFile);
-                    reader.onload = async (e) => {
-                        const base64 = e.target.result;
+                    const base64 = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (e) => resolve(e.target.result);
+                        reader.onerror = (error) => reject(error);
+                        reader.readAsDataURL(newAuditFile);
+                    });
+
                         const doc = {
                             id: String(Date.now() + 1),
                             title: newAuditFile.name,
                             type: newAuditFile.type,
                             size: (newAuditFile.size / 1024).toFixed(1) + ' KB',
                             uploadDate: new Date().toISOString(),
-                            auditId: auditId,
+                            auditId: currentAuditId,
                             stepIndex: 0,
                             fileData: base64,
+                            file_data: base64, // RESTORED: Pastikan data terkirim ke backend
+                            filedata: base64, // RESTORED: Backend mungkin menggunakan lowercase
                             folderId: folderId,
                             department: 'Tax',
                             owner: currentUser?.name || 'Admin',
                             ocrContent: 'Initial attachment'
                         };
-                        try {
-                            await api.createDocument(doc);
-                        } catch (docErr) {
-                            console.error("Failed to upload attachment", docErr);
-                        }
-                        if (onRefresh) onRefresh();
-                    };
-                } else {
-                    if (onRefresh) onRefresh();
+                    await api.createDocument(doc);
                 }
             }
 
@@ -219,10 +296,11 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             setNewAuditTitle('');
             setNewAuditLetter('');
             setNewAuditFile(null);
-            setIsSaving(false);
-            if (!newAuditFile && onRefresh) onRefresh();
+            if (onRefresh) onRefresh();
         } catch (e) {
             alert('Gagal menyimpan: ' + e.message);
+            console.error("Failed to save audit or upload initial file:", e);
+        } finally {
             setIsSaving(false);
         }
     };
@@ -298,6 +376,14 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const handleFileUpload = async (e) => {
         const file = e.target.files[0];
         if (!file || !selectedAudit) return;
+
+        if (file.size > 30 * 1024 * 1024) {
+            alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
+            e.target.value = null;
+            return;
+        }
+
+        setIsUploadingFile(true); // Set uploading state to true
         const folderId = await getOrCreateAuditFolder(selectedAudit.title);
         const reader = new FileReader();
         reader.onload = async (ev) => {
@@ -310,6 +396,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 auditId: selectedAudit.id,
                 stepIndex: activeStep,
                 fileData: ev.target.result,
+                file_data: ev.target.result, // RESTORED: Pastikan data terkirim ke backend
+                filedata: ev.target.result, // RESTORED: Backend mungkin menggunakan lowercase
                 folderId: folderId,
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team'
@@ -318,10 +406,13 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 await api.createDocument(newDoc);
                 loadFiles(selectedAudit);
                 if (onRefresh) onRefresh();
+                alert('File berhasil diunggah!');
             }
-            catch (err) { alert('Upload failed: ' + err.message); }
+            catch (err) { console.error("Failed to upload file:", err); alert('Gagal mengunggah file: ' + err.message); }
+            finally { setIsUploadingFile(false); } // Reset uploading state
         };
         reader.readAsDataURL(file);
+        e.target.value = null; // Clear the input after selection
     };
 
     const handleDeleteFile = async (docId) => {
@@ -769,7 +860,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                 </div>
                                 {hasPermission('tax-monitoring', 'create') && (
                                     <label className="block w-full cursor-pointer">
-                                        <div className="w-full py-3 border-2 border-dashed border-indigo-300 dark:border-indigo-800 rounded-lg flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 transition-colors"><UploadCloud size={24} className="mb-1" /><span className="text-xs font-semibold">Upload File</span></div>
+                                        <div className="w-full py-3 border-2 border-dashed border-indigo-300 dark:border-indigo-800 rounded-lg flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 transition-colors">{isUploadingFile ? <span className="animate-pulse">Uploading...</span> : <><UploadCloud size={24} className="mb-1" /><span className="text-xs font-semibold">Upload File</span></>}</div>
                                         <input type="file" className="hidden" onChange={handleFileUpload} />
                                     </label>
                                 )}

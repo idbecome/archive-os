@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { api } from './api';
+import { performAdvancedOCR } from './utils/ocr';
 import * as XLSX from 'xlsx';
 
 import {
@@ -43,7 +44,7 @@ import {
   Save,
   HardDrive,
   FileSpreadsheet, // Icon Excel
-  Upload,           // Icon Upload
+  Upload,            // Icon Upload
   Users,
   ClipboardCheck,
   Settings,
@@ -66,9 +67,6 @@ import TaxSummary from './pages/TaxSummary';
 import MasterData from './pages/MasterData';
 
 // --- DATABASE ADAPTER (LAYER DATA) ---
-// Saat migrasi ke MySQL/Firebase, Anda HANYA perlu mengubah isi fungsi di dalam objek ini.
-// --- DATABASE ADAPTER (LAYER DATA) ---
-// Saat migrasi ke MySQL/Firebase, Anda HANYA perlu mengubah isi fungsi di dalam objek ini.
 const API_URL = 'http://localhost:5000/api';
 
 const db = {
@@ -78,11 +76,10 @@ const db = {
       if (!response.ok) throw new Error('Gagal mengambil data');
       const data = await response.json();
 
-      // Pastikan format data sesuai (MySQL JSON column sudah jadi object)
       return data.map(slot => ({
         ...slot,
         history: slot.history || [],
-        boxData: slot.box_data || slot.boxData // Handle penamaan snake_case dari DB
+        boxData: slot.box_data || slot.boxData
       }));
     } catch (error) {
       console.error("DB Error (Inventory):", error);
@@ -109,7 +106,6 @@ const db = {
 
   async saveLogs(data) {
     try {
-      // Mengambil log terbaru saja untuk disimpan (asumsi data adalah array logs)
       const latestLog = data[0];
       await fetch(`${API_URL}/logs`, {
         method: 'POST',
@@ -125,9 +121,23 @@ const db = {
       const data = await response.json();
       return data.map(doc => ({
         ...doc,
+        fileData: doc.fileData || doc.file_data || doc.filedata,
         versionsHistory: doc.versions_history || []
       }));
     } catch { return []; }
+  },
+
+  // NEW: Ambil detail dokumen (termasuk fileData) jika di list kosong
+  async getDocumentById(id) {
+    try {
+      const response = await fetch(`${API_URL}/documents/${id}`);
+      if (!response.ok) throw new Error('Gagal mengambil detail dokumen');
+      const doc = await response.json();
+      return {
+        ...doc,
+        fileData: doc.fileData || doc.file_data || doc.filedata
+      };
+    } catch (e) { console.error(e); return null; }
   },
 
   async saveDocs(data) {
@@ -341,28 +351,6 @@ const APP_MODULES = {
 };
 
 // --- COMPONENTS ---
-
-const Card = ({ children, className = '', onClick }) => (
-  <div
-    onClick={onClick}
-    className={`bg-white/80 dark:bg-slate-900/60 backdrop-blur-md border border-gray-200 dark:border-slate-700/50 rounded-2xl p-6 shadow-sm dark:shadow-none transition-all duration-300 ${onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-300 dark:hover:border-indigo-700 transform hover:-translate-y-1' : ''} ${className}`}
-  >
-    {children}
-  </div>
-);
-
-const SummaryCard = ({ title, value, subtext, icon: Icon, colorClass }) => (
-  <Card className="flex items-center gap-4 relative overflow-hidden">
-    <div className={`p-3 rounded-xl ${colorClass}`}>
-      <Icon size={24} />
-    </div>
-    <div>
-      <div className="text-sm text-gray-500 dark:text-slate-400 font-medium">{title}</div>
-      <div className="text-2xl font-bold text-gray-900 dark:text-white">{value}</div>
-      {subtext && <div className="text-xs text-gray-400 mt-0.5">{subtext}</div>}
-    </div>
-  </Card>
-);
 
 const Modal = ({ isOpen, onClose, title, children, size = 'max-w-4xl' }) => {
   if (!isOpen) return null;
@@ -601,17 +589,20 @@ export default function App() {
         document.body.appendChild(script);
       }
     };
+
+    // 2. Load Tesseract.js for OCR (Scanned PDF support)
+    const loadTesseract = async () => {
+      if (!window.Tesseract) {
+        const script = document.createElement('script');
+        script.src = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+        script.async = true;
+        document.body.appendChild(script);
+      }
+    };
+
     loadPdfJs();
+    loadTesseract();
   }, []);
-
-  // --- HELPERS ---
-
-
-
-  // --- PDF TEXT EXTRACTION ---
-
-
-
 
   const getSearchSnippet = (text, query) => {
     if (!query) return text.substring(0, 120) + "...";
@@ -632,13 +623,18 @@ export default function App() {
     if (currentUser.role === 'admin') return true;
 
     // Check granular permissions from roles state
-    const userRoleData = roles.find(r => r.id === currentUser.role);
+    const userRoleData = roles.find(r => r.id === currentUser.role || r.name === currentUser.role || r.label === currentUser.role);
     // Note: The database column is 'access', heavily dependent on server/db.js schema.
     // Let's support both 'access' (from DB) and 'permissions' (legacy state?)
-    const rolePerms = userRoleData ? (userRoleData.access || userRoleData.permissions) : null;
+    let rolePerms = userRoleData ? (userRoleData.access || userRoleData.permissions) : null;
 
-    if (rolePerms && rolePerms[moduleId]) {
-      return rolePerms[moduleId].includes(action);
+    // Handle stringified JSON from DB
+    if (typeof rolePerms === 'string') {
+      try { rolePerms = JSON.parse(rolePerms); } catch (e) { rolePerms = {}; }
+    }
+
+    if (userRoleData && rolePerms) {
+      return rolePerms[moduleId] ? rolePerms[moduleId].includes(action) : false;
     }
 
     // Simple role-based fallback
@@ -941,8 +937,6 @@ export default function App() {
     alert(`Label untuk ${boxId} telah dikirim ke printer antrean.`);
   };
 
-
-
   const handleTogglePermission = (modId, action) => {
     const currentPerms = roleForm.permissions[modId] || [];
     const newPerms = currentPerms.includes(action)
@@ -958,8 +952,6 @@ export default function App() {
     });
   };
 
-
-
   const handleSaveTaxForm = async (e) => {
     e.preventDefault();
     try {
@@ -969,12 +961,6 @@ export default function App() {
       addLog(currentUser?.name, 'Update Pajak', `${taxForm.month} ${taxForm.year}`);
     } catch (e) { alert(e.message); }
   };
-
-  // --- MASTER DATA HANDLERS ---
-
-
-
-
 
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
 
@@ -1234,17 +1220,29 @@ export default function App() {
 
   const handleEditRole = (role) => {
     setEditingRole(role);
-    setRoleForm({ name: role.name, permissions: { ...role.permissions } });
+
+    let perms = role.permissions || role.access || {};
+    if (typeof perms === 'string') {
+      try { perms = JSON.parse(perms); } catch { perms = {}; }
+    }
+
+    setRoleForm({ name: role.label || role.name, permissions: perms });
     setModalTab('role-edit');
     setIsModalOpen(true);
   };
 
   const handleSaveRole = async () => {
     try {
+      const payload = {
+        ...roleForm,
+        label: roleForm.name,
+        access: roleForm.permissions
+      };
+
       if (editingRole) {
-        await api.updateRole(editingRole.id, roleForm);
+        await api.updateRole(editingRole.id, payload);
       } else {
-        await api.createRole(roleForm);
+        await api.createRole(payload);
       }
       setRoles(await api.getRoles());
       setIsModalOpen(false);
@@ -1265,6 +1263,7 @@ export default function App() {
       const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = "";
       let totalChars = 0;
+      let isScanned = false;
 
       const metadata = await pdf.getMetadata().catch(e => null);
       fullText += `[ANALISIS DOKUMEN DIGITAL]\nNama File: ${file.name}\n`;
@@ -1274,11 +1273,33 @@ export default function App() {
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const textContent = await page.getTextContent();
-        const pageText = textContent.items.map(item => item.str).join(' ');
+        let pageText = textContent.items.map(item => item.str).join(' ');
+
+        // Jika teks sangat sedikit (< 50 char), asumsikan scan gambar dan coba OCR dengan Tesseract
+        if (pageText.trim().length < 50 && window.Tesseract) {
+          try {
+            setUploadForm(prev => ({ ...prev, processingMessage: `OCR Halaman ${i}/${pdf.numPages} (Mode Scan)...` }));
+
+            const viewport = page.getViewport({ scale: 2.0 }); // Scale up for better OCR
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.height = viewport.height;
+            canvas.width = viewport.width;
+
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+            const { data: { text } } = await window.Tesseract.recognize(canvas, 'eng+ind');
+            if (text.trim().length > pageText.trim().length) {
+              pageText = `[OCR Result]\n${text}`;
+              isScanned = true;
+            }
+          } catch (err) { console.warn("OCR Error:", err); }
+        }
+
         totalChars += pageText.length;
         fullText += `--- Halaman ${i} ---\n${pageText.trim() ? pageText : "(Gambar/Kosong)"}\n\n`;
       }
-      const summary = `[RINGKASAN]\nTotal Karakter: ${totalChars}\nStatus OCR: ${totalChars > 50 ? "Berhasil" : "Terbatas"}\n\n`;
+      const summary = `[RINGKASAN]\nTotal Karakter: ${totalChars}\nStatus OCR: ${isScanned ? "Berhasil (Mode Scan)" : (totalChars > 50 ? "Berhasil" : "Terbatas")}\n\n`;
       return summary + fullText;
     } catch (e) {
       return "Gagal membaca PDF. File mungkin rusak.";
@@ -1290,42 +1311,102 @@ export default function App() {
   const handleFileSelect = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
+
+    if (file.size > 30 * 1024 * 1024) {
+      alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     const fileSize = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+
+    // WARN: Peringatan jika file terlalu besar (> 5MB) untuk mencegah timeout/payload error
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Peringatan: Ukuran file cukup besar (> 10MB). Pastikan koneksi stabil agar upload berhasil.");
+    }
 
     // Read Base64
     const fileBase64 = await new Promise((resolve) => {
       const reader = new FileReader();
       reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = () => resolve(null);
       reader.readAsDataURL(file);
     });
 
-    setUploadForm(prev => ({ ...prev, title: file.name, fileType: file.type, fileSize, fileData: file, fileBase64, isProcessing: true, processingMessage: 'Membaca file...', previewUrl: null }));
+    setUploadForm(prev => ({
+      ...prev,
+      title: file.name,
+      fileType: file.type || 'application/octet-stream', // Fallback untuk file tanpa tipe MIME jelas
+      fileSize,
+      fileData: file, // Simpan File Object untuk OCR Manual
+      fileBase64: fileBase64, // Simpan String Base64 untuk Database
+      isProcessing: false,
+      processingMessage: '',
+      previewUrl: file.type.includes('image') ? fileBase64 : null,
+      ocrContent: '' // Reset OCR saat file baru dipilih
+    }));
+  };
 
-    setTimeout(async () => {
-      let text = "";
-      try {
-        if (file.type === 'application/pdf') {
-          setUploadForm(prev => ({ ...prev, processingMessage: 'OCR PDF...' }));
-          text = await extractTextFromPDF(file);
-        } else if (file.type.includes('text')) {
-          text = await file.text();
-        } else text = "[Konten biner]";
-      } catch (err) { text = "Error ekstraksi"; }
-      setUploadForm(prev => ({ ...prev, ocrContent: text, isProcessing: false, processingMessage: '' }));
-      if (file.type.includes('image')) setUploadForm(prev => ({ ...prev, previewUrl: fileBase64 }));
-    }, 800);
+  // NEW: Fungsi Manual untuk menjalankan OCR (Updated for Advanced OCR)
+  const handleRunOCR = async () => {
+    const file = uploadForm.fileData;
+    if (!file) return alert("Harap pilih file terlebih dahulu!");
+
+    setUploadForm(prev => ({ ...prev, isProcessing: true, processingMessage: 'Memulai OCR Canggih...' }));
+
+    let text = "";
+    try {
+      // Menggunakan Utility OCR Baru yang mendukung PDF (Scan/Digital), Word, Excel, PPTX, Gambar
+      text = await performAdvancedOCR(file, (msg, progress) => {
+        setUploadForm(prev => ({ ...prev, processingMessage: msg }));
+      });
+    } catch (err) {
+      console.error(err);
+      text = "Error ekstraksi: " + err.message;
+    }
+
+    setUploadForm(prev => ({ ...prev, ocrContent: text, isProcessing: false, processingMessage: '' }));
   };
 
   const handleProcessDoc = async () => {
+    // 1. Prioritaskan file baru yang diupload (fileBase64)
+    // 2. Jika edit dan tidak ada file baru, gunakan file lama
+    let fileContent = uploadForm.fileBase64;
+    if (!fileContent && uploadForm.editMode && uploadForm.originalDoc) {
+      fileContent = uploadForm.originalDoc?.fileData || uploadForm.originalDoc?.file_data;
+    }
+
+    // DEBUG: Cek ukuran data sebelum dikirim
+    console.log("Persiapan Upload - Ukuran File Base64:", fileContent ? fileContent.length : 0);
+
+    if (fileContent && fileContent.length < 100) {
+      if (!window.confirm("PERINGATAN: Data file tampaknya kosong atau sangat kecil. File asli mungkin tidak akan tersimpan. Lanjutkan?")) return;
+    }
+
+    if (!fileContent && !uploadForm.editMode) {
+      alert("File belum dipilih atau gagal terbaca. Pastikan file PDF/Gambar valid.");
+      return;
+    }
+
+    // 3. Confirm if OCR has not been processed
+    if (!uploadForm.ocrContent && (fileContent || (uploadForm.editMode && uploadForm.originalDoc))) {
+      if (!window.confirm("OCR belum diproses. Konten dokumen tidak akan bisa dicari. Apakah Anda yakin ingin melanjutkan tanpa OCR?")) {
+        return;
+      }
+    }
+
     const newDoc = {
-      id: String(Date.now()), // Fix for 'id cannot be null'
+      // Gunakan ID lama jika edit, atau buat ID baru jika upload baru
+      id: uploadForm.editMode ? uploadForm.id : String(Date.now()),
       title: uploadForm.title,
       uploadDate: new Date().toISOString(),
       ocrContent: uploadForm.ocrContent,
       size: uploadForm.fileSize,
       type: uploadForm.fileType,
       previewUrl: uploadForm.previewUrl,
-      fileData: uploadForm.fileBase64, // Send Base64
+      fileData: fileContent, // Format camelCase (Default)
+      file_data: fileContent, // RESTORED: Backend mungkin menggunakan snake_case
+      filedata: fileContent, // RESTORED: Backend mungkin menggunakan lowercase (Wajib ada jika backend minta ini)
       uploader: currentUser?.name || 'Admin',
       folderId: currentFolderId,
       version: 1,
@@ -1334,6 +1415,8 @@ export default function App() {
     };
 
     try {
+      setUploadForm(prev => ({ ...prev, isProcessing: true, processingMessage: 'Sedang Mengupload Dokumen...' }));
+
       if (uploadForm.editMode && uploadForm.id) {
         await api.updateDocument(uploadForm.id, newDoc);
         addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${newDoc.title}`);
@@ -1344,12 +1427,40 @@ export default function App() {
       await fetchDocs();
       await fetchLogs();
       setIsModalOpen(false);
-    } catch (e) { alert(e.message); }
+    } catch (e) {
+      alert(e.message);
+    } finally {
+      setUploadForm(prev => ({ ...prev, isProcessing: false, processingMessage: '' }));
+    }
   };
 
-  const handleEditDoc = (e, doc) => {
+  const handleEditDoc = async (e, doc) => {
     e.stopPropagation();
-    setUploadForm({ id: doc.id, title: doc.title, ocrContent: doc.ocrContent, fileType: doc.type, fileSize: doc.size, previewUrl: doc.previewUrl, fileBase64: doc.fileData, isProcessing: false, processingMessage: '', editMode: true, originalDoc: doc });
+
+    let fullDoc = doc;
+    // CRITICAL FIX: Jika data file kosong (karena optimasi list), ambil full data dari server dulu
+    if (!doc.fileData && !doc.file_data && !doc.filedata) {
+      try {
+        const fetched = await db.getDocumentById(doc.id);
+        if (fetched) fullDoc = fetched;
+      } catch (err) {
+        console.error("Gagal mengambil data lengkap dokumen untuk edit:", err);
+      }
+    }
+
+    setUploadForm({
+      id: fullDoc.id,
+      title: fullDoc.title,
+      ocrContent: fullDoc.ocrContent,
+      fileType: fullDoc.type,
+      fileSize: fullDoc.size,
+      previewUrl: fullDoc.previewUrl,
+      fileBase64: fullDoc.fileData || fullDoc.file_data || fullDoc.filedata,
+      isProcessing: false,
+      processingMessage: '',
+      editMode: true,
+      originalDoc: fullDoc
+    });
     setModalTab('upload');
     setIsModalOpen(true);
   };
@@ -1366,17 +1477,131 @@ export default function App() {
     }
   };
 
-  const handleViewDoc = (doc) => { setViewDocData(doc); setModalTab('doc-view'); setIsModalOpen(true); };
+  // --- FIXED: HANDLE VIEW DOC ---
+  const handleViewDoc = async (doc) => {
+    // 1. Set data awal (meta data) agar modal muncul cepat
+    setViewDocData(doc);
+    setModalTab('doc-view');
+    setIsModalOpen(true);
 
-  const handleDownload = (doc) => {
-    const element = document.createElement("a");
-    // If fileData (Base64) exists, use it. Else create blob from OCR text.
-    element.href = doc.fileData || doc.previewUrl || URL.createObjectURL(new Blob([doc.ocrContent], { type: 'text/plain' }));
-    element.download = doc.title;
-    document.body.appendChild(element);
-    element.click();
-    document.body.removeChild(element);
-    addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
+    // 2. Cek apakah data file (Base64) kosong? Jika ya, ambil data lengkap dari server
+    if (!doc.fileData && !doc.file_data && !doc.filedata) {
+      try {
+        // Tampilkan status loading kecil (opsional) atau log
+        console.log("Mengambil data lengkap dokumen dari server...", doc.id);
+
+        const fullDoc = await db.getDocumentById(doc.id);
+
+        if (fullDoc) {
+          // Update state viewDocData dengan data lengkap (termasuk fileData)
+          setViewDocData((prev) => ({ ...prev, ...fullDoc }));
+        }
+      } catch (error) {
+        console.error("Gagal memuat detail dokumen:", error);
+      }
+    }
+  };
+
+  // --- FIXED: HANDLE DOWNLOAD ---
+  const handleDownload = async (doc) => {
+    try {
+      const element = document.createElement("a");
+      let downloadUrl;
+      let fileName = doc.title;
+
+      // 1. Cek ketersediaan data file (File Data / Base64) dari parameter doc
+      let base64Content = doc.fileData || doc.file_data || doc.filedata || doc.previewUrl;
+
+      // 2. JIKA DATA KOSONG: Coba ambil paksa dari server (Fetch on Demand)
+      if (!base64Content || (typeof base64Content === 'string' && base64Content.length < 1)) {
+        console.log("Data file lokal kosong, mencoba fetch ulang dari server...", doc.id);
+        try {
+          const fullDoc = await db.getDocumentById(doc.id);
+          if (fullDoc) {
+            base64Content = fullDoc.fileData || fullDoc.file_data || fullDoc.filedata || fullDoc.previewUrl;
+          }
+        } catch (err) {
+          console.error("Gagal fetch ulang:", err);
+        }
+      }
+
+      // 3. Proses Base64 jika data ditemukan
+      if (base64Content && typeof base64Content === 'string' && base64Content.length > 0) {
+        try {
+          // Cek apakah ini URL biasa (bukan base64)
+          if (base64Content.startsWith('http') || base64Content.startsWith('blob:')) {
+            downloadUrl = base64Content;
+            element.target = "_blank";
+          } else {
+            let mime = doc.type || 'application/octet-stream'; // Default ke Binary Generic
+
+            // Deteksi dan bersihkan prefix Data URI (data:application/pdf;base64,...)
+            if (base64Content.includes('base64,')) {
+              const parts = base64Content.split('base64,');
+              if (parts.length > 1) {
+                const header = parts[0];
+                const mimeMatch = header.match(/data:(.*);/);
+                if (mimeMatch) {
+                  mime = mimeMatch[1];
+                }
+                base64Content = parts[1]; // Ambil isi murni setelah koma
+              }
+            }
+
+            // Bersihkan spasi/enter yang mungkin ada
+            const cleanBase64 = base64Content.replace(/[\n\r\s]/g, '');
+
+            // Konversi Base64 ke Blob
+            const binary = atob(cleanBase64);
+            const len = binary.length;
+            const buffer = new Uint8Array(len);
+            for (let i = 0; i < len; i++) {
+              buffer[i] = binary.charCodeAt(i);
+            }
+            const blob = new Blob([buffer], { type: mime });
+            downloadUrl = URL.createObjectURL(blob);
+          }
+        } catch (err) {
+          console.error("Gagal decode Base64:", err);
+          // Jangan return, biarkan lanjut ke fallback URL/OCR
+        }
+      }
+
+      // 4. Jika Blob gagal, coba URL eksternal (jika ada di masa depan)
+      if (!downloadUrl && doc.url) {
+        downloadUrl = doc.url;
+        if (!doc.fileData) element.target = "_blank";
+      }
+
+      // 5. Fallback Terakhir: Jika file asli benar-benar hilang/corrupt
+      if (!downloadUrl) {
+        // Buat file teks berisi metadata dan pesan error agar user tetap mendapat sesuatu
+        const errorMsg = "File asli tidak ditemukan di database (Mungkin file terlalu besar saat upload atau data corrupt).";
+        const metaContent = `[METADATA DOKUMEN]\nID: ${doc.id}\nJudul: ${doc.title}\nTipe: ${doc.type}\nUkuran: ${doc.size}\nUpload: ${doc.uploadDate}\n\n[STATUS]\n${errorMsg}\n\n[OCR CONTENT]\n${doc.ocrContent || 'Tidak ada data OCR.'}`;
+
+        const blob = new Blob([metaContent], { type: 'text/plain' });
+        downloadUrl = URL.createObjectURL(blob);
+        fileName += '_error_log.txt';
+
+        alert(errorMsg + " Mengunduh log error & metadata sebagai gantinya.");
+      }
+
+      element.href = downloadUrl;
+      element.download = fileName;
+      document.body.appendChild(element);
+      element.click();
+      document.body.removeChild(element);
+
+      // Clean up blob URL
+      if (downloadUrl && downloadUrl.startsWith('blob:')) {
+        setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      }
+
+      addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
+    } catch (e) {
+      console.error("Download error:", e);
+      alert("Gagal mengunduh file: " + e.message);
+    }
   };
 
   const handleSaveTaxSummary = async () => {
@@ -1421,6 +1646,36 @@ export default function App() {
       localStorage.setItem('tax_summaries', JSON.stringify(updatedList));
       setIsModalOpen(false);
     } catch (e) { alert(e.message); }
+  };
+
+  const handleTaxImport = (importedData) => {
+    setTaxSummaries(prev => {
+      const newList = [...prev];
+      let addedCount = 0;
+      let updatedCount = 0;
+
+      importedData.forEach(newItem => {
+        const existingIndex = newList.findIndex(item =>
+          item.month === newItem.month &&
+          item.year === newItem.year &&
+          (item.pembetulan || 0) === (newItem.pembetulan || 0) &&
+          (item.type || 'PPH') === (newItem.type || 'PPH')
+        );
+
+        if (existingIndex >= 0) {
+          newList[existingIndex] = { ...newItem, id: newList[existingIndex].id };
+          updatedCount++;
+        } else {
+          newList.push({ ...newItem, id: String(Date.now() + Math.random()) });
+          addedCount++;
+        }
+      });
+
+      localStorage.setItem('tax_summaries', JSON.stringify(newList));
+      addLog(currentUser?.name, 'Import Pajak', `Import ${addedCount} baru, ${updatedCount} update`);
+      alert(`Berhasil mengimport ${addedCount + updatedCount} data.`);
+      return newList;
+    });
   };
 
   const handleCreateFolder = async (folderData) => {
@@ -1474,15 +1729,6 @@ export default function App() {
       addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
     }
   };
-
-  // --- IMPROVED RENDER FUNCTIONS ---
-
-
-
-
-
-
-
 
   // --- TAX CONFIGURATION STATE ---
   const [taxConfig, setTaxConfig] = useState(() => {
@@ -1666,9 +1912,6 @@ export default function App() {
 
   }, [taxForm.month, taxForm.year, isModalOpen, taxSummaries, taxConfig]);
 
-
-
-
   // --- LOGIN SCREEN ---
 
   if (isLoading) {
@@ -1689,856 +1932,908 @@ export default function App() {
   );
 
   return (
-    <div className="h-screen flex flex-col bg-transparent text-gray-900 dark:text-gray-100 font-sans selection:bg-indigo-500 selection:text-white overflow-hidden">
-      <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden p-3 gap-3 md:gap-4 md:p-4 selection:bg-indigo-500/30 selection:text-indigo-600 bg-[#F4F7FE] dark:bg-[#0B1437]">
 
-        <aside
-          className={`${isSidebarCollapsed ? 'w-20' : 'w-72'} 
-            bg-white/40 dark:bg-slate-900/60 backdrop-blur-xl border-r border-white/20 dark:border-white/10
-            transition-all duration-300 ease-in-out flex flex-col fixed md:relative z-30 h-full shadow-2xl
-            ${isSidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}
+      {/* FLOATING SIDEBAR */}
+      <aside
+        className={`
+            fixed inset-y-0 left-0 z-50 md:static md:z-0 transition-all duration-300 ease-spring
+            ${isSidebarCollapsed ? 'w-20' : 'w-72'}
+            bg-white/80 dark:bg-[#111C44]/80 backdrop-blur-2xl border border-white/20 dark:border-white/5 
+            rounded-[2rem] shadow-2xl shadow-indigo-500/10 flex flex-col justify-between
+            ${!isSidebarCollapsed && 'md:w-72'}
+            transform ${!isSidebarCollapsed ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
           `}
-        >
-          <div className="p-6 flex items-center justify-between">
-            <div className={`flex items-center gap-3 ${isSidebarCollapsed ? 'justify-center w-full' : ''}`}>
-              <img src="/vite.svg" alt="Logo" className="w-10 h-10 drop-shadow-lg" />
-              {!isSidebarCollapsed && (
-                <div>
-                  <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-white dark:to-slate-400">
-                    Archive OS
-                  </h1>
-                  <p className="text-[10px] text-gray-500 dark:text-slate-400 font-bold tracking-widest mt-0.5">ENTERPRISE</p>
-                </div>
-              )}
+      >
+        {/* Logo Section */}
+        <div className="flex items-center justify-between p-6">
+          <div className={`flex items-center gap-3 ${isSidebarCollapsed ? 'justify-center w-full' : ''}`}>
+            <div className="relative">
+              <div className="absolute inset-0 bg-indigo-500 blur-lg opacity-40 rounded-full animate-pulse-slow"></div>
+              <img src="/vite.svg" alt="Logo" className="w-9 h-9 relative z-10 drop-shadow-md" />
             </div>
-            <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="hidden md:block p-1.5 rounded-lg hover:bg-white/30 dark:hover:bg-slate-800/30 text-gray-400 transition-colors">
-              {isSidebarCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-            </button>
+            {!isSidebarCollapsed && (
+              <div className="animate-in fade-in slide-in-from-left-4 duration-500">
+                <h1 className="text-xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[#2B3674] to-[#A3AED0] dark:from-white dark:to-slate-400">
+                  Archive OS
+                </h1>
+              </div>
+            )}
           </div>
-
-          <nav className="flex-1 px-4 py-2 space-y-1.5 overflow-y-auto no-scrollbar">
-            {[
-              { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-              { id: 'inventory', icon: Grid3X3, label: 'Gudang' },
-              { id: 'documents', icon: ScanLine, label: 'Dokumen Digital' },
-              { id: 'tax-monitoring', icon: ClipboardCheck, label: 'Pemeriksaan' },
-              { id: 'tax-summary', icon: FileBarChart, label: 'Tax Summary' },
-              { id: 'master', icon: Settings, label: 'Master Data' },
-            ].filter(item => {
-              if (item.id === 'master') return hasPermission('master', 'view');
-              return true;
-            }).map(item => (
-              <button
-                key={item.id}
-                onClick={() => {
-                  setActiveTab(item.id);
-                  if (window.innerWidth < 768) setIsSidebarCollapsed(true);
-                }}
-                className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3 rounded-2xl transition-all duration-300 relative group
-                  ${activeTab === item.id
-                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg shadow-indigo-500/25 ring-1 ring-white/20 font-bold'
-                    : 'text-gray-500 dark:text-slate-400 hover:text-gray-900 dark:hover:text-white hover:bg-white/50 dark:hover:bg-slate-800/50'
-                  }`}
-              >
-                <item.icon size={20} className={activeTab === item.id ? 'stroke-[2.5px]' : ''} />
-                {!isSidebarCollapsed && <span className="whitespace-nowrap tracking-wide text-sm">{item.label}</span>}
-
-                {isSidebarCollapsed && (
-                  <div className="absolute left-full ml-4 px-2 py-1 bg-slate-900 text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none uppercase tracking-tighter shadow-xl">
-                    {item.label}
-                  </div>
-                )}
-              </button>
-            ))}
-          </nav>
-          <div className={`${isSidebarCollapsed ? 'mx-2 p-1.5' : 'mx-4 p-4'} mb-6 rounded-2xl bg-white/20 dark:bg-slate-800/20 border border-white/20 dark:border-white/10 backdrop-blur-sm`}>
-            <button onClick={() => setIsDarkMode(!isDarkMode)} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 ${isSidebarCollapsed ? 'p-2' : 'p-2.5'} rounded-xl text-gray-500 dark:text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors`}>
-              {isDarkMode ? <Sun size={20} /> : <Moon size={20} />}
-              {!isSidebarCollapsed && <span className="text-sm font-medium">{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>}
-            </button>
-            <button onClick={handleLogout} className={`w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 ${isSidebarCollapsed ? 'p-2' : 'p-2.5'} rounded-xl text-red-500 hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors mt-1`}>
-              <LogOut size={20} />
-              {!isSidebarCollapsed && <span className="text-sm font-medium">Logout</span>}
-            </button>
-          </div>
-        </aside>
-
-        {/* MOBILE OVERLAY */}
-        {!isSidebarCollapsed && (
-          <div
-            className="fixed inset-0 bg-black/40 backdrop-blur-sm z-20 md:hidden animate-in fade-in duration-300"
-            onClick={() => setIsSidebarCollapsed(true)}
-          />
-        )}
-
-        {/* MOBILE HEADER */}
-        <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-white/10 flex items-center justify-between px-6 z-20">
-          <div className="flex items-center gap-2">
-            <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
-            <span className="font-bold text-lg dark:text-white tracking-tight">Archive OS</span>
-          </div>
-          <button onClick={() => setIsSidebarCollapsed(false)} className="p-2 text-gray-500 dark:text-white">
-            <Menu size={24} />
+          <button onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} className="hidden md:flex w-8 h-8 items-center justify-center rounded-full bg-slate-50 dark:bg-slate-800 text-slate-400 hover:bg-indigo-50 hover:text-indigo-600 transition-all shadow-sm">
+            {isSidebarCollapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
           </button>
         </div>
 
-        <main className="flex-1 overflow-y-auto relative bg-transparent pt-16 md:pt-0 scroll-smooth">
-          <div className="p-6 lg:p-10 max-w-7xl mx-auto">
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
-              <div>
-                <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
-                  {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' :
-                    activeTab === 'inventory' ? 'Manajemen Slot' :
-                      activeTab === 'documents' ? 'Dokumen Digital' :
-                        activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
-                          activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
-                            activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
-                </h1>
-                <p className="text-gray-500 dark:text-slate-400">
-                  {activeTab === 'dashboard' ? 'Gudang Arsip Utama • Lantai 1' :
-                    activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
-                      activeTab === 'documents' ? 'Secure Digital Storage' :
-                        activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
-                          activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
-                            activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
-                </p>
+        {/* Navigation */}
+        <nav className="flex-1 px-4 py-2 space-y-2 overflow-y-auto no-scrollbar">
+          {[
+            { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+            { id: 'inventory', icon: Grid3X3, label: 'Warehouse Slots' },
+            { id: 'documents', icon: FileStack, label: 'Documents' },
+            { id: 'tax-monitoring', icon: ShieldCheck, label: 'Compliance' },
+            { id: 'tax-summary', icon: PieChart, label: 'Reporting' },
+            { id: 'master', icon: Settings, label: 'Settings' },
+          ].filter(item => hasPermission(item.id, 'view')).map(item => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setActiveTab(item.id);
+                if (window.innerWidth < 768) setIsSidebarCollapsed(true);
+              }}
+              className={`
+                  w-full flex items-center ${isSidebarCollapsed ? 'justify-center' : 'justify-start'} gap-3 px-4 py-3.5 
+                  rounded-2xl transition-all duration-300 relative group overflow-hidden
+                  ${activeTab === item.id
+                  ? 'bg-gradient-to-r from-[#4318FF] to-[#868CFF] text-white shadow-lg shadow-indigo-500/30'
+                  : 'text-[#A3AED0] dark:text-slate-400 hover:text-[#2B3674] dark:hover:text-white hover:bg-slate-100/50 dark:hover:bg-slate-800/30'
+                }
+                `}
+            >
+              {/* Active Indicator Line */}
+              {activeTab === item.id && (
+                <div className="absolute right-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-white/30 rounded-l-full"></div>
+              )}
+
+              <item.icon size={22} strokeWidth={activeTab === item.id ? 2.5 : 2} className="relative z-10 transition-transform group-hover:scale-110" />
+
+              {!isSidebarCollapsed && (
+                <span className={`relative z-10 font-bold tracking-tight text-sm ${activeTab === item.id ? 'font-bold' : 'font-medium'}`}>
+                  {item.label}
+                </span>
+              )}
+
+              {/* Tooltip for collapsed state */}
+              {isSidebarCollapsed && (
+                <div className="absolute left-full ml-4 px-3 py-1.5 bg-[#1B254B] dark:bg-white text-white dark:text-[#1B254B] text-xs font-bold rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 shadow-xl translate-x-2 group-hover:translate-x-0 duration-200">
+                  {item.label}
+                </div>
+              )}
+            </button>
+          ))}
+        </nav>
+
+        {/* User Profile Footer */}
+        <div className="px-4 pb-6 pt-2">
+          <div className={`
+                relative overflow-hidden rounded-3xl p-4 transition-all duration-300 group
+                ${isSidebarCollapsed ? 'bg-transparent' : 'bg-gradient-to-b from-[#868CFF]/10 to-[#4318FF]/5 dark:from-indigo-900/20 dark:to-indigo-900/10'}
+            `}>
+            <div className={`flex items-center ${isSidebarCollapsed ? 'justify-center' : 'gap-3'}`}>
+              <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-[#4318FF] to-[#868CFF] p-0.5 shadow-lg shadow-indigo-500/20">
+                <div className="w-full h-full rounded-full bg-white dark:bg-[#111C44] flex items-center justify-center">
+                  <User size={18} className="text-[#4318FF]" />
+                </div>
               </div>
+
+              {!isSidebarCollapsed && (
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-bold text-sm text-[#2B3674] dark:text-white truncate">{currentUser?.name || 'Guest'}</h4>
+                  <p className="text-xs text-gray-500 truncate">{currentUser?.role || 'Viewer'}</p>
+                </div>
+              )}
             </div>
 
-
-
-            {activeTab === 'dashboard' && (
-              <Dashboard
-                stats={stats}
-                docList={docList}
-                docStats={docStats}
-                logs={logs}
-                TOTAL_SLOTS={TOTAL_SLOTS}
-                isDarkMode={isDarkMode}
-                handleViewDoc={handleViewDoc}
-              />
-            )}
-            {activeTab === 'inventory' && (
-              <Inventory
-                inventory={inventory}
-                stats={stats}
-                TOTAL_SLOTS={TOTAL_SLOTS}
-                getStatusStyle={getStatusStyle}
-                handleSlotClick={handleSlotClick}
-                handleExcelImport={handleExcelImport} // Note: handleExcelImport might need to be created if it was inline or missing? wait, checking
-                downloadTemplate={downloadTemplate} // check if exists
-                excelInputRef={excelInputRef}
-                handleExportInventory={handleExportInventory}
-                inventorySearchQuery={inventorySearchQuery}
-                setInventorySearchQuery={setInventorySearchQuery}
-                hasPermission={hasPermission}
-                activeInvTab={activeInvTab}
-                setActiveInvTab={setActiveInvTab}
-                externalItems={externalItems}
-                onRestoreExternal={(item) => {
-                  setSelectedExternalItem(item);
-                  setRestoreTargetSlot(''); // Reset selection
-                  setShowRestoreForm(true);
-                }}
-                onViewExternal={handleViewExternal}
-              />
-            )}
-            {activeTab === 'documents' && (
-              <Documents
-                docList={docList}
-                folders={folders}
-                currentFolderId={currentFolderId}
-                setCurrentFolderId={setCurrentFolderId}
-                folderHistory={folderHistory}
-                historyIndex={historyIndex}
-                navigateFolder={navigateFolder}
-                navigateBack={navigateBack}
-                navigateForward={navigateForward}
-                searchQuery={searchQuery}
-                setSearchQuery={setSearchQuery}
-                handleCreateFolder={handleCreateFolder}
-                handleDeleteFolder={handleDeleteFolder}
-                // handleRenameFolder removed, replaced by handleEditFolder passed below
-                // handleRenameFolder={handleRenameFolder} 
-                handleViewDoc={handleViewDoc}
-                handleEditDoc={handleEditDoc}
-                handleDeleteDoc={handleDeleteDoc}
-                handleRenameDoc={handleRenameDoc}
-                setUploadForm={setUploadForm}
-                setModalTab={setModalTab}
-                setIsModalOpen={setIsModalOpen}
-                hasPermission={hasPermission}
-                docStats={docStats}
-                getSearchSnippet={getSearchSnippet}
-                logs={logs}
-                onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
-                users={users}
-                departments={departments}
-                currentUser={currentUser}
-                handleEditFolder={handleEditFolder}
-              />
-            )}
-            {activeTab === 'tax-monitoring' && (
-              <TaxMonitoring
-                taxAudits={taxAudits}
-                onRefresh={fetchTaxAudits}
-                hasPermission={hasPermission}
-                currentUser={currentUser}
-              />
-            )}
-            {activeTab === 'tax-summary' && (
-              <TaxSummary
-                taxSummaries={taxSummaries}
-                hasPermission={hasPermission}
-                setTaxForm={setTaxForm}
-                setModalTab={setModalTab}
-                setIsModalOpen={setIsModalOpen}
-                config={taxConfig}
-                saveConfig={saveTaxConfig}
-                handleDeleteRecord={handleDeleteTaxRecord}
-                handleRenameTaxType={handleRenameTaxType}
-              />
-            )}
-            {activeTab === 'master' && (
-              <MasterData
-                masterTab={masterTab}
-                setMasterTab={setMasterTab}
-                users={users}
-                roles={roles}
-                departments={departments}
-                userSearchQuery={userSearchQuery}
-                setUserSearchQuery={setUserSearchQuery}
-                handleDeleteUser={handleDeleteUser}
-                handleCreateUser={handleCreateUser}
-                handleEditUser={handleEditUser}
-                handleEditRole={handleEditRole}
-                handleDeleteRole={handleDeleteRole}
-                handleCreateRole={handleCreateRole}
-                handleCreateDept={handleCreateDept}
-                handleEditDept={handleEditDept}
-                handleDeleteDept={handleDeleteDept}
-                setIsModalOpen={setIsModalOpen}
-                setModalTab={setModalTab}
-                setRoles={setRoles}
-                setDepartments={setDepartments}
-                hasPermission={hasPermission}
-              />
-            )}
-
-          </div>
-        </main>
-      </div>
-
-      {/* MODAL SYSTEM */}
-      {/* Restore Modal Overlay - Moved to Top Level */}
-      {showRestoreForm && (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in">
-          <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl p-6 rounded-3xl shadow-3xl w-full max-w-sm border border-white/40 dark:border-white/10 ring-1 ring-black/5">
-            <h3 className="text-lg font-bold mb-4 dark:text-white">Kembalikan ke Gudang Internal</h3>
-            <p className="text-sm text-gray-500 mb-4">Pilih slot kosong untuk menyimpan kembali Box <b>{selectedExternalItem?.boxId}</b>:</p>
-            <div className="space-y-3">
-              <div>
-                <label className="text-xs font-bold text-gray-700 dark:text-gray-300">Pilih Slot Kosong:</label>
-                <select
-                  className="w-full border rounded p-2 dark:bg-slate-800 dark:text-white text-sm"
-                  value={restoreTargetSlot}
-                  onChange={(e) => setRestoreTargetSlot(e.target.value)}
-                >
-                  <option value="">-- Pilih Slot --</option>
-                  {inventory.filter(s => s.status === 'EMPTY').map(s => (
-                    <option key={s.id} value={s.id}>Slot #{s.id}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex gap-2 justify-end mt-4">
-                <button onClick={() => setShowRestoreForm(false)} className="px-3 py-2 text-gray-500 hover:bg-gray-100 rounded text-sm">Batal</button>
-                <button
-                  onClick={handleRestoreExternal}
-                  disabled={!restoreTargetSlot}
-                  className={`px-3 py-2 text-white rounded text-sm ${!restoreTargetSlot ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
-                >
-                  Konfirmasi Masuk Gudang
+            {!isSidebarCollapsed && (
+              <div className="flex items-center gap-1 mt-3 pt-3 border-t border-indigo-100 dark:border-white/10">
+                <button onClick={() => setIsDarkMode(!isDarkMode)} className="flex-1 flex items-center justify-center p-2 rounded-xl text-gray-400 hover:bg-white hover:text-yellow-500 shadow-sm hover:shadow-md transition-all">
+                  {isDarkMode ? <Sun size={18} /> : <Moon size={18} />}
+                </button>
+                <button onClick={handleLogout} className="flex-1 flex items-center justify-center p-2 rounded-xl text-gray-400 hover:bg-white hover:text-red-500 shadow-sm hover:shadow-md transition-all">
+                  <LogOut size={18} />
                 </button>
               </div>
+            )}
+          </div>
+        </div>
+      </aside>
+
+      {/* MOBILE OVERLAY */}
+      {!isSidebarCollapsed && (
+        <div
+          className="fixed inset-0 bg-black/40 backdrop-blur-sm z-20 md:hidden animate-in fade-in duration-300"
+          onClick={() => setIsSidebarCollapsed(true)}
+        />
+      )}
+
+      {/* MOBILE HEADER */}
+      <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-white/10 flex items-center justify-between px-6 z-20">
+        <div className="flex items-center gap-2">
+          <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
+          <span className="font-bold text-lg dark:text-white tracking-tight">Archive OS</span>
+        </div>
+        <button onClick={() => setIsSidebarCollapsed(false)} className="p-2 text-gray-500 dark:text-white">
+          <Menu size={24} />
+        </button>
+      </div>
+
+      <main className="flex-1 overflow-y-auto relative bg-transparent pt-16 md:pt-0 scroll-smooth md:z-40">
+        <div className="p-6 lg:p-10 max-w-7xl mx-auto">
+          <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-1">
+                {activeTab === 'dashboard' ? 'Dashboard Ikhtisar' :
+                  activeTab === 'inventory' ? 'Manajemen Slot' :
+                    activeTab === 'documents' ? 'Dokumen Digital' :
+                      activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
+                        activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
+                          activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
+              </h1>
+              <p className="text-gray-500 dark:text-slate-400">
+                {activeTab === 'dashboard' ? 'Gudang Arsip Utama • Lantai 1' :
+                  activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
+                    activeTab === 'documents' ? 'Secure Digital Storage' :
+                      activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
+                        activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
+                          activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
+              </p>
+            </div>
+          </div>
+
+
+
+          {activeTab === 'dashboard' && (
+            <Dashboard
+              stats={stats}
+              docList={docList}
+              docStats={docStats}
+              logs={logs}
+              TOTAL_SLOTS={TOTAL_SLOTS}
+              isDarkMode={isDarkMode}
+              handleViewDoc={handleViewDoc}
+            />
+          )}
+          {activeTab === 'inventory' && (
+            <Inventory
+              inventory={inventory}
+              stats={stats}
+              TOTAL_SLOTS={TOTAL_SLOTS}
+              getStatusStyle={getStatusStyle}
+              handleSlotClick={handleSlotClick}
+              handleExcelImport={handleExcelImport}
+              downloadTemplate={downloadTemplate}
+              excelInputRef={excelInputRef}
+              handleExportInventory={handleExportInventory}
+              inventorySearchQuery={inventorySearchQuery}
+              setInventorySearchQuery={setInventorySearchQuery}
+              hasPermission={hasPermission}
+              activeInvTab={activeInvTab}
+              setActiveInvTab={setActiveInvTab}
+              externalItems={externalItems}
+              onRestoreExternal={(item) => {
+                setSelectedExternalItem(item);
+                setRestoreTargetSlot(''); // Reset selection
+                setShowRestoreForm(true);
+              }}
+              onViewExternal={handleViewExternal}
+            />
+          )}
+          {activeTab === 'documents' && (
+            <Documents
+              docList={docList}
+              folders={folders}
+              currentFolderId={currentFolderId}
+              setCurrentFolderId={setCurrentFolderId}
+              folderHistory={folderHistory}
+              historyIndex={historyIndex}
+              navigateFolder={navigateFolder}
+              navigateBack={navigateBack}
+              navigateForward={navigateForward}
+              searchQuery={searchQuery}
+              setSearchQuery={setSearchQuery}
+              handleCreateFolder={handleCreateFolder}
+              handleDeleteFolder={handleDeleteFolder}
+              handleViewDoc={handleViewDoc}
+              handleEditDoc={handleEditDoc}
+              handleDeleteDoc={handleDeleteDoc}
+              handleRenameDoc={handleRenameDoc}
+              setUploadForm={setUploadForm}
+              setModalTab={setModalTab}
+              setIsModalOpen={setIsModalOpen}
+              hasPermission={hasPermission}
+              docStats={docStats}
+              getSearchSnippet={getSearchSnippet}
+              logs={logs}
+              onRefresh={() => { fetchDocs(); fetchFolders(); fetchLogs(); }}
+              users={users}
+              departments={departments}
+              currentUser={currentUser}
+              handleEditFolder={handleEditFolder}
+              handleDownload={handleDownload}
+            />
+          )}
+          {activeTab === 'tax-monitoring' && (
+            <TaxMonitoring
+              taxAudits={taxAudits}
+              onRefresh={() => { fetchTaxAudits(); fetchDocs(); fetchFolders(); fetchLogs(); }}
+              hasPermission={hasPermission}
+              currentUser={currentUser}
+            />
+          )}
+          {activeTab === 'tax-summary' && (
+            <TaxSummary
+              taxSummaries={taxSummaries}
+              hasPermission={hasPermission}
+              setTaxForm={setTaxForm}
+              setModalTab={setModalTab}
+              setIsModalOpen={setIsModalOpen}
+              config={taxConfig}
+              saveConfig={saveTaxConfig}
+              handleDeleteRecord={handleDeleteTaxRecord}
+              handleRenameTaxType={handleRenameTaxType}
+              onImport={handleTaxImport}
+            />
+          )}
+          {activeTab === 'master' && (
+            <MasterData
+              masterTab={masterTab}
+              setMasterTab={setMasterTab}
+              users={users}
+              roles={roles}
+              departments={departments}
+              userSearchQuery={userSearchQuery}
+              setUserSearchQuery={setUserSearchQuery}
+              handleDeleteUser={handleDeleteUser}
+              handleCreateUser={handleCreateUser}
+              handleEditUser={handleEditUser}
+              handleEditRole={handleEditRole}
+              handleDeleteRole={handleDeleteRole}
+              handleCreateRole={handleCreateRole}
+              handleCreateDept={handleCreateDept}
+              handleEditDept={handleEditDept}
+              handleDeleteDept={handleDeleteDept}
+              setIsModalOpen={setIsModalOpen}
+              setModalTab={setModalTab}
+              setRoles={setRoles}
+              setDepartments={setDepartments}
+              hasPermission={hasPermission}
+            />
+          )}
+
+        </div>
+      </main>
+    </div>
+
+      {/* MODAL SYSTEM */ }
+  {/* Restore Modal Overlay - Moved to Top Level */ }
+  {
+    showRestoreForm && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in">
+        <div className="bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl p-6 rounded-3xl shadow-3xl w-full max-w-sm border border-white/40 dark:border-white/10 ring-1 ring-black/5">
+          <h3 className="text-lg font-bold mb-4 dark:text-white">Kembalikan ke Gudang Internal</h3>
+          <p className="text-sm text-gray-500 mb-4">Pilih slot kosong untuk menyimpan kembali Box <b>{selectedExternalItem?.boxId}</b>:</p>
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-bold text-gray-700 dark:text-gray-300">Pilih Slot Kosong:</label>
+              <select
+                className="w-full border rounded p-2 dark:bg-slate-800 dark:text-white text-sm"
+                value={restoreTargetSlot}
+                onChange={(e) => setRestoreTargetSlot(e.target.value)}
+              >
+                <option value="">-- Pilih Slot --</option>
+                {inventory.filter(s => s.status === 'EMPTY').map(s => (
+                  <option key={s.id} value={s.id}>Slot #{s.id}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setShowRestoreForm(false)} className="px-3 py-2 text-gray-500 hover:bg-gray-100 rounded text-sm">Batal</button>
+              <button
+                onClick={handleRestoreExternal}
+                disabled={!restoreTargetSlot}
+                className={`px-3 py-2 text-white rounded text-sm ${!restoreTargetSlot ? 'bg-indigo-300 cursor-not-allowed' : 'bg-indigo-600 hover:bg-indigo-700'}`}
+              >
+                Konfirmasi Masuk Gudang
+              </button>
             </div>
           </div>
         </div>
-      )}
+      </div>
+    )
+  }
 
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={
-          activeTab === 'master'
-            ? (modalTab === 'user-create' ? 'Manajemen User'
-              : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
-                : modalTab === 'dept-form' ? 'Manajemen Departemen'
-                  : 'Master Data')
-            : modalTab === 'tax-form' ? 'Input Data Pajak'
-              : modalTab === 'tax-form-pph' ? 'Input Data PPh'
-                : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
-                  : activeTab === 'documents'
-                    ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
-                    : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
-        }
-      >
-        {activeTab === 'documents' && modalTab === 'upload' && (
-          <div className="space-y-6">
-            {uploadForm.isProcessing ? (
-              <div className="text-center py-12">
-                <div className="relative mx-auto mb-4 w-16 h-16">
-                  <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
-                </div>
-                <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
-                <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
-              </div>
-            ) : (
-              <>
-                <div
-                  className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
-                  onClick={() => fileInputRef.current.click()}
-                >
-                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
-                  <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
-                  <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
-                  <input
-                    value={uploadForm.title}
-                    onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  />
-                </div>
-                <div className="flex justify-end gap-3 pt-4">
-                  <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
-                </div>
-              </>
-            )}
+  <Modal
+    isOpen={isModalOpen}
+    onClose={() => setIsModalOpen(false)}
+    title={
+      activeTab === 'master'
+        ? (modalTab === 'user-create' ? 'Manajemen User'
+          : modalTab === 'role-create' || modalTab === 'role-edit' ? 'Manajemen Role'
+            : modalTab === 'dept-form' ? 'Manajemen Departemen'
+              : 'Master Data')
+        : modalTab === 'tax-form' ? 'Input Data Pajak'
+          : modalTab === 'tax-form-pph' ? 'Input Data PPh'
+            : modalTab === 'tax-form-ppn' ? 'Input Data PPN'
+              : activeTab === 'documents'
+                ? (modalTab === 'upload' ? 'Upload Dokumen' : 'Detail Dokumen')
+                : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
+    }
+  >
+    {activeTab === 'documents' && modalTab === 'upload' && (
+      <div className="space-y-6">
+        {uploadForm.isProcessing ? (
+          <div className="text-center py-12">
+            <div className="relative mx-auto mb-4 w-16 h-16">
+              <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+              <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
+            </div>
+            <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
+            <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
           </div>
-        )}
-
-        {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
-          <div className="space-y-6">
-            <div className="flex gap-4">
-              <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
-                {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
-              </div>
-              <div className="flex-1">
-                <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
-                <div className="flex gap-4 text-sm text-gray-500 mt-2">
-                  <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
-                  <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
-                  <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
-                </div>
-                <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
-              </div>
-            </div>
-            <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
-              <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'inventory' && (
-          <div className="space-y-6">
-            <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
-              <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
-                <Package size={16} /> {selectedSlotId ? `Slot #${selectedSlotId}` : 'External Item'}
-                <ChevronRight size={14} />
-                <input
-                  type="text"
-                  value={boxForm.boxId}
-                  onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
-                  className="font-bold text-gray-900 dark:text-white bg-transparent border-b border-gray-300 dark:border-slate-700 focus:outline-none focus:border-indigo-500 w-full"
-                  placeholder="Ketik Nama Kardus..."
-                />
-              </div>
-
-              <div className="flex border-b border-gray-200 dark:border-slate-800 mb-4">
-                <button onClick={() => setModalTab('details')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'details' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Isi Kardus</button>
-                <button onClick={() => setModalTab('history')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'history' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Riwayat Mutasi (Flow Trail)</button>
-              </div>
-
-              {modalTab === 'details' && (
-                <div className="space-y-4">
-                  {/* Input Area - Changes based on edit mode */}
-                  {hasPermission('inventory', 'edit') && (
-                    <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-500 ml-1">No Ordner</label>
-                        <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-xs text-gray-500 ml-1">Periode</label>
-                        <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
-                      </div>
-                      <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-                        {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
-                      </button>
-                    </div>
-                  )}
-
-                  <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                    {boxForm.ordners.map(ord => (
-                      <div key={ord.id} className="border border-gray-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800/50">
-                        <div className="flex justify-between items-center cursor-pointer" onClick={() => setActiveOrdnerId(activeOrdnerId === ord.id ? null : ord.id)}>
-                          <div className="flex items-center gap-2">
-                            <FolderOpen size={18} className="text-amber-500" />
-                            <div>
-                              <span className="font-bold dark:text-white text-sm">{ord.noOrdner}</span>
-                              <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500 ml-2">{ord.period}</span>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {hasPermission('inventory', 'edit') && (
-                              <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
-                            )}
-                            {hasPermission('inventory', 'delete') && (
-                              <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
-                            )}
-                            <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
-                          </div>
-                        </div>
-
-                        {/* Nested Invoice */}
-                        {activeOrdnerId === ord.id && (
-                          <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
-                            {hasPermission('inventory', 'edit') && (
-                              <>
-                                <div className="flex gap-2 items-center mb-2 flex-wrap">
-                                  <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                  <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
-                                  <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
-                                  <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
-                                    {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
-                                  </button>
-                                </div>
-                              </>
-                            )}
-                            {ord.invoices.map(inv => (
-                              <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
-                                <div className="flex items-center gap-2">
-                                  <FileText size={12} />
-                                  <span className="font-mono font-medium">{inv.invoiceNo}</span>
-                                  <span className="text-gray-300">|</span>
-                                  <span>{inv.vendor}</span>
-                                  {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
-                                </div>
-                                <div className="flex gap-1">
-                                  {hasPermission('inventory', 'edit') && (
-                                    <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
-                                  )}
-                                  {hasPermission('inventory', 'delete') && (
-                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
-                                  )}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {modalTab === 'history' && (
-                <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
-                  {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
-                    <div key={idx} className="relative">
-                      <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
-                      <div className="text-sm">
-                        <span className={`font-bold ${hist.action === 'REMOVED' ? 'text-red-500' : hist.action === 'MOVED' ? 'text-blue-500' : hist.action === 'IMPORTED' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{hist.action}</span>
-                        <span className="text-xs text-gray-500 ml-2">{new Date(hist.timestamp).toLocaleString()}</span>
-                      </div>
-                      <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{hist.note}</p>
-                      <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
-                    </div>
-                  ))}
-                  {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
-                </div>
-              )}
-            </div>
-
-            {/* FOOTER ACTIONS */}
-            <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
-              {/* Row 1: Save & Primary Actions */}
-              <div className="flex justify-end gap-2">
-                {selectedSlotId && hasPermission('inventory', 'edit') && (
-                  <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
-                    <ArrowLeftRight size={16} /> Pindah Slot
-                  </button>
-                )}
-                <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
-                  <Printer size={16} /> Cetak Label
-                </button>
-                {selectedSlotId && hasPermission('inventory', 'edit') && (
-                  <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
-                    <CheckCircle2 size={16} /> Simpan Data
-                  </button>
-                )}
-              </div>
-
-              {/* Row 2: Move Input (Conditional) */}
-              {showMoveInput && (
-                <div className="flex gap-2 items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
-                  <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Pindah ke Slot:</span>
-                  <input
-                    type="number"
-                    placeholder="No. Slot (1-100)"
-                    value={moveTargetSlot}
-                    onChange={(e) => setMoveTargetSlot(e.target.value)}
-                    className="w-32 px-2 py-1 text-sm border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
-                  />
-                  <button onClick={handleMoveBox} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Konfirmasi Pindah</button>
-                </div>
-              )}
-
-              {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
-              {selectedSlotId && inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
-                  {hasPermission('inventory', 'edit') && (
-                    <>
-                      {(inventory[selectedSlotId - 1]?.status === 'BORROWED' || inventory[selectedSlotId - 1]?.status === 'AUDIT') ? (
-                        <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
-                          <CheckCircle2 size={14} /> Kembalikan (Return)
-                        </button>
-                      ) : (
-                        <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
-                          <Clock size={14} /> Set Dipinjam
-                        </button>
-                      )}
-                      <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
-                        <AlertCircle size={14} /> Set Audit
-                      </button>
-                      <button onClick={() => {
-                        setShowExternalForm(true);
-                        setExternalDate(new Date().toISOString().split('T')[0]);
-                      }} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
-                        <Truck size={14} /> Kirim ke Indoarsip
-                      </button>
-                    </>
-                  )}
-                  {hasPermission('inventory', 'delete') && (
-                    <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
-                      <LogOut size={14} /> Hapus / Kosongkan
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* Date Picker for External Transfer */}
-              {showExternalForm && (
-                <div className="flex gap-2 items-center bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
-                  <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Tanggal Kirim:</span>
-                  <input
-                    type="date"
-                    value={externalDate}
-                    onChange={(e) => setExternalDate(e.target.value)}
-                    className="text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
-                  />
-                  <button
-                    onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
-                    className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
-                  >
-                    Kirim
-                  </button>
-                  <button
-                    onClick={() => setShowExternalForm(false)}
-                    className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-slate-400 text-xs"
-                  >
-                    Batal
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* MASTER DATA MODALS */}
-        {activeTab === 'master' && (
+        ) : (
           <>
-            {modalTab === 'user-create' && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Username</label>
-                  <input
-                    value={userForm.username}
-                    onChange={e => setUserForm({ ...userForm, username: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    placeholder="Username untuk login"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Password</label>
-                  <input
-                    type="password"
-                    value={userForm.password}
-                    onChange={e => setUserForm({ ...userForm, password: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    placeholder={userForm.id ? "Kosongkan jika tidak ingin mengubah" : "Password login"}
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Nama Lengkap</label>
-                  <input
-                    value={userForm.name}
-                    onChange={e => setUserForm({ ...userForm, name: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Role</label>
-                    <select
-                      value={userForm.role}
-                      onChange={e => setUserForm({ ...userForm, role: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    >
-                      {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-1 dark:text-white">Departemen</label>
-                    <select
-                      value={userForm.department}
-                      onChange={e => setUserForm({ ...userForm, department: e.target.value })}
-                      className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    >
-                      <option value="">- Pilih Dept -</option>
-                      {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                    </select>
-                  </div>
-                </div>
-                <div className="flex justify-end pt-4">
-                  <button onClick={handleSaveUser} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan User</button>
-                </div>
-              </div>
-            )}
-
-            {modalTab === 'dept-form' && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Nama Departemen</label>
-                  <input
-                    value={deptForm.name}
-                    onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                    placeholder="Contoh: Finance"
-                  />
-                </div>
-                <div className="flex justify-end pt-4">
-                  <button onClick={handleSaveDept} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Departemen</button>
-                </div>
-              </div>
-            )}
-
-            {(modalTab === 'role-create' || modalTab === 'role-edit') && (
-              <div className="space-y-6">
-                <div>
-                  <label className="block text-sm font-medium mb-1 dark:text-white">Nama Role</label>
-                  <input
-                    value={roleForm.name}
-                    onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  />
-                </div>
-                <div className="border rounded-xl overflow-hidden border-gray-200 dark:border-slate-700">
-                  <table className="w-full text-sm">
-                    <thead className="bg-gray-50 dark:bg-slate-800">
-                      <tr>
-                        <th className="px-4 py-2 text-left dark:text-white">Modul</th>
-                        <th className="px-4 py-2 text-center dark:text-white">View</th>
-                        <th className="px-4 py-2 text-center dark:text-white">Create</th>
-                        <th className="px-4 py-2 text-center dark:text-white">Edit</th>
-                        <th className="px-4 py-2 text-center dark:text-white">Delete</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
-                      {Object.values(APP_MODULES).map(mod => (
-                        <tr key={mod.id} className="dark:bg-slate-900">
-                          <td className="px-4 py-3 font-medium dark:text-white">{mod.label}</td>
-                          {['view', 'create', 'edit', 'delete'].map(action => (
-                            <td key={action} className="text-center">
-                              <input
-                                type="checkbox"
-                                checked={roleForm.permissions[mod.id]?.includes(action) || false}
-                                onChange={() => handleTogglePermission(mod.id, action)}
-                                className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                              />
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="flex justify-end pt-4">
-                  <button onClick={handleSaveRole} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Role</button>
-                </div>
-              </div>
-            )}
+            <div
+              className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${uploadForm.fileData ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-900/10' : 'border-gray-300 dark:border-slate-700'}`}
+              onClick={() => fileInputRef.current.click()}
+            >
+              <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+              <UploadCloud className="mx-auto text-blue-500 mb-2" size={48} />
+              <p className="text-sm dark:text-white">{uploadForm.title || 'Klik untuk pilih file'}</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
+              <input
+                value={uploadForm.title}
+                onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+              />
+            </div>
+            <div className="flex justify-end gap-3 pt-4">
+              {/* Tombol OCR Manual */}
+              <button
+                onClick={handleRunOCR}
+                disabled={!uploadForm.fileData}
+                className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg flex items-center gap-2 disabled:opacity-50"
+              >
+                <ScanLine size={16} /> Proses OCR
+              </button>
+              <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
+            </div>
           </>
         )}
+      </div>
+    )}
 
-        {/* TAX FORM MODAL */}
-        {(modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-3 gap-4">
+    {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
+      <div className="space-y-6">
+        <div className="flex gap-4">
+          <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
+            {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
+          </div>
+          <div className="flex-1">
+            <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
+            <div className="flex gap-4 text-sm text-gray-500 mt-2">
+              <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader}</span>
+              <span className="flex items-center gap-1"><Clock size={14} /> {new Date(viewDocData.uploadDate).toLocaleDateString()}</span>
+              <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
+            </div>
+            <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
+          </div>
+        </div>
+        <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+          <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
+          <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent}</div>
+        </div>
+      </div>
+    )}
+
+    {activeTab === 'inventory' && (
+      <div className="space-y-6">
+        <div className="bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-xl p-4">
+          <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+            <Package size={16} /> {selectedSlotId ? `Slot #${selectedSlotId}` : 'External Item'}
+            <ChevronRight size={14} />
+            <input
+              type="text"
+              value={boxForm.boxId}
+              onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
+              className="font-bold text-gray-900 dark:text-white bg-transparent border-b border-gray-300 dark:border-slate-700 focus:outline-none focus:border-indigo-500 w-full"
+              placeholder="Ketik Nama Kardus..."
+            />
+          </div>
+
+          <div className="flex border-b border-gray-200 dark:border-slate-800 mb-4">
+            <button onClick={() => setModalTab('details')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'details' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Isi Kardus</button>
+            <button onClick={() => setModalTab('history')} className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${modalTab === 'history' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500'}`}>Riwayat Mutasi (Flow Trail)</button>
+          </div>
+
+          {modalTab === 'details' && (
+            <div className="space-y-4">
+              {/* Input Area - Changes based on edit mode */}
+              {hasPermission('inventory', 'edit') && (
+                <div className="flex gap-2 items-end bg-gray-50 dark:bg-slate-800 p-2 rounded-lg">
+                  <div className="flex-1">
+                    <label className="text-xs text-gray-500 ml-1">No Ordner</label>
+                    <input value={newOrdner.noOrdner} onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Contoh: ORD-01" />
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-xs text-gray-500 ml-1">Periode</label>
+                    <input value={newOrdner.period} onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })} className="w-full px-3 py-1.5 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white text-sm" placeholder="Tahun" />
+                  </div>
+                  <button onClick={addOrdner} className={`p-2 rounded text-white ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                    {editingItem?.type === 'ordner' ? <Save size={18} /> : <Plus size={18} />}
+                  </button>
+                </div>
+              )}
+
+              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+                {boxForm.ordners.map(ord => (
+                  <div key={ord.id} className="border border-gray-200 dark:border-slate-700 rounded-lg p-3 bg-white dark:bg-slate-800/50">
+                    <div className="flex justify-between items-center cursor-pointer" onClick={() => setActiveOrdnerId(activeOrdnerId === ord.id ? null : ord.id)}>
+                      <div className="flex items-center gap-2">
+                        <FolderOpen size={18} className="text-amber-500" />
+                        <div>
+                          <span className="font-bold dark:text-white text-sm">{ord.noOrdner}</span>
+                          <span className="text-xs bg-gray-100 dark:bg-slate-700 px-2 py-0.5 rounded text-gray-500 ml-2">{ord.period}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {hasPermission('inventory', 'edit') && (
+                          <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="p-1 hover:text-blue-500 text-gray-400"><Edit3 size={14} /></button>
+                        )}
+                        {hasPermission('inventory', 'delete') && (
+                          <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="p-1 hover:text-red-500 text-gray-400"><Trash2 size={14} /></button>
+                        )}
+                        <ChevronRight size={16} className={`transform transition-transform ${activeOrdnerId === ord.id ? 'rotate-90' : ''}`} />
+                      </div>
+                    </div>
+
+                    {/* Nested Invoice */}
+                    {activeOrdnerId === ord.id && (
+                      <div className="mt-3 pl-3 border-l-2 border-indigo-200 dark:border-slate-700 space-y-2 animate-in slide-in-from-top-1">
+                        {hasPermission('inventory', 'edit') && (
+                          <>
+                            <div className="flex gap-2 items-center mb-2 flex-wrap">
+                              <input placeholder="No Invoice" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                              <input placeholder="Vendor" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" />
+                              <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-24 px-2 py-1 text-xs border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white" title="Tgl Pembayaran" />
+                              <button onClick={() => addInvoice(ord.id)} className={`px-2 py-1 rounded text-white text-xs ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-emerald-600'}`}>
+                                {editingItem?.type === 'invoice' ? 'Save' : 'Add'}
+                              </button>
+                            </div>
+                          </>
+                        )}
+                        {ord.invoices.map(inv => (
+                          <div key={inv.id} className="flex items-center justify-between text-xs text-gray-600 dark:text-slate-300 p-1 hover:bg-gray-50 dark:hover:bg-slate-700/50 rounded">
+                            <div className="flex items-center gap-2">
+                              <FileText size={12} />
+                              <span className="font-mono font-medium">{inv.invoiceNo}</span>
+                              <span className="text-gray-300">|</span>
+                              <span>{inv.vendor}</span>
+                              {inv.paymentDate && <span className="text-gray-400">({inv.paymentDate})</span>}
+                            </div>
+                            <div className="flex gap-1">
+                              {hasPermission('inventory', 'edit') && (
+                                <button onClick={() => editInvoice(inv, ord.id)} className="text-gray-400 hover:text-blue-500"><Edit3 size={12} /></button>
+                              )}
+                              {hasPermission('inventory', 'delete') && (
+                                <button onClick={() => removeInvoice(ord.id, inv.id)} className="text-gray-400 hover:text-red-500"><X size={12} /></button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {modalTab === 'history' && (
+            <div className="space-y-4 pl-4 border-l-2 border-indigo-200 dark:border-indigo-900 ml-2">
+              {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
+                <div key={idx} className="relative">
+                  <div className={`absolute -left-[21px] top-1 w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500' : hist.action === 'MOVED' ? 'bg-blue-500' : hist.action === 'IMPORTED' ? 'bg-green-500' : 'bg-indigo-600'}`}></div>
+                  <div className="text-sm">
+                    <span className={`font-bold ${hist.action === 'REMOVED' ? 'text-red-500' : hist.action === 'MOVED' ? 'text-blue-500' : hist.action === 'IMPORTED' ? 'text-green-600' : 'text-gray-900 dark:text-white'}`}>{hist.action}</span>
+                    <span className="text-xs text-gray-500 ml-2">{new Date(hist.timestamp).toLocaleString()}</span>
+                  </div>
+                  <p className="text-sm text-gray-500 dark:text-slate-400 mt-1">{hist.note}</p>
+                  <div className="text-xs text-indigo-500 mt-1 flex items-center gap-1"><User size={10} /> {hist.user}</div>
+                </div>
+              ))}
+              {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && <p className="text-gray-500 italic">Belum ada riwayat.</p>}
+            </div>
+          )}
+        </div>
+
+        {/* FOOTER ACTIONS */}
+        <div className="pt-4 border-t border-gray-200 dark:border-slate-800 space-y-3">
+          {/* Row 1: Save & Primary Actions */}
+          <div className="flex justify-end gap-2">
+            {selectedSlotId && hasPermission('inventory', 'edit') && (
+              <button onClick={() => setShowMoveInput(!showMoveInput)} className="px-3 py-2 bg-blue-50 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400 rounded-lg text-sm font-medium flex items-center gap-2">
+                <ArrowLeftRight size={16} /> Pindah Slot
+              </button>
+            )}
+            <button onClick={() => handlePrintLabel(boxForm.boxId)} className="px-3 py-2 bg-emerald-50 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400 rounded-lg text-sm font-medium flex items-center gap-2">
+              <Printer size={16} /> Cetak Label
+            </button>
+            {selectedSlotId && hasPermission('inventory', 'edit') && (
+              <button onClick={handleSaveBox} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2">
+                <CheckCircle2 size={16} /> Simpan Data
+              </button>
+            )}
+          </div>
+
+          {/* Row 2: Move Input (Conditional) */}
+          {showMoveInput && (
+            <div className="flex gap-2 items-center bg-blue-50 dark:bg-blue-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
+              <span className="text-xs font-bold text-blue-700 dark:text-blue-300">Pindah ke Slot:</span>
+              <input
+                type="number"
+                placeholder="No. Slot (1-100)"
+                value={moveTargetSlot}
+                onChange={(e) => setMoveTargetSlot(e.target.value)}
+                className="w-32 px-2 py-1 text-sm border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+              />
+              <button onClick={handleMoveBox} className="px-3 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700">Konfirmasi Pindah</button>
+            </div>
+          )}
+
+          {/* Row 3: Status & External Actions (Only if stored or borrowed) */}
+          {selectedSlotId && inventory[selectedSlotId - 1]?.status !== 'EMPTY' && (
+            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-slate-800">
+              {hasPermission('inventory', 'edit') && (
+                <>
+                  {(inventory[selectedSlotId - 1]?.status === 'BORROWED' || inventory[selectedSlotId - 1]?.status === 'AUDIT') ? (
+                    <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-2 border border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-800 dark:text-emerald-400 rounded text-xs flex items-center justify-center gap-1">
+                      <CheckCircle2 size={14} /> Kembalikan (Return)
+                    </button>
+                  ) : (
+                    <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-2 border border-amber-200 bg-amber-50 text-amber-700 dark:bg-amber-900/20 dark:border-amber-800 dark:text-amber-400 rounded text-xs flex items-center justify-center gap-1">
+                      <Clock size={14} /> Set Dipinjam
+                    </button>
+                  )}
+                  <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-2 border border-purple-200 bg-purple-50 text-purple-700 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-400 rounded text-xs flex items-center justify-center gap-1">
+                    <AlertCircle size={14} /> Set Audit
+                  </button>
+                  <button onClick={() => {
+                    setShowExternalForm(true);
+                    setExternalDate(new Date().toISOString().split('T')[0]);
+                  }} className="p-2 border border-indigo-200 bg-indigo-50 text-indigo-700 dark:bg-indigo-900/20 dark:border-indigo-800 dark:text-indigo-400 rounded text-xs flex items-center justify-center gap-1">
+                    <Truck size={14} /> Kirim ke Indoarsip
+                  </button>
+                </>
+              )}
+              {hasPermission('inventory', 'delete') && (
+                <button onClick={handleEmptySlot} className="p-2 border border-red-200 bg-red-50 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400 rounded text-xs flex items-center justify-center gap-1">
+                  <LogOut size={14} /> Hapus / Kosongkan
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Date Picker for External Transfer */}
+          {showExternalForm && (
+            <div className="flex gap-2 items-center bg-indigo-50 dark:bg-indigo-900/20 p-2 rounded-lg animate-in slide-in-from-top-1">
+              <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300">Tanggal Kirim:</span>
+              <input
+                type="date"
+                value={externalDate}
+                onChange={(e) => setExternalDate(e.target.value)}
+                className="text-sm px-2 py-1 border rounded dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+              />
+              <button
+                onClick={() => handleExternalTransfer('Indoarsip', externalDate)}
+                className="px-3 py-1 bg-indigo-600 text-white text-xs rounded hover:bg-indigo-700"
+              >
+                Kirim
+              </button>
+              <button
+                onClick={() => setShowExternalForm(false)}
+                className="px-2 py-1 text-gray-500 hover:text-gray-700 dark:text-slate-400 text-xs"
+              >
+                Batal
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* MASTER DATA MODALS */}
+    {activeTab === 'master' && (
+      <>
+        {modalTab === 'user-create' && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-white">Username</label>
+              <input
+                value={userForm.username}
+                onChange={e => setUserForm({ ...userForm, username: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                placeholder="Username untuk login"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-white">Password</label>
+              <input
+                type="password"
+                value={userForm.password}
+                onChange={e => setUserForm({ ...userForm, password: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                placeholder={userForm.id ? "Kosongkan jika tidak ingin mengubah" : "Password login"}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-white">Nama Lengkap</label>
+              <input
+                value={userForm.name}
+                onChange={e => setUserForm({ ...userForm, name: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium mb-1 dark:text-white">Bulan</label>
+                <label className="block text-sm font-medium mb-1 dark:text-white">Role</label>
                 <select
-                  value={taxForm.month}
-                  onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
-                  className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                  value={userForm.role}
+                  onChange={e => setUserForm({ ...userForm, role: e.target.value })}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
                 >
-                  <option value="">- Pilih Bulan -</option>
-                  {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
+                  {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1 dark:text-white">Tahun</label>
-                <input
-                  type="number"
-                  value={taxForm.year}
-                  onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
-                  className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1 dark:text-white">Pembetulan Ke-</label>
-                <input
-                  type="number"
-                  min="0"
-                  value={taxForm.pembetulan || 0}
-                  onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
-                  className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                />
+                <label className="block text-sm font-medium mb-1 dark:text-white">Departemen</label>
+                <select
+                  value={userForm.department}
+                  onChange={e => setUserForm({ ...userForm, department: e.target.value })}
+                  className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                >
+                  <option value="">- Pilih Dept -</option>
+                  {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                </select>
               </div>
             </div>
-
-            {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
-              <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                <div className="flex justify-between items-center mb-3">
-                  <h4 className="font-bold dark:text-white flex items-center gap-2"><Percent size={16} className="text-indigo-500" /> PPh (Pajak Penghasilan)</h4>
-                  <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-medium px-2 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
-                    <Plus size={12} /> Tambah Field
-                  </button>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  {Object.keys(taxForm.data?.pph || {}).map(key => (
-                    <div key={key}>
-                      <div className="flex justify-between items-center mb-1">
-                        <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                        <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                      </div>
-                      <input
-                        type="text"
-                        value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
-                        onChange={e => {
-                          const val = e.target.value.replace(/[^\d]/g, '');
-                          setTaxForm({
-                            ...taxForm,
-                            data: {
-                              ...taxForm.data,
-                              pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
-                            }
-                          })
-                        }}
-                        className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                        placeholder="0"
-                      />
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
-              <>
-                <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                  <div className="flex justify-between items-center mb-3">
-                    <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowDownRight size={16} className="text-emerald-500" /> PPN Masukan (Input)</h4>
-                    <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="text-xs flex items-center gap-1 text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 font-medium px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
-                      <Plus size={12} /> Tambah Field
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
-                      <div key={key}>
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                        </div>
-                        <input
-                          type="text"
-                          value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
-                          onChange={e => {
-                            const val = e.target.value.replace(/[^\d]/g, '');
-                            setTaxForm({
-                              ...taxForm,
-                              data: {
-                                ...taxForm.data,
-                                ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
-                              }
-                            })
-                          }}
-                          className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                          placeholder="0"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                  <div className="flex justify-between items-center mb-3">
-                    <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowUpRight size={16} className="text-amber-500" /> PPN Keluaran (Output)</h4>
-                    <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="text-xs flex items-center gap-1 text-amber-600 hover:text-amber-800 dark:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
-                      <Plus size={12} /> Tambah Field
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-4">
-                    {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
-                      <div key={key}>
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
-                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
-                        </div>
-                        <input
-                          type="text"
-                          value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
-                          onChange={e => {
-                            const val = e.target.value.replace(/[^\d]/g, '');
-                            setTaxForm({
-                              ...taxForm,
-                              data: {
-                                ...taxForm.data,
-                                ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
-                              }
-                            })
-                          }}
-                          className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                          placeholder="0"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </>
-            )}
-
-            <div className="flex justify-end pt-6">
-              <button onClick={handleSaveTaxSummary} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-500/20">Simpan Data Pajak</button>
+            <div className="flex justify-end pt-4">
+              <button onClick={handleSaveUser} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan User</button>
             </div>
           </div>
         )}
-      </Modal>
-    </div>
+
+        {modalTab === 'dept-form' && (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-white">Nama Departemen</label>
+              <input
+                value={deptForm.name}
+                onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                placeholder="Contoh: Finance"
+              />
+            </div>
+            <div className="flex justify-end pt-4">
+              <button onClick={handleSaveDept} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Departemen</button>
+            </div>
+          </div>
+        )}
+
+        {(modalTab === 'role-create' || modalTab === 'role-edit') && (
+          <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-medium mb-1 dark:text-white">Nama Role</label>
+              <input
+                value={roleForm.name}
+                onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
+                className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+              />
+            </div>
+            <div className="border rounded-xl overflow-hidden border-gray-200 dark:border-slate-700">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 dark:bg-slate-800">
+                  <tr>
+                    <th className="px-4 py-2 text-left dark:text-white">Modul</th>
+                    <th className="px-4 py-2 text-center dark:text-white">View</th>
+                    <th className="px-4 py-2 text-center dark:text-white">Create</th>
+                    <th className="px-4 py-2 text-center dark:text-white">Edit</th>
+                    <th className="px-4 py-2 text-center dark:text-white">Delete</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200 dark:divide-slate-700">
+                  {Object.values(APP_MODULES).map(mod => (
+                    <tr key={mod.id} className="dark:bg-slate-900">
+                      <td className="px-4 py-3 font-medium dark:text-white">{mod.label}</td>
+                      {['view', 'create', 'edit', 'delete'].map(action => (
+                        <td key={action} className="text-center">
+                          <input
+                            type="checkbox"
+                            checked={roleForm.permissions[mod.id]?.includes(action) || false}
+                            onChange={() => handleTogglePermission(mod.id, action)}
+                            className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                          />
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="flex justify-end pt-4">
+              <button onClick={handleSaveRole} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700">Simpan Role</button>
+            </div>
+          </div>
+        )}
+      </>
+    )}
+
+    {/* TAX FORM MODAL */}
+    {(modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
+      <div className="space-y-6">
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="block text-sm font-medium mb-1 dark:text-white">Bulan</label>
+            <select
+              value={taxForm.month}
+              onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
+              className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+            >
+              <option value="">- Pilih Bulan -</option>
+              {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1 dark:text-white">Tahun</label>
+            <input
+              type="number"
+              value={taxForm.year}
+              onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
+              className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1 dark:text-white">Pembetulan Ke-</label>
+            <input
+              type="number"
+              min="0"
+              value={taxForm.pembetulan || 0}
+              onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
+              className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+            />
+          </div>
+        </div>
+
+        {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
+          <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+            <div className="flex justify-between items-center mb-3">
+              <h4 className="font-bold dark:text-white flex items-center gap-2"><Percent size={16} className="text-indigo-500" /> PPh (Pajak Penghasilan)</h4>
+              <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="text-xs flex items-center gap-1 text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 font-medium px-2 py-1 rounded hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors">
+                <Plus size={12} /> Tambah Field
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {Object.keys(taxForm.data?.pph || {}).map(key => (
+                <div key={key}>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                    <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                  </div>
+                  <input
+                    type="text"
+                    value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
+                    onChange={e => {
+                      const val = e.target.value.replace(/[^\d]/g, '');
+                      setTaxForm({
+                        ...taxForm,
+                        data: {
+                          ...taxForm.data,
+                          pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
+                        }
+                      })
+                    }}
+                    className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                    placeholder="0"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
+          <>
+            <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowDownRight size={16} className="text-emerald-500" /> PPN Masukan (Input)</h4>
+                <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="text-xs flex items-center gap-1 text-emerald-600 hover:text-emerald-800 dark:text-emerald-400 font-medium px-2 py-1 rounded hover:bg-emerald-50 dark:hover:bg-emerald-900/20 transition-colors">
+                  <Plus size={12} /> Tambah Field
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
+                  <div key={key}>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                      <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                    </div>
+                    <input
+                      type="text"
+                      value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
+                      onChange={e => {
+                        const val = e.target.value.replace(/[^\d]/g, '');
+                        setTaxForm({
+                          ...taxForm,
+                          data: {
+                            ...taxForm.data,
+                            ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
+                          }
+                        })
+                      }}
+                      className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      placeholder="0"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+              <div className="flex justify-between items-center mb-3">
+                <h4 className="font-bold dark:text-white flex items-center gap-2"><ArrowUpRight size={16} className="text-amber-500" /> PPN Keluaran (Output)</h4>
+                <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="text-xs flex items-center gap-1 text-amber-600 hover:text-amber-800 dark:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors">
+                  <Plus size={12} /> Tambah Field
+                </button>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
+                  <div key={key}>
+                    <div className="flex justify-between items-center mb-1">
+                      <label className="block text-xs font-medium text-gray-500 dark:text-gray-400">{key}</label>
+                      <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-gray-300 hover:text-red-500 transition-colors" title="Hapus Field"><Trash2 size={10} /></button>
+                    </div>
+                    <input
+                      type="text"
+                      value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
+                      onChange={e => {
+                        const val = e.target.value.replace(/[^\d]/g, '');
+                        setTaxForm({
+                          ...taxForm,
+                          data: {
+                            ...taxForm.data,
+                            ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
+                          }
+                        })
+                      }}
+                      className="w-full p-2 border rounded-lg text-sm dark:bg-slate-800 dark:border-slate-700 dark:text-white"
+                      placeholder="0"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
+        <div className="flex justify-end pt-6">
+          <button onClick={handleSaveTaxSummary} className="px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-bold shadow-lg shadow-indigo-500/20">Simpan Data Pajak</button>
+        </div>
+      </div>
+    )}
+  </Modal>
+    </div >
   );
 }

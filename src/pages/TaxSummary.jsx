@@ -1,19 +1,23 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
     Percent, FileBarChart, Trash2, Plus, ArrowUpRight, ArrowDownRight,
     TrendingUp, TrendingDown, LayoutGrid, List, SlidersHorizontal, Settings,
-    ChevronDown, ArrowRight, Download, Calendar, Edit3, X
+    ChevronDown, ArrowRight, Download, Calendar, Edit3, X, FileSpreadsheet, UploadCloud
 } from 'lucide-react';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
     Tooltip, Legend, ResponsiveContainer, AreaChart, Area, ComposedChart, PieChart, Pie, Cell
 } from 'recharts';
+import * as XLSX from 'xlsx';
+import { api } from '../api';
 import { Card, SummaryCard } from '../components/ui/Card';
 
-export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, handleDeleteRecord, handleRenameTaxType }) {
+export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, handleDeleteRecord, handleRenameTaxType, onRefresh, onImport }) {
     const [activeTab, setActiveTab] = useState('pph'); // pph, ppn, comparison
     const [viewMode, setViewMode] = useState('chart'); // chart, table
     const [filters, setFilters] = useState({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
+    const fileInputRef = useRef(null);
+    const [importMode, setImportMode] = useState(null); // 'pph' or 'ppn'
 
     // Helper: Reset filters
     const resetFilters = () => setFilters({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
@@ -115,6 +119,199 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         return 0;
     };
 
+    // --- EXCEL IMPORT/EXPORT HANDLERS ---
+    const downloadTemplate = (type) => {
+        // Create headers based on dynamic config
+        const isPPh = type === 'pph';
+        const headers = [
+            "Month (1-12)", "Year", "Pembetulan",
+            ...(isPPh 
+                ? config.pphTypes 
+                : [
+                    ...config.ppnInTypes.map(t => `IN_${t}`), 
+                    ...config.ppnOutTypes.map(t => `OUT_${t}`)
+                  ]
+            )
+        ];
+
+        const exampleRow = [
+            1, new Date().getFullYear(), 0,
+            ...(isPPh ? config.pphTypes.map(() => 0) : [...config.ppnInTypes.map(() => 0), ...config.ppnOutTypes.map(() => 0)])
+        ];
+
+        const ws = XLSX.utils.aoa_to_sheet([headers, exampleRow]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, isPPh ? "Template PPh" : "Template PPN");
+        XLSX.writeFile(wb, `Template_Import_${isPPh ? 'PPh' : 'PPN'}.xlsx`);
+    };
+
+    const handleFileUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file || !importMode) return;
+
+        const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
+        try {
+            const data = await file.arrayBuffer();
+            const wb = XLSX.read(data);
+            const ws = wb.Sheets[wb.SheetNames[0]];
+            const jsonData = XLSX.utils.sheet_to_json(ws);
+
+            if (jsonData.length === 0) {
+                alert("File kosong.");
+                return;
+            }
+
+            // --- 1. DETEKSI KOLOM BARU (DYNAMIC CONFIG UPDATE) ---
+            // Scan semua baris untuk mendapatkan semua key (kolom) yang mungkin tidak ada di baris pertama
+            const allKeys = new Set();
+            jsonData.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
+            const fileKeys = Array.from(allKeys);
+            const standardKeys = ["Month (1-12)", "Month", "Bulan", "Year", "Tahun", "Pembetulan", "Type", "No", "No."];
+            
+            // Gunakan copy dari config agar bisa langsung dipakai parsing di bawah
+            let localConfig = JSON.parse(JSON.stringify(config)); 
+            let configChanged = false;
+            let newColumns = [];
+
+            if (importMode === 'pph') {
+                // Semua kolom selain standard dianggap tipe PPh baru
+                const potentialTypes = fileKeys.filter(k => !standardKeys.includes(k) && !k.startsWith('__EMPTY'));
+                potentialTypes.forEach(type => {
+                    const cleanType = type.trim();
+                    if (!localConfig.pphTypes.includes(cleanType)) {
+                        localConfig.pphTypes.push(cleanType);
+                        newColumns.push(cleanType);
+                        configChanged = true;
+                    }
+                });
+            } else {
+                // PPN: Cari prefix IN_ dan OUT_
+                fileKeys.forEach(key => {
+                    const cleanKey = key.trim();
+                    if (standardKeys.includes(cleanKey) || cleanKey.startsWith('__EMPTY')) return;
+
+                    // Fuzzy match check (e.g. "Lain lain" matches "Lain-lain")
+                    const normalizedKey = cleanKey.toLowerCase().replace(/[^a-z0-9]/g, '');
+                    const matchIn = localConfig.ppnInTypes.find(t => t.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedKey);
+                    const matchOut = localConfig.ppnOutTypes.find(t => t.toLowerCase().replace(/[^a-z0-9]/g, '') === normalizedKey);
+
+                    if (matchIn || matchOut) {
+                        // Already exists (fuzzy or exact), no need to add new type
+                        return;
+                    }
+
+                    if (cleanKey.toUpperCase().startsWith('IN_')) {
+                        const type = cleanKey.substring(3).trim();
+                        if (!localConfig.ppnInTypes.includes(type)) {
+                            localConfig.ppnInTypes.push(type);
+                            newColumns.push(`IN: ${type}`);
+                            configChanged = true;
+                        }
+                    } else if (cleanKey.toUpperCase().startsWith('OUT_')) {
+                        const type = cleanKey.substring(4).trim();
+                        if (!localConfig.ppnOutTypes.includes(type)) {
+                            localConfig.ppnOutTypes.push(type);
+                            newColumns.push(`OUT: ${type}`);
+                            configChanged = true;
+                        }
+                    } else {
+                        // Handle columns without prefix (e.g. "FOC") -> Default to PPN Out
+                        const type = cleanKey;
+                        // Only add if not already in IN or OUT lists
+                        if (!localConfig.ppnInTypes.includes(type) && !localConfig.ppnOutTypes.includes(type)) {
+                            localConfig.ppnOutTypes.push(type);
+                            newColumns.push(`OUT: ${type} (Auto)`);
+                            configChanged = true;
+                        }
+                    }
+                });
+            }
+
+            if (configChanged) {
+                saveConfig(localConfig); // Simpan ke App state / LocalStorage
+                alert(`Menambahkan kolom baru: ${newColumns.join(', ')}`);
+            }
+
+            const payloads = [];
+
+            for (const row of jsonData) {
+                // Convert Month Number to Name
+                let monthVal = row["Month (1-12)"] || row["Month"] || row["Bulan"];
+                let monthName = "";
+
+                if (typeof monthVal === 'number' && monthVal >= 1 && monthVal <= 12) {
+                    monthName = months[monthVal - 1];
+                } else if (typeof monthVal === 'string') {
+                    const parsed = parseInt(monthVal);
+                    if (!isNaN(parsed) && parsed >= 1 && parsed <= 12) monthName = months[parsed - 1];
+                    else monthName = months.find(m => m.toLowerCase() === monthVal.toLowerCase()) || "";
+                }
+
+                if (!monthName) continue; // Skip invalid month
+
+                // Construct payload structure
+                const payload = {
+                    month: monthName,
+                    year: row.Year || row.Tahun || new Date().getFullYear(),
+                    pembetulan: row.Pembetulan !== undefined ? row.Pembetulan : 0,
+                    type: importMode.toUpperCase(),
+                    data: {
+                        pph: {},
+                        ppnIn: {},
+                        ppnOut: {}
+                    }
+                };
+
+                // Gunakan localConfig yang sudah diupdate untuk mapping
+                if (importMode === 'pph') {
+                    localConfig.pphTypes.forEach(t => {
+                        // Cari key di file yang cocok (dengan trim)
+                        const key = fileKeys.find(k => k.trim() === t);
+                        if (key && row[key] !== undefined) payload.data.pph[t] = Number(row[key]) || 0;
+                    });
+                } else {
+                    // PPN
+                    localConfig.ppnInTypes.forEach(t => {
+                        // Cari key yang cocok dengan format IN_Nama
+                        let key = fileKeys.find(k => k.trim() === `IN_${t}`);
+                        // Fallback: check exact match if not found with prefix
+                        if (!key) key = fileKeys.find(k => k.trim() === t);
+                        // Fallback: Fuzzy match (e.g. "Lain lain" -> "Lain-lain")
+                        if (!key) {
+                            const normT = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+                            key = fileKeys.find(k => k.trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normT);
+                        }
+                        if (key && row[key] !== undefined) payload.data.ppnIn[t] = Number(row[key]) || 0;
+                    });
+                    localConfig.ppnOutTypes.forEach(t => {
+                        let key = fileKeys.find(k => k.trim() === `OUT_${t}`);
+                        // Fallback: check exact match (e.g. for "FOC")
+                        if (!key) key = fileKeys.find(k => k.trim() === t);
+                        // Fallback: Fuzzy match
+                        if (!key) {
+                            const normT = t.toLowerCase().replace(/[^a-z0-9]/g, '');
+                            key = fileKeys.find(k => k.trim().toLowerCase().replace(/[^a-z0-9]/g, '') === normT);
+                        }
+                        if (key && row[key] !== undefined) payload.data.ppnOut[t] = Number(row[key]) || 0;
+                    });
+                }
+
+                payloads.push(payload);
+            }
+
+            if (payloads.length > 0 && onImport) {
+                onImport(payloads);
+            }
+        } catch (error) {
+            console.error("Import failed", error);
+            alert("Gagal mengimport file: " + error.message);
+        } finally {
+            setImportMode(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
     // --- FILTER UI COMPONENT ---
     const renderFilterControls = (type) => {
         const uniqueYears = [...new Set(taxSummaries.map(s => s.year))].sort((a, b) => b - a);
@@ -207,10 +404,12 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                             </p>
                         </div>
                     ))}
-                    <button onClick={() => handleAddType('pphTypes')} className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-2xl text-gray-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
-                        <Plus size={20} />
-                        <span className="text-xs font-medium mt-1">Tambah Tipe Pajak</span>
-                    </button>
+                    {hasPermission('tax-summary', 'edit') && (
+                        <button onClick={() => handleAddType('pphTypes')} className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-gray-300 dark:border-slate-700 rounded-2xl text-gray-400 hover:border-indigo-400 hover:text-indigo-500 transition-colors">
+                            <Plus size={20} />
+                            <span className="text-xs font-medium mt-1">Tambah Tipe Pajak</span>
+                        </button>
+                    )}
                 </div>
 
                 {/* 2. Main Chart */}
@@ -225,7 +424,8 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 <p className="text-sm text-gray-500">Akumulasi pembayaran pajak penghasilan per bulan.</p>
                             </div>
                             <div className="flex gap-2">
-                                <button
+                                {hasPermission('tax-summary', 'create') && (
+                                    <button
                                     onClick={() => {
                                         setTaxForm({
                                             type: 'PPH',
@@ -245,6 +445,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 >
                                     <Plus size={14} /> Input PPh
                                 </button>
+                                )}
                                 <button className="p-2 hover:bg-gray-100 rounded-lg dark:hover:bg-slate-700"><Download size={16} className="text-gray-500" /></button>
                             </div>
                         </div>
@@ -323,7 +524,8 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                         <th key={t} className="px-6 py-4 font-semibold text-right border-b border-gray-200 dark:border-slate-700 group/th relative">
                                             <div className="flex items-center justify-end gap-1">
                                                 {t}
-                                                <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
+                                                {hasPermission('tax-summary', 'edit') && (
+                                                    <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleRenameTaxType('pphTypes', t); }}
                                                         className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
@@ -339,6 +541,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                                         <Trash2 size={12} />
                                                     </button>
                                                 </div>
+                                                )}
                                             </div>
                                         </th>
                                     ))}
@@ -351,7 +554,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 {getFilteredData(sortedSummaries, 'pph').map((s, idx) => {
                                     let rowTotal = 0;
                                     return (
-                                        <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors cursor-pointer group" onClick={() => handleEditRow(s)}>
+                                        <tr key={idx} className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s)}>
                                             <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
                                             {config.pphTypes.map(t => {
                                                 const val = getSafeValue(s, t, 'pph');
@@ -361,8 +564,12 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                             <td className="px-6 py-4 text-right font-bold text-indigo-600 dark:text-indigo-400">Rp {rowTotal.toLocaleString()}</td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex justify-end gap-2">
-                                                    <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'pph') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
+                                                    {hasPermission('tax-summary', 'edit') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'pph') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
+                                                    )}
+                                                    {hasPermission('tax-summary', 'delete') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -437,7 +644,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                         </div>
                         <div className="mt-2">
                             <h4 className="text-sm text-gray-500 font-medium">Status PPN (Net)</h4>
-                            <p className={`text-3xl font-bold mt-1 ${statusKB ? 'text-red-600' : 'text-green-600'}`}>
+                            <p className={`text-3xl font-bold mt-1 ${statusKB ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}`}>
                                 Rp {Math.abs(latest.net).toLocaleString()}
                             </p>
                             <div className="mt-3 text-xs text-gray-400">
@@ -458,7 +665,8 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 <FileBarChart size={20} className="text-orange-500" /> Analisis PPN (In vs Out)
                             </h3>
                             <div className="flex gap-2">
-                                <button
+                                {hasPermission('tax-summary', 'create') && (
+                                    <button
                                     onClick={() => {
                                         setTaxForm({
                                             type: 'PPN',
@@ -478,6 +686,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 >
                                     <Plus size={14} /> Input PPN
                                 </button>
+                                )}
                             </div>
                         </div>
                         <div className="h-[350px]">
@@ -562,21 +771,22 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                             <thead className="bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-300">
                                 <tr className="border-b border-gray-200 dark:border-slate-700">
                                     <th className="px-6 py-4 font-semibold" rowSpan="2">Periode</th>
-                                    <th className="px-6 py-2 font-semibold text-center bg-emerald-50/50 dark:bg-emerald-900/20 cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/30" colSpan={config.ppnInTypes.length} onClick={() => handleAddType('ppnInTypes')}>
-                                        PPN Masukan (In) <Plus size={12} className="inline ml-1 opacity-50" />
+                                    <th className={`px-6 py-2 font-semibold text-center bg-emerald-50/50 dark:bg-emerald-900/20 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer hover:bg-emerald-100 dark:hover:bg-emerald-900/30' : ''}`} colSpan={config.ppnInTypes.length} onClick={() => hasPermission('tax-summary', 'edit') && handleAddType('ppnInTypes')}>
+                                        PPN Masukan (In) {hasPermission('tax-summary', 'edit') && <Plus size={12} className="inline ml-1 opacity-50" />}
                                     </th>
-                                    <th className="px-6 py-2 font-semibold text-center bg-amber-50/50 dark:bg-amber-900/20 cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30" colSpan={config.ppnOutTypes.length} onClick={() => handleAddType('ppnOutTypes')}>
-                                        PPN Keluaran (Out) <Plus size={12} className="inline ml-1 opacity-50" />
+                                    <th className={`px-6 py-2 font-semibold text-center bg-amber-50/50 dark:bg-amber-900/20 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer hover:bg-amber-100 dark:hover:bg-amber-900/30' : ''}`} colSpan={config.ppnOutTypes.length} onClick={() => hasPermission('tax-summary', 'edit') && handleAddType('ppnOutTypes')}>
+                                        PPN Keluaran (Out) {hasPermission('tax-summary', 'edit') && <Plus size={12} className="inline ml-1 opacity-50" />}
                                     </th>
                                     <th className="px-4 py-4 font-semibold text-center bg-gray-100 dark:bg-slate-700" rowSpan="2">Status</th>
                                     <th className="px-4 py-4 font-semibold" rowSpan="2">Aksi</th>
                                 </tr>
                                 <tr>
                                     {config.ppnInTypes.map(t => (
-                                        <th key={t} className="px-4 py-2 text-xs font-medium text-right text-emerald-700 border-b border-gray-100 dark:border-slate-800 group/th">
+                                        <th key={t} className="px-4 py-2 text-xs font-medium text-right text-emerald-700 dark:text-emerald-400 border-b border-gray-100 dark:border-slate-800 group/th">
                                             <div className="flex items-center justify-end gap-1">
                                                 {t}
-                                                <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
+                                                {hasPermission('tax-summary', 'edit') && (
+                                                    <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleRenameTaxType('ppnInTypes', t); }}
                                                         className="p-0.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
@@ -590,14 +800,16 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                                         <Trash2 size={10} />
                                                     </button>
                                                 </div>
+                                                )}
                                             </div>
                                         </th>
                                     ))}
                                     {config.ppnOutTypes.map(t => (
-                                        <th key={t} className="px-4 py-2 text-xs font-medium text-right text-amber-700 border-b border-gray-100 dark:border-slate-800 group/th">
+                                        <th key={t} className="px-4 py-2 text-xs font-medium text-right text-amber-700 dark:text-amber-400 border-b border-gray-100 dark:border-slate-800 group/th">
                                             <div className="flex items-center justify-end gap-1">
                                                 {t}
-                                                <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
+                                                {hasPermission('tax-summary', 'edit') && (
+                                                    <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleRenameTaxType('ppnOutTypes', t); }}
                                                         className="p-0.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
@@ -611,6 +823,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                                         <Trash2 size={10} />
                                                     </button>
                                                 </div>
+                                                )}
                                             </div>
                                         </th>
                                     ))}
@@ -625,7 +838,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                     const isLB = net < 0;
 
                                     return (
-                                        <tr key={idx} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer group" onClick={() => handleEditRow(s, 'ppn')}>
+                                        <tr key={idx} className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 group ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s, 'ppn')}>
                                             <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
                                             {config.ppnInTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnIn').toLocaleString()}</td>)}
                                             {config.ppnOutTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnOut').toLocaleString()}</td>)}
@@ -636,8 +849,12 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                             </td>
                                             <td className="px-6 py-4 text-right">
                                                 <div className="flex justify-end gap-2">
-                                                    <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'ppn') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
-                                                    <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
+                                                    {hasPermission('tax-summary', 'edit') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'ppn') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
+                                                    )}
+                                                    {hasPermission('tax-summary', 'delete') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -654,11 +871,137 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
     // --- TAB: COMPARISON ---
     // Moved to separate component below to avoid Hook Rule violations
     const ComparisonTab = ({ sortedSummaries, config }) => {
-        const [periodA, setPeriodA] = useState(sortedSummaries.length > 1 ? sortedSummaries[sortedSummaries.length - 2].id : '');
-        const [periodB, setPeriodB] = useState(sortedSummaries.length > 0 ? sortedSummaries[sortedSummaries.length - 1].id : '');
+        // Group data by Period (Month-Year-Pembetulan) to handle duplicates (PPh/PPN split)
+        const uniquePeriods = useMemo(() => {
+            const groups = {};
+            sortedSummaries.forEach(s => {
+                const key = `${s.year}-${s.month}-${s.pembetulan || 0}`;
+                if (!groups[key]) {
+                    groups[key] = {
+                        key,
+                        label: `${s.month} ${s.year}${s.pembetulan ? ` (Rev-${s.pembetulan})` : ''}`,
+                        month: s.month,
+                        year: s.year,
+                        pembetulan: s.pembetulan || 0,
+                        records: []
+                    };
+                }
+                groups[key].records.push(s);
+            });
 
-        const dataA = sortedSummaries.find(s => s.id === periodA) || {};
-        const dataB = sortedSummaries.find(s => s.id === periodB) || {};
+            const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+            return Object.values(groups).sort((a, b) => {
+                if (a.year !== b.year) return a.year - b.year;
+                if (a.month !== b.month) return months.indexOf(a.month) - months.indexOf(b.month);
+                return a.pembetulan - b.pembetulan;
+            });
+        }, [sortedSummaries]);
+
+        const [compMode, setCompMode] = useState('manual'); // manual, mom, diff_year, yoy, rev
+        const [compFilters, setCompFilters] = useState({ month: 'All', year: 'All', pembetulan: 'All' });
+        
+        // Specific states for modes
+        const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+        const [selectedMonth, setSelectedMonth] = useState('Januari');
+        const [selectedMonthA, setSelectedMonthA] = useState('Januari');
+        const [selectedMonthB, setSelectedMonthB] = useState('Februari');
+        const [selectedYearA, setSelectedYearA] = useState(new Date().getFullYear() - 1);
+        const [selectedYearB, setSelectedYearB] = useState(new Date().getFullYear());
+        const [selectedRevA, setSelectedRevA] = useState(0);
+        const [selectedRevB, setSelectedRevB] = useState(1);
+
+        const filteredPeriods = useMemo(() => {
+            if (compMode !== 'manual') return uniquePeriods; // In auto modes, we filter differently or pick directly
+            return uniquePeriods.filter(p => {
+                if (compFilters.month !== 'All' && p.month !== compFilters.month) return false;
+                if (compFilters.year !== 'All' && String(p.year) !== String(compFilters.year)) return false;
+                if (compFilters.pembetulan !== 'All' && String(p.pembetulan) !== String(compFilters.pembetulan)) return false;
+                return true;
+            });
+        }, [uniquePeriods, compFilters, compMode]);
+
+        const [periodAKey, setPeriodAKey] = useState('');
+        const [periodBKey, setPeriodBKey] = useState('');
+
+        // Auto-set A and B based on Mode
+        useEffect(() => {
+            if (compMode === 'mom') {
+                // Month vs Month (Same Year)
+                // Find max revision for the selected months
+                const findKey = (m, y) => {
+                    const candidates = uniquePeriods.filter(p => p.month === m && String(p.year) === String(y));
+                    if (candidates.length === 0) return '';
+                    // Return highest revision
+                    return candidates.sort((a, b) => b.pembetulan - a.pembetulan)[0].key;
+                };
+                setPeriodAKey(findKey(selectedMonthA, selectedYear));
+                setPeriodBKey(findKey(selectedMonthB, selectedYear));
+            } else if (compMode === 'diff_year') {
+                // Month vs Month (Different Year)
+                const findKey = (m, y) => {
+                    const candidates = uniquePeriods.filter(p => p.month === m && String(p.year) === String(y));
+                    if (candidates.length === 0) return '';
+                    return candidates.sort((a, b) => b.pembetulan - a.pembetulan)[0].key;
+                };
+                setPeriodAKey(findKey(selectedMonthA, selectedYearA));
+                setPeriodBKey(findKey(selectedMonthB, selectedYearB));
+            } else if (compMode === 'yoy') {
+                // Year vs Year (Same Month)
+                const findKey = (m, y) => {
+                    const candidates = uniquePeriods.filter(p => p.month === m && String(p.year) === String(y));
+                    if (candidates.length === 0) return '';
+                    return candidates.sort((a, b) => b.pembetulan - a.pembetulan)[0].key;
+                };
+                setPeriodAKey(findKey(selectedMonth, selectedYearA));
+                setPeriodBKey(findKey(selectedMonth, selectedYearB));
+            } else if (compMode === 'rev') {
+                // Correction Comparison
+                const keyA = uniquePeriods.find(p => p.month === selectedMonth && String(p.year) === String(selectedYear) && String(p.pembetulan) === String(selectedRevA))?.key || '';
+                const keyB = uniquePeriods.find(p => p.month === selectedMonth && String(p.year) === String(selectedYear) && String(p.pembetulan) === String(selectedRevB))?.key || '';
+                setPeriodAKey(keyA);
+                setPeriodBKey(keyB);
+            } else {
+                // Manual Mode - Default logic
+                if (filteredPeriods.length > 0) {
+                    const isAValid = filteredPeriods.some(p => p.key === periodAKey);
+                    const isBValid = filteredPeriods.some(p => p.key === periodBKey);
+
+                    if (!isAValid || !isBValid) {
+                        if (filteredPeriods.length > 1) {
+                            if (!isAValid) setPeriodAKey(filteredPeriods[filteredPeriods.length - 2].key);
+                            if (!isBValid) setPeriodBKey(filteredPeriods[filteredPeriods.length - 1].key);
+                        } else {
+                            if (!isAValid) setPeriodAKey(filteredPeriods[0].key);
+                            if (!isBValid) setPeriodBKey(filteredPeriods[0].key);
+                        }
+                    }
+                }
+            }
+        }, [filteredPeriods, periodAKey, periodBKey, compMode, selectedYear, selectedMonth, selectedMonthA, selectedMonthB, selectedYearA, selectedYearB, selectedRevA, selectedRevB]);
+
+        // Helper to merge records for a selected period
+        const getMergedData = (key) => {
+            const group = uniquePeriods.find(p => p.key === key);
+            if (!group) return {};
+
+            const merged = {
+                id: `merged-${key}`,
+                month: group.month,
+                year: group.year,
+                pembetulan: group.pembetulan,
+                data: { pph: {}, ppnIn: {}, ppnOut: {} }
+            };
+
+            group.records.forEach(r => {
+                if (r.data?.pph) Object.entries(r.data.pph).forEach(([k, v]) => merged.data.pph[k] = (merged.data.pph[k] || 0) + (v || 0));
+                if (r.data?.ppnIn) Object.entries(r.data.ppnIn).forEach(([k, v]) => merged.data.ppnIn[k] = (merged.data.ppnIn[k] || 0) + (v || 0));
+                if (r.data?.ppnOut) Object.entries(r.data.ppnOut).forEach(([k, v]) => merged.data.ppnOut[k] = (merged.data.ppnOut[k] || 0) + (v || 0));
+            });
+            return merged;
+        };
+
+        const dataA = getMergedData(periodAKey);
+        const dataB = getMergedData(periodBKey);
 
         if (sortedSummaries.length === 0) return <div className="p-8 text-center text-gray-500">Belum ada data untuk dibandingkan.</div>;
 
@@ -670,7 +1013,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
             const isZero = diff === 0;
 
             return (
-                <div className={`flex items-center gap-1 text-xs font-bold ${isZero ? 'text-gray-400' : isPos ? 'text-green-600' : 'text-red-600'}`}>
+                <div className={`flex items-center gap-1 text-xs font-bold ${isZero ? 'text-gray-400' : isPos ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                     {isZero ? '-' : isPos ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
                     {isZero ? '0%' : `${Math.abs(percent).toFixed(1)}%`}
                     <span className="text-[10px] font-normal text-gray-500 ml-1">({diff > 0 ? '+' : ''}Rp {(diff / 1000).toFixed(0)}k)</span>
@@ -678,25 +1021,131 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
             )
         };
 
+        const uniqueYears = useMemo(() => [...new Set(sortedSummaries.map(s => s.year))].sort((a, b) => b - a), [sortedSummaries]);
+        const uniquePembetulan = useMemo(() => [...new Set(sortedSummaries.map(s => s.pembetulan || 0))].sort((a, b) => a - b), [sortedSummaries]);
+        const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+
         return (
             <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-500">
-                <Card className="bg-slate-50 dark:bg-slate-900 border-none">
-                    <div className="flex gap-4 items-end">
-                        <div className="flex-1">
-                            <label className="text-xs font-bold text-gray-500 mb-1 block">Periode Dasar (A)</label>
-                            <select className="w-full p-2 rounded-lg border text-sm" value={periodA} onChange={e => setPeriodA(e.target.value)}>
-                                {sortedSummaries.map(s => <option key={s.id} value={s.id}>{s.month} {s.year}</option>)}
-                            </select>
+                <Card className="bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 p-4">
+                    <div className="space-y-4">
+                        {/* Mode Selector */}
+                        <div className="flex gap-2 border-b border-gray-100 dark:border-slate-700 pb-4 overflow-x-auto">
+                            {[
+                                { id: 'manual', label: 'Manual' },
+                                { id: 'mom', label: 'Bulan vs Bulan (Tahun Sama)' },
+                                { id: 'diff_year', label: 'Bulan vs Bulan (Tahun Berbeda)' },
+                                { id: 'yoy', label: 'Tahun vs Tahun (Bulan Sama)' },
+                                { id: 'rev', label: 'Perbandingan Pembetulan' }
+                            ].map(mode => (
+                                <button
+                                    key={mode.id}
+                                    onClick={() => setCompMode(mode.id)}
+                                    className={`px-3 py-1.5 text-xs font-medium rounded-full transition-colors whitespace-nowrap ${compMode === mode.id ? 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-slate-700'}`}
+                                >
+                                    {mode.label}
+                                </button>
+                            ))}
                         </div>
-                        <div className="flex items-center pb-2 text-gray-400"><ArrowRight size={20} /></div>
-                        <div className="flex-1">
-                            <label className="text-xs font-bold text-gray-500 mb-1 block">Periode Banding (B)</label>
-                            <select className="w-full p-2 rounded-lg border text-sm" value={periodB} onChange={e => setPeriodB(e.target.value)}>
-                                {sortedSummaries.map(s => <option key={s.id} value={s.id}>{s.month} {s.year}</option>)}
-                            </select>
+
+                        {/* Controls based on Mode */}
+                        <div className="flex flex-wrap gap-3 items-center">
+                            {compMode === 'manual' && (
+                                <>
+                                    <span className="text-sm font-bold text-gray-500 mr-2">Filter:</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={compFilters.month} onChange={e => setCompFilters(prev => ({ ...prev, month: e.target.value }))}>
+                                        <option value="All">Semua Bulan</option>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={compFilters.year} onChange={e => setCompFilters(prev => ({ ...prev, year: e.target.value }))}>
+                                        <option value="All">Semua Tahun</option>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={compFilters.pembetulan} onChange={e => setCompFilters(prev => ({ ...prev, pembetulan: e.target.value }))}>
+                                        <option value="All">Semua Pembetulan</option>
+                                        {uniquePembetulan.map(p => <option key={p} value={p}>P-{p}</option>)}
+                                    </select>
+                                    <button onClick={() => setCompFilters({ month: 'All', year: 'All', pembetulan: 'All' })} className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg"><X size={16} /></button>
+                                </>
+                            )}
+
+                            {compMode === 'mom' && (
+                                <>
+                                    <span className="text-sm font-bold text-gray-500 mr-2">Pilih:</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <div className="h-4 w-px bg-gray-300 mx-2"></div>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedMonthA} onChange={e => setSelectedMonthA(e.target.value)}>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    <span className="text-xs text-gray-400">vs</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedMonthB} onChange={e => setSelectedMonthB(e.target.value)}>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </>
+                            )}
+
+                            {compMode === 'diff_year' && (
+                                <>
+                                    <span className="text-sm font-bold text-gray-500 mr-2">Pilih:</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedMonthA} onChange={e => setSelectedMonthA(e.target.value)}>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedYearA} onChange={e => setSelectedYearA(e.target.value)}>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <span className="text-xs text-gray-400">vs</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedMonthB} onChange={e => setSelectedMonthB(e.target.value)}>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedYearB} onChange={e => setSelectedYearB(e.target.value)}>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                </>
+                            )}
+
+                            {compMode === 'yoy' && (
+                                <>
+                                    <span className="text-sm font-bold text-gray-500 mr-2">Pilih:</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    <div className="h-4 w-px bg-gray-300 mx-2"></div>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedYearA} onChange={e => setSelectedYearA(e.target.value)}>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <span className="text-xs text-gray-400">vs</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedYearB} onChange={e => setSelectedYearB(e.target.value)}>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                </>
+                            )}
+
+                            {compMode === 'rev' && (
+                                <>
+                                    <span className="text-sm font-bold text-gray-500 mr-2">Pilih:</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                                        {months.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedYear} onChange={e => setSelectedYear(e.target.value)}>
+                                        {uniqueYears.map(y => <option key={y} value={y}>{y}</option>)}
+                                    </select>
+                                    <div className="h-4 w-px bg-gray-300 mx-2"></div>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedRevA} onChange={e => setSelectedRevA(e.target.value)}>
+                                        {uniquePembetulan.map(p => <option key={p} value={p}>P-{p}</option>)}
+                                    </select>
+                                    <span className="text-xs text-gray-400">vs</span>
+                                    <select className="p-2 text-xs rounded-lg border dark:bg-slate-700 dark:border-slate-600" value={selectedRevB} onChange={e => setSelectedRevB(e.target.value)}>
+                                        {uniquePembetulan.map(p => <option key={p} value={p}>P-{p}</option>)}
+                                    </select>
+                                </>
+                            )}
                         </div>
                     </div>
                 </Card>
+
+ 
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* PPh Comparison */}
@@ -787,6 +1236,45 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                     </button>
                 </div>
 
+                {/* Import/Export Actions */}
+                <div className="flex flex-wrap gap-2">
+                    <div className="flex gap-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg p-1">
+                        <button
+                            onClick={() => downloadTemplate('pph')}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded flex items-center gap-2"
+                            title="Download Template PPh"
+                        >
+                            <Download size={14} /> Template PPh
+                        </button>
+                        <div className="w-px bg-gray-200 dark:bg-slate-700 my-1"></div>
+                        <button
+                            onClick={() => downloadTemplate('ppn')}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-slate-300 hover:bg-gray-100 dark:hover:bg-slate-700 rounded flex items-center gap-2"
+                            title="Download Template PPN"
+                        >
+                            <Download size={14} /> Template PPN
+                        </button>
+                    </div>
+
+                    <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls" />
+                    
+                    {hasPermission('tax-summary', 'create') && (
+                    <div className="flex gap-1">
+                        <button
+                            onClick={() => { setImportMode('pph'); setTimeout(() => fileInputRef.current?.click(), 0); }}
+                            className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors shadow-sm"
+                        >
+                            <FileSpreadsheet size={16} /> Import PPh
+                        </button>
+                        <button
+                            onClick={() => { setImportMode('ppn'); setTimeout(() => fileInputRef.current?.click(), 0); }}
+                            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors shadow-sm"
+                        >
+                            <FileSpreadsheet size={16} /> Import PPN
+                        </button>
+                    </div>
+                    )}
+                </div>
             </div>
 
             {/* Global Update Button Removed - replaced by specific buttons in tabs */}

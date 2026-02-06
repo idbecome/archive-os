@@ -93,11 +93,16 @@ export default function MasterData({
                         )}
                     </div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {roles.map(r => (
+                        {roles.map(r => {
+                            let perms = r.permissions || r.access || {};
+                            if (typeof perms === 'string') {
+                                try { perms = JSON.parse(perms); } catch { perms = {}; }
+                            }
+                            return (
                             <div key={r.id} className="p-4 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
                                 <div className="flex justify-between items-start mb-4">
                                     <div>
-                                        <div className="font-bold text-lg dark:text-white">{r.name}</div>
+                                        <div className="font-bold text-lg dark:text-white">{r.label || r.name}</div>
                                         <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Hak Akses Modul</div>
                                     </div>
                                     <div className="flex gap-1">
@@ -110,15 +115,15 @@ export default function MasterData({
                                     </div>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    {Object.entries(r.permissions || {}).map(([mod, perms]) => (
+                                    {Object.entries(perms).map(([mod, actions]) => (
                                         <div key={mod} className="px-2 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded text-[10px] flex flex-col">
                                             <span className="font-bold text-indigo-500 uppercase">{mod}</span>
-                                            <span className="text-gray-400">{perms.join(', ')}</span>
+                                            <span className="text-gray-400">{Array.isArray(actions) ? actions.join(', ') : ''}</span>
                                         </div>
                                     ))}
                                 </div>
                             </div>
-                        ))}
+                        )})}
                     </div>
                 </Card>
             )}
