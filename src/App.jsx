@@ -368,6 +368,9 @@ export default function App() {
   // --- WAREHOUSE HANDLERS (API INTEGRATED) ---
 
   const handleSlotClick = (slot) => {
+    console.log("Slot Clicked:", slot.id, "Status:", slot.status);
+    console.log("Slot BoxData:", JSON.stringify(slot.boxData));
+
     setSelectedSlotId(slot.id);
     if (slot.status === 'EMPTY') {
       setBoxForm({ boxId: `BOX-${new Date().getFullYear()}-${String(slot.id).padStart(3, '0')}`, ordners: [] });
@@ -380,7 +383,7 @@ export default function App() {
     setEditingItem(null);
     setShowMoveInput(false);
     setMoveTargetSlot('');
-    setMoveTargetSlot('');
+
     setShowExternalForm(false);
     setExternalDate('');
     setModalTab('details');
@@ -405,7 +408,7 @@ export default function App() {
 
   const addInvoice = (ordnerId) => {
     if (!newInvoice.invoiceNo || !newInvoice.vendor) return;
-    
+
     const invoicePayload = {
       invoiceNo: newInvoice.invoiceNo,
       vendor: newInvoice.vendor,
@@ -754,27 +757,40 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert("Ukuran file invoice maksimal 10MB.");
-      return;
-    }
+    // Remove 10MB limit check as server supports 50MB
+    // if (file.size > 10 * 1024 * 1024) { ... }
 
     setNewInvoice(prev => ({ ...prev, isProcessing: true, fileName: file.name }));
 
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const base64 = ev.target.result;
-      try {
-        // Jalankan OCR otomatis
-        const text = await performAdvancedOCR(file, (msg) => console.log("Invoice OCR:", msg));
-        setNewInvoice(prev => ({ ...prev, file: base64, ocrContent: text, isProcessing: false }));
-      } catch (err) {
-        console.error("Invoice OCR Failed:", err);
-        alert("Gagal memproses OCR pada invoice: " + err.message);
-        setNewInvoice(prev => ({ ...prev, file: base64, isProcessing: false }));
+    try {
+      // 1. Upload to Server Disk immediately
+      const uploadRes = await api.uploadFile(file);
+      if (uploadRes && uploadRes.success) {
+        console.log("Invoice uploaded:", uploadRes.url);
+
+        // 2. Perform OCR (optional, client-side or server-side?)
+        // Keeping client-side OCR for now, but passing the File object is fine.
+        let ocrText = '';
+        try {
+          ocrText = await performAdvancedOCR(file, (msg) => console.log("Invoice OCR:", msg));
+        } catch (ocrErr) {
+          console.warn("OCR failed but upload succeeded:", ocrErr);
+        }
+
+        setNewInvoice(prev => ({
+          ...prev,
+          file: uploadRes.url, // Store URL instead of Base64
+          ocrContent: ocrText,
+          isProcessing: false
+        }));
+      } else {
+        throw new Error("Upload failed");
       }
-    };
-    reader.readAsDataURL(file);
+    } catch (err) {
+      console.error("Invoice Upload/OCR Failed:", err);
+      alert("Gagal mengupload invoice: " + err.message);
+      setNewInvoice(prev => ({ ...prev, isProcessing: false }));
+    }
   };
 
   const handleViewInvoice = (inv) => {
@@ -783,6 +799,7 @@ export default function App() {
   };
 
   const handleDownloadInvoice = (inv) => {
+    console.log("Downloading Invoice:", inv.fileName, "URL:", inv.file);
     if (!inv.file) return alert("Tidak ada file lampiran.");
     try {
       const link = document.createElement('a');
@@ -2123,7 +2140,7 @@ export default function App() {
                               <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
                               <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
                               <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black focus:ring-0" />
-                              
+
                               {/* Attachment Button */}
                               <div className="relative">
                                 <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf" />
@@ -2145,33 +2162,34 @@ export default function App() {
                                 (inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
                               );
                               return (
-                              <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
-                                <div className="flex items-center gap-3">
-                                  <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
-                                  <div className="flex flex-col">
-                                    <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo}</span>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                      <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor}</span>
-                                      {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{inv.paymentDate}</span>}
-                                    </div>
-                                    {inv.fileName && (
-                                      <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
-                                        <Paperclip size={10} /> {inv.fileName} {inv.ocrContent && <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR</span>}
+                                <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
+                                  <div className="flex items-center gap-3">
+                                    <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
+                                    <div className="flex flex-col">
+                                      <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo}</span>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor}</span>
+                                        {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{inv.paymentDate}</span>}
                                       </div>
+                                      {inv.fileName && (
+                                        <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
+                                          <Paperclip size={10} /> {inv.fileName} {inv.ocrContent && <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR</span>}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
+                                    <button onClick={() => handleViewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors" title="Lihat Detail"><Eye size={12} /></button>
+                                    {hasPermission('inventory', 'edit') && (
+                                      <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
+                                    )}
+                                    {hasPermission('inventory', 'delete') && (
+                                      <button onClick={() => removeInvoice(ord.id, inv.id)} className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"><X size={12} /></button>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
-                                  <button onClick={() => handleViewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors" title="Lihat Detail"><Eye size={12} /></button>
-                                  {hasPermission('inventory', 'edit') && (
-                                    <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
-                                  )}
-                                  {hasPermission('inventory', 'delete') && (
-                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"><X size={12} /></button>
-                                  )}
-                                </div>
-                              </div>
-                            )})}
+                              )
+                            })}
                           </div>
                         </div>
                       )}

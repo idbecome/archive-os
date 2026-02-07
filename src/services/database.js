@@ -314,5 +314,21 @@ export const db = {
         try {
             await fetch(`${API_URL}/inventory/external/${id}`, { method: 'DELETE' });
         } catch (e) { console.error("Gagal hapus external item", e); }
+    },
+
+    async uploadFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const response = await fetch(`${API_URL}/upload`, {
+                method: 'POST',
+                body: formData
+            });
+            if (!response.ok) throw new Error('Upload failed');
+            return await response.json();
+        } catch (e) {
+            console.error("Upload error:", e);
+            throw e;
+        }
     }
 };
