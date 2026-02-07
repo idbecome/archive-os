@@ -28,7 +28,8 @@ export default function Inventory({
                 if (noOrdner.includes(q)) return true;
                 return ord.invoices?.some(inv =>
                     (inv.invoiceNo || '').toLowerCase().includes(q) ||
-                    (inv.vendor || '').toLowerCase().includes(q)
+                    (inv.vendor || '').toLowerCase().includes(q) ||
+                    (inv.ocrContent || '').toLowerCase().includes(q)
                 );
             });
         }

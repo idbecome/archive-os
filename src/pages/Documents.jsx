@@ -113,19 +113,9 @@ export default function Documents({
     ) || [];
 
     return (
-        <div className="animate-in slide-in-from-right duration-300 space-y-6 relative">
-            {/* Global Backdrop for Menus - Click anywhere to close */}
-            {(activeMenuId || activeFolderMenuId) && (
-                <div
-                    className="fixed inset-0 z-[100] bg-transparent"
-                    onClick={() => {
-                        setActiveMenuId(null);
-                        setActiveFolderMenuId(null);
-                    }}
-                />
-            )}
-
-            {/* SUMMARY CARDS FOR DOCUMENTS */}
+        <>
+            <div className="animate-in slide-in-from-right duration-300 space-y-6 relative">
+                {/* SUMMARY CARDS FOR DOCUMENTS */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-2">
                 <SummaryCard
                     title="Total Dokumen"
@@ -147,7 +137,7 @@ export default function Documents({
                 />
             </div>
 
-            <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-white/30 dark:bg-slate-900/40 backdrop-blur-xl p-4 rounded-2xl border border-white/40 dark:border-white/10 shadow-xl ring-1 ring-black/5">
+            <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 rounded-2xl border border-white/40 dark:border-white/10 shadow-xl ring-1 ring-black/5">
                 <div className="flex items-center gap-3 w-full md:w-auto overflow-x-auto">
                     <div className="flex gap-1 mr-2 bg-gray-100 dark:bg-slate-800 rounded-lg p-1">
                         <button onClick={navigateBack} disabled={historyIndex <= 0} className={`p-1 rounded hover:bg-white dark:hover:bg-slate-700 transition-colors ${historyIndex <= 0 ? 'text-gray-300 dark:text-slate-600' : 'text-gray-600 dark:text-slate-300'}`}>
@@ -339,7 +329,7 @@ export default function Documents({
 
                                 {activeFolderMenuId === folder.id && (
                                     <div
-                                        className={`absolute left-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[130] overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-left`}
+                                        className={`absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[130] overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right`}
                                     >
                                         <div className="py-1">
                                             {hasPermission('documents', 'create') && (
@@ -438,7 +428,7 @@ export default function Documents({
                                         { /* Dropdown Menu */}
                                         {activeMenuId === doc.id && (
                                             <div
-                                                className={`absolute left-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[130] overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-left`}
+                                                className={`absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[130] overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right`}
                                             >
                                                 <div className="py-1">
                                                     <button onClick={(e) => { e.stopPropagation(); handleViewDoc(doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
@@ -664,6 +654,18 @@ export default function Documents({
                     </div>
                 )}
             </div>
+            </div>
+
+            {/* Global Backdrop for Menus - Click anywhere to close */}
+            {(activeMenuId || activeFolderMenuId) && (
+                <div
+                    className="fixed inset-0 z-[100] bg-transparent"
+                    onClick={() => {
+                        setActiveMenuId(null);
+                        setActiveFolderMenuId(null);
+                    }}
+                />
+            )}
 
             {/* MANAGEMENT MODAL (COPY/MOVE) */}
             <Modal
@@ -744,7 +746,7 @@ export default function Documents({
                 title={folderForm.id ? 'Edit Konfigurasi Folder' : 'Buat Folder Baru'}
                 size="max-w-md"
             >
-                <div className="space-y-6">
+                <div className="space-y-6 max-h-[70vh] overflow-y-auto px-1 custom-scrollbar">
                     <div>
                         <label className="block text-[10px] font-black text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-widest ml-1">Nama Folder</label>
                         <input
@@ -894,6 +896,6 @@ export default function Documents({
                 )
             }
 
-        </div >
+        </>
     );
 }

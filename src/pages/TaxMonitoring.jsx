@@ -483,7 +483,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     );
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
+        <>
+            <div className="space-y-6 animate-in fade-in duration-500">
             {!selectedAudit ? (
                 <div className="space-y-6">
                     <div className="relative">
@@ -881,6 +882,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 </div>
             )
             }
+            </div>
 
             {/* SINGLE MODAL AT THE END */}
             <Modal
@@ -975,6 +977,6 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     </div>
                 </div>
             </Modal>
-        </div >
+        </>
     );
 }

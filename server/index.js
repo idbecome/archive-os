@@ -50,6 +50,28 @@ function saveBase64ToFile(base64Data, id, extension = 'bin') {
     }
 }
 
+// Helper: Process Inventory Object to Extract Files
+function processInventoryFiles(dataObj, contextId) {
+    if (!dataObj || !dataObj.ordners) return dataObj;
+    
+    dataObj.ordners.forEach(ord => {
+        if (ord.invoices && Array.isArray(ord.invoices)) {
+            ord.invoices.forEach(inv => {
+                if (inv.file && typeof inv.file === 'string' && inv.file.startsWith('data:')) {
+                    const ext = (inv.fileName || 'bin').split('.').pop();
+                    const fileId = `INV-${String(contextId).replace(/[^a-zA-Z0-9-]/g, '')}-${inv.id || Date.now()}`;
+                    const savedUrl = saveBase64ToFile(inv.file, fileId, ext);
+                    if (savedUrl) {
+                        inv.file = savedUrl;
+                        console.log(`Inventory File Saved to Disk: ${savedUrl}`);
+                    }
+                }
+            });
+        }
+    });
+    return dataObj;
+}
+
 // INCREASE MYSQL PACKET SIZE (Critical for large uploads)
 db.run("SET GLOBAL max_allowed_packet = 67108864", [], (err) => { // 64MB
     if (err) console.error("Warning: Failed to set max_allowed_packet:", err.message);
@@ -237,31 +259,78 @@ app.get('/api/inventory', (req, res) => {
             const rawHistory = r.history || r.history_data; // in case of future changes
             const rawLastUpdated = r.lastUpdated || r.last_updated || r.lastupdated;
 
+            // FIX: Safe JSON Parse untuk menangani data yang terpotong/corrupt
+            let parsedBoxData = null;
+            if (rawBoxData) {
+                try {
+                    parsedBoxData = typeof rawBoxData === 'string' ? JSON.parse(rawBoxData) : rawBoxData;
+                } catch (e) {
+                    console.warn(`Warning: Corrupt JSON in slot ${r.id} (likely truncated). Data reset to null.`);
+                    parsedBoxData = null;
+                }
+            }
+
+            let parsedHistory = [];
+            if (rawHistory) {
+                try {
+                    parsedHistory = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory;
+                } catch (e) {
+                    parsedHistory = [];
+                }
+            }
+
             return {
                 ...r,
                 status: (r.status || 'EMPTY').toUpperCase(),
                 lastUpdated: rawLastUpdated,
-                boxData: rawBoxData ? (typeof rawBoxData === 'string' ? JSON.parse(rawBoxData) : rawBoxData) : null,
-                history: rawHistory ? (typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory) : []
+                boxData: parsedBoxData,
+                history: parsedHistory
             };
         }));
     });
 });
 
 app.put('/api/inventory/:id', (req, res) => {
-    let { status, lastUpdated, boxData, history } = req.body;
+    // FIX: Support box_data (LONGTEXT) dari frontend
+    let { status, lastUpdated, boxData, history, box_data } = req.body;
     status = (status || 'EMPTY').toUpperCase();
-    const boxDataJson = JSON.stringify(boxData);
+    
+    // 1. Parse & Process Files to Disk
+    let dataObj = null;
+    try {
+        const raw = box_data !== undefined ? box_data : boxData;
+        dataObj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+        dataObj = processInventoryFiles(dataObj, req.params.id);
+    } catch (e) { console.error("Error processing inventory files:", e); }
+
+    // 2. Prepare for DB
+    const boxDataToSave = dataObj ? JSON.stringify(dataObj) : null;
     const historyJson = JSON.stringify(history);
 
     // Fetch OLD value
     db.get("SELECT * FROM inventory WHERE id = ?", [req.params.id], (err, oldItem) => {
         if (err) console.error("Audit fetch failed", err);
 
-        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
-            [status, lastUpdated, boxDataJson, historyJson, req.params.id],
+        // FIX: Update ke kolom box_data (LONGTEXT) agar muat file besar
+        // Jika kolom box_data belum ada di DB, query ini mungkin error, jadi kita tambahkan fallback
+        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, history = ? WHERE id = ?",
+            [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
             async (err) => {
-                if (err) return res.status(500).json({ error: err.message });
+                if (err) {
+                    // Fallback: Jika kolom box_data tidak ada, coba simpan ke boxData (Legacy)
+                    if (err.message && err.message.includes("no such column")) {
+                        console.warn("Column 'box_data' missing, falling back to 'boxData'. Please update DB schema.");
+                        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
+                            [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
+                            (err2) => {
+                                if (err2) return res.status(500).json({ error: err2.message });
+                                res.json({ success: true });
+                            }
+                        );
+                        return;
+                    }
+                    return res.status(500).json({ error: err.message });
+                }
 
                 // Audit Log
                 if (oldItem && oldItem.status !== status) {
@@ -272,7 +341,10 @@ app.put('/api/inventory/:id', (req, res) => {
                     if (err) return res.status(500).json({ error: err.message });
                     res.json(rows.map(r => ({
                         ...r,
-                        boxData: JSON.parse(r.boxData || '{}'),
+                        boxData: (() => {
+                            try { return JSON.parse(r.boxData || r.box_data || '{}'); }
+                            catch { return null; }
+                        })(),
                         history: JSON.parse(r.history || '[]')
                     })));
                 });
@@ -281,7 +353,13 @@ app.put('/api/inventory/:id', (req, res) => {
     });
 });
 app.post('/api/inventory/external', (req, res) => {
-    const { boxId, destination, sentDate, sender, boxData, history } = req.body;
+    let { boxId, destination, sentDate, sender, boxData, history } = req.body;
+    
+    // Process files in boxData before saving
+    if (boxData) {
+        boxData = processInventoryFiles(boxData, 'EXT-' + boxId);
+    }
+
     db.run("INSERT INTO external_items (boxId, destination, sentDate, sender, boxData, history) VALUES (?, ?, ?, ?, ?, ?)",
         [boxId, destination, sentDate, sender, JSON.stringify(boxData), JSON.stringify(history)],
         function (err) {
@@ -444,9 +522,7 @@ app.post('/api/documents', (req, res) => {
         if (savedUrl) {
             fileUrl = savedUrl;
             savedPath = savedUrl;
-        } else {
-            console.warn("Failed to save file to disk, falling back to legacy DB storage (not recommended)");
-            finalFileData = content;
+            finalFileData = null; // Force NULL in DB to save space
         }
     }
 
@@ -508,7 +584,7 @@ app.put('/api/documents/:id', (req, res) => {
             // Save NEW version
             const ext = title.split('.').pop() || 'bin';
             const newSavedUrl = saveBase64ToFile(content, req.params.id, ext);
-            const finalUrl = newSavedUrl || url || oldDoc.url;
+            const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
             const finalFileData = newSavedUrl ? null : content; // Fallback to BLOB if save failed
 
             db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",

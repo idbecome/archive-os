@@ -276,11 +276,19 @@ export const db = {
     },
 
     async updateInventory(id, data) {
+        // FIX: Mapping ke box_data (LONGTEXT) untuk menghindari limitasi TEXT (64KB) pada kolom boxData
+        // Hal ini mencegah data hilang/corrupt saat menyimpan file attachment (Base64)
+        const payload = { ...data };
+        if (payload.boxData !== undefined) {
+            payload.box_data = JSON.stringify(payload.boxData);
+            payload.boxData = null; // Kosongkan kolom legacy agar tidak truncate
+        }
+
         try {
             await fetch(`${API_URL}/inventory/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify(payload)
             });
         } catch (e) { console.error("Gagal update inventory", e); }
     },

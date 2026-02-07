@@ -59,6 +59,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Building2,
+  Paperclip,
   Menu
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
@@ -107,6 +108,8 @@ export default function App() {
   const [selectedExternalItem, setSelectedExternalItem] = useState(null);
   const fileInputRef = useRef(null);
   const excelInputRef = useRef(null);
+  const invoiceFileInputRef = useRef(null);
+  const [selectedInvoice, setSelectedInvoice] = useState(null);
 
   // Data State
   const [inventory, setInventory] = useState([]);
@@ -285,7 +288,7 @@ export default function App() {
 
   // Temp State
   const [newOrdner, setNewOrdner] = useState({ noOrdner: '', period: '' });
-  const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '', paymentDate: '' });
+  const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
   const [expandedOrdnerIds, setExpandedOrdnerIds] = useState([]);
 
   // --- INITIALIZATION ---
@@ -372,7 +375,7 @@ export default function App() {
       setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners });
     }
     setNewOrdner({ noOrdner: '', period: '' });
-    setNewInvoice({ invoiceNo: '', vendor: '' });
+    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
     setExpandedOrdnerIds(slot.status !== 'EMPTY' ? slot.boxData.ordners.map(o => o.id) : []);
     setEditingItem(null);
     setShowMoveInput(false);
@@ -402,16 +405,26 @@ export default function App() {
 
   const addInvoice = (ordnerId) => {
     if (!newInvoice.invoiceNo || !newInvoice.vendor) return;
+    
+    const invoicePayload = {
+      invoiceNo: newInvoice.invoiceNo,
+      vendor: newInvoice.vendor,
+      paymentDate: newInvoice.paymentDate,
+      file: newInvoice.file,
+      fileName: newInvoice.fileName,
+      ocrContent: newInvoice.ocrContent
+    };
+
     if (editingItem && editingItem.type === 'invoice') {
-      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, invoiceNo: newInvoice.invoiceNo, vendor: newInvoice.vendor } : i) } : o) }));
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, ...invoicePayload } : i) } : o) }));
       setEditingItem(null);
     } else {
-      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: [...o.invoices, { ...newInvoice, id: Date.now() }] } : o) }));
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: [...o.invoices, { ...invoicePayload, id: Date.now() }] } : o) }));
     }
-    setNewInvoice({ invoiceNo: '', vendor: '' });
+    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
   };
 
-  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '' }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
+  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '', file: inv.file || null, fileName: inv.fileName || '', ocrContent: inv.ocrContent || '', isProcessing: false }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
   const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
 
   const handleSaveBox = async () => {
@@ -735,6 +748,50 @@ export default function App() {
       }
     };
     reader.readAsArrayBuffer(file);
+  };
+
+  const handleInvoiceFileSelect = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    if (file.size > 10 * 1024 * 1024) {
+      alert("Ukuran file invoice maksimal 10MB.");
+      return;
+    }
+
+    setNewInvoice(prev => ({ ...prev, isProcessing: true, fileName: file.name }));
+
+    const reader = new FileReader();
+    reader.onload = async (ev) => {
+      const base64 = ev.target.result;
+      try {
+        // Jalankan OCR otomatis
+        const text = await performAdvancedOCR(file, (msg) => console.log("Invoice OCR:", msg));
+        setNewInvoice(prev => ({ ...prev, file: base64, ocrContent: text, isProcessing: false }));
+      } catch (err) {
+        console.error("Invoice OCR Failed:", err);
+        alert("Gagal memproses OCR pada invoice: " + err.message);
+        setNewInvoice(prev => ({ ...prev, file: base64, isProcessing: false }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleViewInvoice = (inv) => {
+    setSelectedInvoice(inv);
+    setModalTab('invoice-detail');
+  };
+
+  const handleDownloadInvoice = (inv) => {
+    if (!inv.file) return alert("Tidak ada file lampiran.");
+    try {
+      const link = document.createElement('a');
+      link.href = inv.file;
+      link.download = inv.fileName || `Invoice-${inv.invoiceNo}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (e) { alert("Gagal download: " + e.message); }
   };
 
   const handleExportInventory = () => {
@@ -1608,7 +1665,7 @@ export default function App() {
 
 
 
-          <div key={activeTab} className="animate-fade-in-up">
+          <div key={activeTab}>
             {activeTab === 'dashboard' && (
               <Dashboard
                 stats={stats}
@@ -2066,25 +2123,46 @@ export default function App() {
                               <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
                               <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
                               <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black focus:ring-0" />
+                              
+                              {/* Attachment Button */}
+                              <div className="relative">
+                                <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf" />
+                                <button onClick={() => invoiceFileInputRef.current.click()} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${newInvoice.file ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}`} title={newInvoice.fileName || "Lampirkan File (OCR Auto)"}>
+                                  {newInvoice.isProcessing ? <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip size={14} />}
+                                </button>
+                              </div>
+
                               <button onClick={() => addInvoice(ord.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
                                 {editingItem?.type === 'invoice' ? <Save size={14} /> : <Plus size={14} />}
                               </button>
                             </div>
                           )}
                           <div className="space-y-1">
-                            {ord.invoices.map(inv => (
-                              <div key={inv.id} className="group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5">
+                            {ord.invoices.map(inv => {
+                              const isMatch = inventorySearchQuery && (
+                                (inv.invoiceNo || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+                                (inv.vendor || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+                                (inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
+                              );
+                              return (
+                              <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
                                 <div className="flex items-center gap-3">
-                                  <FileText size={14} className="text-slate-400 group-hover/inv:text-indigo-500 transition-colors" />
+                                  <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
                                   <div className="flex flex-col">
                                     <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo}</span>
                                     <div className="flex items-center gap-2 mt-0.5">
                                       <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor}</span>
                                       {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{inv.paymentDate}</span>}
                                     </div>
+                                    {inv.fileName && (
+                                      <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
+                                        <Paperclip size={10} /> {inv.fileName} {inv.ocrContent && <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR</span>}
+                                      </div>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
+                                  <button onClick={() => handleViewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors" title="Lihat Detail"><Eye size={12} /></button>
                                   {hasPermission('inventory', 'edit') && (
                                     <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
                                   )}
@@ -2093,7 +2171,7 @@ export default function App() {
                                   )}
                                 </div>
                               </div>
-                            ))}
+                            )})}
                           </div>
                         </div>
                       )}
@@ -2188,6 +2266,49 @@ export default function App() {
 
 
                 </div>
+              </div>
+            )}
+
+            {modalTab === 'invoice-detail' && selectedInvoice && (
+              <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
+                <button onClick={() => setModalTab('details')} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-indigo-600 transition-colors uppercase tracking-wider">
+                  <ChevronLeft size={14} /> Kembali ke Daftar
+                </button>
+
+                <div className="bg-white/50 dark:bg-slate-800/50 p-6 rounded-3xl border border-white/60 dark:border-white/5 shadow-sm">
+                  <div className="flex justify-between items-start mb-6">
+                    <div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Nomor Invoice</span>
+                      <h3 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{selectedInvoice.invoiceNo}</h3>
+                    </div>
+                    {selectedInvoice.paymentDate && (
+                      <div className="text-right">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Tanggal Bayar</span>
+                        <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-xs font-black">{selectedInvoice.paymentDate}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6 mb-6">
+                    <div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Vendor</span>
+                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{selectedInvoice.vendor}</p>
+                    </div>
+                    <div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lampiran File</span>
+                      {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {selectedInvoice.fileName}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
+                    </div>
+                  </div>
+
+                  {selectedInvoice.file && <button onClick={() => handleDownloadInvoice(selectedInvoice)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2"><Download size={18} /> Download Lampiran PDF/Gambar</button>}
+                </div>
+
+                {selectedInvoice.ocrContent && (
+                  <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-2 mb-3"><ScanLine size={16} className="text-indigo-500" /><h4 className="text-xs font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Hasil Scan OCR</h4></div>
+                    <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{selectedInvoice.ocrContent}</div>
+                  </div>
+                )}
               </div>
             )}
 
