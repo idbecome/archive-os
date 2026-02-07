@@ -5,6 +5,7 @@ import db from './db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import multer from 'multer';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +16,24 @@ if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+// Configure Multer
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, UPLOADS_DIR);
+    },
+    filename: function (req, file, cb) {
+        // Safe filename: INV-timestamp-originalName
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `INV-${uniqueSuffix}-${safeName}`);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
 const app = express();
 const PORT = 5000;
 
@@ -24,6 +43,16 @@ console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
+
+// Dedicated Upload Endpoint
+app.post('/api/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+    const fileUrl = `/uploads/${req.file.filename}`;
+    console.log(`File uploaded via Multer: ${fileUrl}`);
+    res.json({ success: true, url: fileUrl });
+});
 
 // Helper: Save Base64 to File
 function saveBase64ToFile(base64Data, id, extension = 'bin') {
@@ -53,7 +82,7 @@ function saveBase64ToFile(base64Data, id, extension = 'bin') {
 // Helper: Process Inventory Object to Extract Files
 function processInventoryFiles(dataObj, contextId) {
     if (!dataObj || !dataObj.ordners) return dataObj;
-    
+
     dataObj.ordners.forEach(ord => {
         if (ord.invoices && Array.isArray(ord.invoices)) {
             ord.invoices.forEach(inv => {
@@ -254,9 +283,9 @@ app.get('/api/inventory', (req, res) => {
     db.all("SELECT * FROM inventory", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows.map(r => {
-            // Robust Mapping for redundant columns
-            const rawBoxData = r.boxData || r.box_data || r.boxdata;
-            const rawHistory = r.history || r.history_data; // in case of future changes
+            // Robust Mapping for redundant columns - Prioritize LONGTEXT box_data
+            const rawBoxData = r.box_data || r.boxData || r.boxdata;
+            const historyStr = r.history || '[]';
             const rawLastUpdated = r.lastUpdated || r.last_updated || r.lastupdated;
 
             // FIX: Safe JSON Parse untuk menangani data yang terpotong/corrupt
@@ -271,9 +300,9 @@ app.get('/api/inventory', (req, res) => {
             }
 
             let parsedHistory = [];
-            if (rawHistory) {
+            if (historyStr) {
                 try {
-                    parsedHistory = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory;
+                    parsedHistory = typeof historyStr === 'string' ? JSON.parse(historyStr) : historyStr;
                 } catch (e) {
                     parsedHistory = [];
                 }
@@ -294,67 +323,65 @@ app.put('/api/inventory/:id', (req, res) => {
     // FIX: Support box_data (LONGTEXT) dari frontend
     let { status, lastUpdated, boxData, history, box_data } = req.body;
     status = (status || 'EMPTY').toUpperCase();
-    
+
     // 1. Parse & Process Files to Disk
     let dataObj = null;
     try {
         const raw = box_data !== undefined ? box_data : boxData;
+        console.log("Processing Inventory Payload:", typeof raw, raw ? "Raw Length: " + raw.length : "Raw is null");
+        if (raw && typeof raw === 'string' && raw.includes('/uploads/')) {
+            console.log("Payload contains /uploads/ path, confirming URL preservation.");
+        }
         dataObj = typeof raw === 'string' ? JSON.parse(raw) : raw;
         dataObj = processInventoryFiles(dataObj, req.params.id);
+        console.log("Processed DataObj Invoices:", JSON.stringify(dataObj?.ordners?.[0]?.invoices || []));
     } catch (e) { console.error("Error processing inventory files:", e); }
 
     // 2. Prepare for DB
     const boxDataToSave = dataObj ? JSON.stringify(dataObj) : null;
-    const historyJson = JSON.stringify(history);
+    const historyJson = JSON.stringify(history || []);
 
     // Fetch OLD value
     db.get("SELECT * FROM inventory WHERE id = ?", [req.params.id], (err, oldItem) => {
-        if (err) console.error("Audit fetch failed", err);
+        if (err) return res.status(500).json({ error: err.message });
 
-        // FIX: Update ke kolom box_data (LONGTEXT) agar muat file besar
-        // Jika kolom box_data belum ada di DB, query ini mungkin error, jadi kita tambahkan fallback
-        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, history = ? WHERE id = ?",
+        // FIX: Primary Update - Save to box_data (LONGTEXT) and Clear boxData (legacy) to avoid confusion
+        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, boxData = NULL, history = ? WHERE id = ?",
             [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
             async (err) => {
-                if (err) {
-                    // Fallback: Jika kolom box_data tidak ada, coba simpan ke boxData (Legacy)
-                    if (err.message && err.message.includes("no such column")) {
-                        console.warn("Column 'box_data' missing, falling back to 'boxData'. Please update DB schema.");
-                        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
-                            [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
-                            (err2) => {
-                                if (err2) return res.status(500).json({ error: err2.message });
-                                res.json({ success: true });
-                            }
-                        );
-                        return;
+                try {
+                    if (err) {
+                        // Fallback: Jika kolom box_data tidak ada, coba simpan ke boxData (Legacy)
+                        if (err.message && err.message.includes("no such column")) {
+                            console.warn("Column 'box_data' missing, falling back to 'boxData'. Please update DB schema.");
+                            db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
+                                [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
+                                async (errFallback) => {
+                                    try {
+                                        if (errFallback) return res.status(500).json({ error: errFallback.message });
+                                        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id} (Legacy Fallback)`);
+                                        res.json({ success: true, id: req.params.id });
+                                    } catch (e2) { console.error(e2); if (!res.headersSent) res.status(500).json({ error: e2.message }); }
+                                }
+                            );
+                        } else {
+                            return res.status(500).json({ error: err.message });
+                        }
+                    } else {
+                        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id}`);
+                        res.json({ success: true, id: req.params.id });
                     }
-                    return res.status(500).json({ error: err.message });
+                } catch (e) {
+                    console.error("Critical Error in Update Callback:", e);
+                    if (!res.headersSent) res.status(500).json({ error: e.message });
                 }
-
-                // Audit Log
-                if (oldItem && oldItem.status !== status) {
-                    await systemLog(null, "Inventory Update", `Slot #${req.params.id} Status: ${oldItem.status} -> ${status}`, oldItem.status, status);
-                }
-
-                db.all("SELECT * FROM inventory", [], (err, rows) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    res.json(rows.map(r => ({
-                        ...r,
-                        boxData: (() => {
-                            try { return JSON.parse(r.boxData || r.box_data || '{}'); }
-                            catch { return null; }
-                        })(),
-                        history: JSON.parse(r.history || '[]')
-                    })));
-                });
             }
         );
     });
 });
 app.post('/api/inventory/external', (req, res) => {
     let { boxId, destination, sentDate, sender, boxData, history } = req.body;
-    
+
     // Process files in boxData before saving
     if (boxData) {
         boxData = processInventoryFiles(boxData, 'EXT-' + boxId);

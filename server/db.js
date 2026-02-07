@@ -166,6 +166,13 @@ function initDb() {
         }
     });
 
+    db.all("SHOW COLUMNS FROM inventory LIKE 'box_data'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating inventory table: Adding box_data (LONGTEXT) column...");
+            db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT");
+        }
+    });
+
     // Seed Data
     db.all("SELECT count(*) as count FROM users", [], (err, rows) => {
         if (!err && rows[0].count === 0) {
