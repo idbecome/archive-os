@@ -65,6 +65,23 @@ export const db = {
         } catch { return []; }
     },
 
+    async getDocuments(params = {}) {
+        try {
+            const query = new URLSearchParams(params).toString();
+            const response = await fetch(`${API_URL}/documents?${query}`);
+            if (!response.ok) throw new Error('Gagal mengambil dokumen');
+            const data = await response.json();
+            return data.map(doc => ({
+                ...doc,
+                fileData: doc.fileData || doc.file_data || doc.filedata,
+                versionsHistory: doc.versions_history || []
+            }));
+        } catch (e) {
+            console.error("DB Error (Documents):", e);
+            return [];
+        }
+    },
+
     // NEW: Ambil detail dokumen (termasuk fileData) jika di list kosong
     async getDocumentById(id) {
         try {
@@ -241,12 +258,17 @@ export const db = {
 
     async createDocument(doc) {
         try {
-            await fetch(`${API_URL}/documents`, {
+            const response = await fetch(`${API_URL}/documents`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(doc)
             });
-        } catch (e) { console.error("Gagal buat dokumen", e); }
+            if (!response.ok) throw new Error('Gagal buat dokumen');
+            return await response.json();
+        } catch (e) {
+            console.error("createDocument Error:", e);
+            return null;
+        }
     },
 
     async updateDocument(id, doc) {

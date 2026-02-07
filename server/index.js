@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
+import { addOCRJob } from './queue.js'; // NEW
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -42,9 +43,9 @@ console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
+// Dedicated Upload Endpoint
 app.use('/uploads', express.static(UPLOADS_DIR));
 
-// Dedicated Upload Endpoint
 app.post('/api/upload', upload.single('file'), (req, res) => {
     if (!req.file) {
         return res.status(400).json({ success: false, error: 'No file uploaded' });
@@ -379,6 +380,24 @@ app.put('/api/inventory/:id', (req, res) => {
         );
     });
 });
+app.get('/api/inventory/external', (req, res) => {
+    db.all("SELECT * FROM external_items ORDER BY sentDate DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows.map(r => {
+            // Robust parsing
+            let boxData = null;
+            let history = [];
+            try { boxData = r.boxData ? JSON.parse(r.boxData) : null; } catch (e) { }
+            try { history = r.history ? JSON.parse(r.history) : []; } catch (e) { }
+            return {
+                ...r,
+                boxData,
+                history
+            };
+        }));
+    });
+});
+
 app.post('/api/inventory/external', (req, res) => {
     let { boxId, destination, sentDate, sender, boxData, history } = req.body;
 
@@ -533,32 +552,132 @@ app.get('/api/documents/:id', (req, res) => {
     });
 });
 
-app.post('/api/documents', (req, res) => {
-    const { id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, file_data, filedata } = req.body;
+import { getEmbedding, cosineSimilarity } from './semantic.js';
+import Tesseract from 'tesseract.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
+import mammoth from 'mammoth';
+import * as XLSX from 'xlsx';
+
+// --- OCR HELPER ---
+// --- OCR HELPER ---
+const extractTextFromFile = async (buffer, mimeType) => {
+    try {
+        if (!buffer) return '';
+
+        // 1. Image OCR (Tesseract)
+        if (mimeType.startsWith('image/')) {
+            console.log("Starting OCR for Image...");
+            const { data: { text } } = await Tesseract.recognize(buffer, 'eng+ind', {
+                logger: m => { if (m.status === 'recognizing text') console.log(`OCR Progress: ${(m.progress * 100).toFixed(0)}%`); }
+            });
+            return text;
+        }
+
+        // 2. PDF Text Extraction (pdf-parse)
+        if (mimeType === 'application/pdf') {
+            console.log("Starting PDF Text Extraction...");
+            let parse = pdfParse;
+            // Handle ESM/CommonJS default export mismatch
+            if (typeof parse !== 'function' && parse.default) {
+                parse = parse.default;
+            }
+            if (typeof parse !== 'function') {
+                console.error("pdf-parse is not a function", parse);
+                return "";
+            }
+            const data = await parse(buffer);
+            return data.text;
+        }
+
+        // 3. Word Document (.docx) (mammoth)
+        if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            console.log("Starting DOCX Text Extraction...");
+            const result = await mammoth.extractRawText({ buffer: buffer });
+            return result.value; // The raw text
+        }
+
+        // 4. Excel Spreadsheet (.xlsx) (xlsx)
+        if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+            console.log("Starting XLSX Text Extraction...");
+            const workbook = XLSX.read(buffer, { type: 'buffer' });
+            let allText = "";
+            workbook.SheetNames.forEach(sheetName => {
+                const sheet = workbook.Sheets[sheetName];
+                // Convert sheet to text (CSV-like but simple connection)
+                const text = XLSX.utils.sheet_to_txt(sheet);
+                allText += `\n--- Sheet: ${sheetName} ---\n${text}`;
+            });
+            return allText;
+        }
+
+        return '';
+    } catch (e) {
+        console.error("OCR/Text Extraction Failed:", e);
+        return '';
+    }
+};
+
+// ... (existing code)
+
+app.post('/api/documents', async (req, res) => {
+    const { id, title, type, size, uploadDate, url, folderId, department, owner, auditId, stepIndex, fileData, file_data, filedata } = req.body;
     // Support multiple casing for fileData
     const content = fileData || file_data || filedata;
 
     let fileUrl = url;
     let savedPath = null;
-    let finalFileData = null; // Don't save base64 to DB
+    let absoluteFilePath = null;
+    let finalFileData = null;
 
+    // 1. Save File (Base64 -> Disk)
     if (content) {
-        // Determine extension
+        // If content is Base64, save to disk
         const ext = title.split('.').pop() || 'bin';
         const savedUrl = saveBase64ToFile(content, id, ext);
+
         if (savedUrl) {
-            fileUrl = savedUrl;
+            fileUrl = savedUrl; // /uploads/filename
             savedPath = savedUrl;
-            finalFileData = null; // Force NULL in DB to save space
+            absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+            finalFileData = null; // Don't save base64 to DB if on disk
+        } else {
+            // Fallback: If save failed or not base64, keep in DB (Legacy)
+            finalFileData = content;
         }
+    } else if (url && url.startsWith('/uploads/')) {
+        // Already uploaded via /api/upload
+        absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
     }
 
-    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, ocrContent, auditId, stepIndex, finalFileData],
+    // 2. Insert into DB (Status: PROCESSING)
+    // We skip OCR and Vector generation here.
+    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, '', auditId, stepIndex, finalFileData, 'processing'],
         async (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            await systemLog(owner, "Upload", `Mengunggah dokumen: "${title}" (Storage: ${savedPath ? 'Disk' : 'DB'})`);
-            res.json({ success: true, url: fileUrl });
+            if (err) {
+                console.error("DB INSERT ERROR:", err.message);
+                return res.status(500).json({ error: "Database Insert Failed: " + err.message });
+            }
+
+            // 3. Add to Queue
+            if (absoluteFilePath) {
+                try {
+                    console.log(`[Queue] Adding job for ${id}`);
+                    await addOCRJob(id, absoluteFilePath, type || 'application/octet-stream', title);
+                } catch (qErr) {
+                    console.error("Queue Error:", qErr);
+                }
+            }
+
+            await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
+
+            // Response with 'processing' status
+            res.json({
+                id, title, type, size, uploadDate, url: fileUrl, folderId, department, owner,
+                ocrContent: '', auditId, stepIndex, status: 'processing'
+            });
         }
     );
 });
@@ -567,33 +686,34 @@ app.put('/api/documents/:id', (req, res) => {
     const { title, folderId, department, ocrContent, fileData, file_data, filedata } = req.body;
     const content = fileData || file_data || filedata;
 
+    // Generate Embedding (Async)
+    const textToEmbed = (title + " " + (ocrContent || "")).substring(0, 1000);
+    getEmbedding(textToEmbed).then(vector => {
+        if (vector) {
+            db.run("UPDATE documents SET vector = ? WHERE id = ?", [JSON.stringify(vector), req.params.id], (err) => {
+                if (err) console.error("Failed to save vector:", err);
+            });
+        }
+    });
+
     if (content) {
-        // Full update with file content -> SAVE VERSION
+        // ... (rest of the PUT logic remains similar, see context)
         db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, oldDoc) => {
             if (err) return res.status(500).json({ error: err.message });
 
             let versionsHistory = [];
-            try {
-                versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : [];
-            } catch (e) { }
+            try { versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : []; } catch (e) { }
 
-            // Save OLD version
             if (oldDoc) {
+                // ... (archiving logic)
                 let archivedUrl = oldDoc.url;
                 let archivedFileData = null;
-
-                // MIGRATION: If old doc has BLOB data, save it to disk now to free up DB space for history
                 if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
                     const ext = oldDoc.title.split('.').pop() || 'bin';
                     const archivedPath = saveBase64ToFile(oldDoc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
-                    if (archivedPath) {
-                        archivedUrl = archivedPath; // Point to new disk file
-                        console.log("Migrated old version to disk:", archivedPath);
-                    } else {
-                        archivedFileData = oldDoc.fileData; // Fallback: keep BLOB if save fails
-                    }
-                } else if (oldDoc.fileData) {
-                    // Non-base64 data? Keep it.
+                    if (archivedPath) archivedUrl = archivedPath;
+                    else archivedFileData = oldDoc.fileData;
+                } else {
                     archivedFileData = oldDoc.fileData;
                 }
 
@@ -601,24 +721,23 @@ app.put('/api/documents/:id', (req, res) => {
                     timestamp: oldDoc.uploadDate || new Date().toISOString(),
                     size: oldDoc.size,
                     type: oldDoc.type,
-                    fileData: archivedFileData, // Should be null if migrated
-                    url: archivedUrl,           // Should point to disk if migrated or already there
+                    fileData: archivedFileData,
+                    url: archivedUrl,
                     title: oldDoc.title,
                     user: oldDoc.owner || 'System'
                 });
             }
 
-            // Save NEW version
             const ext = title.split('.').pop() || 'bin';
             const newSavedUrl = saveBase64ToFile(content, req.params.id, ext);
             const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
-            const finalFileData = newSavedUrl ? null : content; // Fallback to BLOB if save failed
+            const finalFileData = newSavedUrl ? null : content;
 
             db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
                 [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), req.params.id],
                 async (err) => {
                     if (err) return res.status(500).json({ error: err.message });
-                    await systemLog(null, "Update/Version", `Update file & save version: "${title}" (Storage: ${newSavedUrl ? 'Disk' : 'DB'})`);
+                    await systemLog(null, "Update/Version", `Update file & save version: "${title}"`);
                     res.json({ success: true });
                 }
             );
@@ -634,6 +753,42 @@ app.put('/api/documents/:id', (req, res) => {
             }
         );
     }
+});
+
+app.get('/api/search', async (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.json([]);
+
+    console.log("Semantic Search Query:", q);
+
+    // 1. Generate Query Vector
+    const queryVector = await getEmbedding(q);
+    if (!queryVector) return res.status(500).json({ error: "Embedding generation failed" });
+
+    // 2. Fetch all document vectors
+    const sql = `
+        SELECT d.id, d.title, d.type, d.size, d.uploadDate, d.vector, d.folderId, f.name as folderName 
+        FROM documents d
+        LEFT JOIN folders f ON d.folderId = f.id
+    `;
+
+    db.all(sql, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const results = rows.map(doc => {
+            if (!doc.vector) return { ...doc, score: 0 };
+            try {
+                const docVector = JSON.parse(doc.vector);
+                const score = cosineSimilarity(queryVector, docVector);
+                return { ...doc, score };
+            } catch (e) { return { ...doc, score: 0 }; }
+        })
+            .filter(doc => doc.score > 0.2) // Threshold
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5); // Top 5
+
+        res.json(results);
+    });
 });
 
 // --- MANAGEMENT OPS (COPY/MOVE) ---

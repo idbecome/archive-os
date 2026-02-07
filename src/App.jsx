@@ -28,7 +28,6 @@ import {
   Trash2,
   GitCommit,
   User,
-  ScanLine,
   FileKey,
   FileStack,
   UploadCloud,
@@ -1193,6 +1192,14 @@ export default function App() {
     }
   };
 
+  // --- HANDLE NAVIGATE TO FOLDER ---
+  const handleNavigateToFolder = (folderId) => {
+    setActiveTab('documents');
+    setCurrentFolderId(folderId);
+    // Optional: Add highlighting effect or scroll to folder
+    console.log("Navigating to folder:", folderId);
+  };
+
   // --- FIXED: HANDLE DOWNLOAD ---
   const handleDownload = async (doc) => {
     try {
@@ -1420,6 +1427,8 @@ export default function App() {
       addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
     }
   };
+
+
 
   // --- TAX CONFIGURATION STATE ---
   const [taxConfig, setTaxConfig] = useState(() => {
@@ -1692,6 +1701,7 @@ export default function App() {
                 TOTAL_SLOTS={TOTAL_SLOTS}
                 isDarkMode={isDarkMode}
                 handleViewDoc={handleViewDoc}
+                handleNavigateToFolder={handleNavigateToFolder}
               />
             )}
             {activeTab === 'inventory' && (
@@ -1912,7 +1922,7 @@ export default function App() {
               <div className="text-center py-12">
                 <div className="relative mx-auto mb-4 w-16 h-16">
                   <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
+                  <FileText className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
                 </div>
                 <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
                 <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
@@ -1953,7 +1963,7 @@ export default function App() {
                     disabled={!uploadForm.fileData}
                     className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg flex items-center gap-2 disabled:opacity-50"
                   >
-                    <ScanLine size={16} /> Proses OCR
+                    <FileText size={16} /> Proses OCR
                   </button>
                   <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
                 </div>
@@ -1979,7 +1989,7 @@ export default function App() {
               </div>
             </div>
             <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
+              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><FileText size={16} /> Isi Dokumen (OCR & Analisis)</h4>
               <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent || 'Tidak ada konten OCR.'}</div>
             </div>
 

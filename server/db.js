@@ -166,10 +166,24 @@ function initDb() {
         }
     });
 
+    db.all("SHOW COLUMNS FROM documents LIKE 'vector'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating documents table: Adding vector (LONGTEXT) column...");
+            db.run("ALTER TABLE documents ADD COLUMN vector LONGTEXT"); // JSON string of float array
+        }
+    });
+
     db.all("SHOW COLUMNS FROM inventory LIKE 'box_data'", [], (err, rows) => {
         if (!err && rows.length === 0) {
             console.log("Migrating inventory table: Adding box_data (LONGTEXT) column...");
             db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT");
+        }
+    });
+
+    db.all("SHOW COLUMNS FROM documents LIKE 'status'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating documents table: Adding status column...");
+            db.run("ALTER TABLE documents ADD COLUMN status VARCHAR(50) DEFAULT 'ready'");
         }
     });
 
