@@ -11,7 +11,8 @@ import {
     User,
     Sun,
     Moon,
-    LogOut
+    LogOut,
+    Calculator
 } from 'lucide-react';
 
 const Sidebar = ({
@@ -66,6 +67,7 @@ const Sidebar = ({
                     { id: 'documents', icon: FileStack, label: 'Documents' },
                     { id: 'tax-monitoring', icon: ShieldCheck, label: 'Compliance' },
                     { id: 'tax-summary', icon: PieChart, label: 'Reporting' },
+                    { id: 'tax-calculation', icon: Calculator, label: 'Tax Calc' },
                     { id: 'master', icon: Settings, label: 'Settings' },
                 ].filter(item => hasPermission(item.id, 'view')).map(item => (
                     <button

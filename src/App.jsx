@@ -69,6 +69,7 @@ import Inventory from './pages/Inventory';
 import Documents from './pages/Documents';
 import TaxMonitoring from './pages/TaxMonitoring';
 import TaxSummary from './pages/TaxSummary';
+import TaxCalculation from './pages/TaxCalculation';
 import MasterData from './pages/MasterData';
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
@@ -1781,7 +1782,8 @@ export default function App() {
                     activeTab === 'documents' ? 'Dokumen Digital' :
                       activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
                         activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
-                          activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
+                          activeTab === 'tax-calculation' ? 'Kalkulasi Pajak' :
+                            activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
                 {activeTab === 'dashboard' ? 'Dashboard' :
@@ -1789,7 +1791,8 @@ export default function App() {
                     activeTab === 'documents' ? 'Secure Digital Storage' :
                       activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
                         activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
-                          activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
+                          activeTab === 'tax-calculation' ? 'Kalkulasi & Pelaporan Pajak' :
+                            activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
               </p>
             </div>
           </div>
@@ -1895,6 +1898,7 @@ export default function App() {
                 onImport={handleTaxImport}
               />
             )}
+            {activeTab === 'tax-calculation' && <TaxCalculation />}
             {activeTab === 'master' && (
               <MasterData
                 masterTab={masterTab}
@@ -2521,6 +2525,7 @@ export default function App() {
           </div>
         )
         }
+
 
         {/* MASTER DATA MODALS */}
         {
