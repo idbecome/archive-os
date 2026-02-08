@@ -1361,6 +1361,50 @@ app.delete('/api/tax-objects/:id', (req, res) => {
     });
 });
 
+app.get('/api/tax-objects/export', (req, res) => {
+    db.all("SELECT * FROM tax_objects ORDER BY created_at DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Map data to Excel friendly format
+        const exportData = rows.map(item => ({
+            'Tanggal': item.created_at,
+            'Jenis ID': item.id_type,
+            'Nomor Identitas': item.identity_number,
+            'Nama Wajib Pajak': item.name,
+            'Jenis PPh': item.tax_type,
+            'Kode Objek': item.tax_object_code,
+            'Nama Objek': item.tax_object_name,
+            'DPP': item.dpp,
+            'Tarif (%)': item.rate,
+            'Total PPh': item.pph
+        }));
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(exportData);
+
+        // Adjust column widths
+        ws['!cols'] = [
+            { wch: 20 }, // Tanggal
+            { wch: 10 }, // Jenis ID
+            { wch: 20 }, // Nomor Identitas
+            { wch: 30 }, // Nama Wajib Pajak
+            { wch: 10 }, // Jenis PPh
+            { wch: 15 }, // Kode Objek
+            { wch: 35 }, // Nama Objek
+            { wch: 15 }, // DPP
+            { wch: 10 }, // Tarif (%)
+            { wch: 15 }  // Total PPh
+        ];
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Database WP');
+        const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=Database_WP.xlsx');
+        res.send(buffer);
+    });
+});
+
 // --- MASTER TAX OBJECTS (IMPORT EXCEL) ---
 
 // Uses existing 'upload' configuration from earlier in file

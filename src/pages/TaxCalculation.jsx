@@ -75,6 +75,10 @@ export default function TaxCalculation() {
         window.open('http://localhost:5000/api/master-tax-objects/template', '_blank');
     };
 
+    const handleExportDatabase = () => {
+        window.open('http://localhost:5000/api/tax-objects/export', '_blank');
+    };
+
     const handleImport = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -514,6 +518,13 @@ export default function TaxCalculation() {
                                     title="Download Template Excel"
                                 >
                                     <Download size={14} /> Template
+                                </button>
+                                <button
+                                    onClick={handleExportDatabase}
+                                    className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg flex items-center gap-1 transition-colors shadow-sm"
+                                    title="Export Semua Database ke Excel"
+                                >
+                                    <FileText size={14} /> Export Excel
                                 </button>
                                 <div className="relative">
                                     <input
