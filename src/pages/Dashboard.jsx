@@ -1,8 +1,28 @@
-import React, { useState } from 'react';
-import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight } from 'lucide-react';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2 } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
 
-export default function Dashboard({ stats, docList, logs, docStats, TOTAL_SLOTS, handleViewDoc, handleNavigateToFolder }) {
+export default function Dashboard({
+    stats: propStats,
+    docList: propDocList,
+    logs: propLogs,
+    docStats: propDocStats,
+    TOTAL_SLOTS,
+    handleViewDoc,
+    handleNavigateToFolder,
+    setActiveTab,
+    setActiveInvTab,
+    handleDownload,
+    handleDownloadInvoice,
+    ocrStats = { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] }
+}) {
+    // Defensive Defaults
+    const stats = propStats || { occupancy: 0, stored: 0, borrowed: 0, audit: 0, empty: 0 };
+    const docList = Array.isArray(propDocList) ? propDocList : [];
+    const logs = Array.isArray(propLogs) ? propLogs : [];
+    const docStats = propDocStats || { totalSizeMB: 0, totalDocs: 0, totalRevisions: 0 };
+
     const [expandedLogId, setExpandedLogId] = useState(null);
     const [semanticQuery, setSemanticQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
@@ -28,8 +48,111 @@ export default function Dashboard({ stats, docList, logs, docStats, TOTAL_SLOTS,
         setExpandedLogId(expandedLogId === id ? null : id);
     };
 
+    // --- OCR NOTIFICATION (Local, based on prop updates) ---
+    const [ocrNotification, setOcrNotification] = useState(null);
+    const lastCompletedRef = useRef(ocrStats?.counts?.completed || 0);
+
+    useEffect(() => {
+        const newCompleted = ocrStats?.counts?.completed || 0;
+        if (lastCompletedRef.current > 0 && newCompleted > lastCompletedRef.current) {
+            const diff = newCompleted - lastCompletedRef.current;
+            setOcrNotification(`🎉 ${diff} Dokumen selesai diproses OCR!`);
+            setTimeout(() => setOcrNotification(null), 5000);
+        }
+        lastCompletedRef.current = newCompleted;
+    }, [ocrStats?.counts?.completed]);
+
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
+            {/* OCR NOTIFICATION BANNER */}
+            {ocrNotification && (
+                <div className="bg-emerald-100 border border-emerald-400 text-emerald-700 px-4 py-3 rounded-xl relative shadow-lg animate-in slide-in-from-top-2 flex items-center gap-3" role="alert">
+                    <CheckCircle2 size={24} />
+                    <div>
+                        <strong className="font-bold">Selesai!</strong>
+                        <span className="block sm:inline"> {ocrNotification}</span>
+                    </div>
+                    <span className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setOcrNotification(null)}>
+                        <X size={20} className="cursor-pointer" />
+                    </span>
+                </div>
+            )}
+
+            {/* OCR STATUS WIDGET */}
+            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden transition-all duration-500">
+                <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <ScanLine size={120} />
+                </div>
+
+                <div className="relative z-10">
+                    {/* IDLE STATE */}
+                    {((ocrStats?.counts?.active || 0) === 0 && (ocrStats?.counts?.waiting || 0) === 0) ? (
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
+                                <CheckCircle2 size={24} className="text-white" />
+                            </div>
+                            <div>
+                                <h3 className="text-lg font-bold">Sistem OCR Siap</h3>
+                                <p className="text-blue-100 text-sm">Tidak ada antrian dokumen saat ini.</p>
+                            </div>
+                        </div>
+                    ) : (
+                        /* ACTIVE STATE */
+                        <>
+                            <h3 className="text-lg font-bold flex items-center gap-2 mb-6">
+                                <div className="w-3 h-3 bg-white rounded-full animate-ping"></div>
+                                Sedang Memproses OCR...
+                            </h3>
+
+                            {/* PROGRESS BAR SECTION */}
+                            {(ocrStats?.activeJobs || []).length > 0 && (
+                                <div className="mb-6 bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
+                                    <div className="flex justify-between items-end mb-2">
+                                        <div>
+                                            <p className="text-xs text-blue-100 font-bold uppercase tracking-wider mb-1">Sedang Dikerjakan</p>
+                                            <p className="font-medium truncate max-w-[200px] sm:max-w-md">{ocrStats.activeJobs[0].filename}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-3xl font-bold">{ocrStats.activeJobs[0].progress || 0}<span className="text-base font-normal opacity-70">%</span></p>
+                                        </div>
+                                    </div>
+
+                                    {/* Progress Bar Track */}
+                                    <div className="w-full bg-black/20 rounded-full h-3 overflow-hidden mb-2">
+                                        <div
+                                            className="bg-white h-full rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(255,255,255,0.5)]"
+                                            style={{ width: `${ocrStats.activeJobs[0].progress || 0}%` }}
+                                        ></div>
+                                    </div>
+
+                                    {/* ETA & Info */}
+                                    <div className="flex justify-between text-xs text-blue-100">
+                                        <span>Estimasi: {Math.max(1, Math.round((100 - (ocrStats.activeJobs[0].progress || 0)) * 0.5))} detik lagi</span>
+                                        <span>{(ocrStats.activeJobs[0].progress || 0) < 30 ? 'Memulai ekstraksi...' : (ocrStats.activeJobs[0].progress || 0) < 80 ? 'Analisis Teks...' : 'Finishing...'}</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* STATS GRID */}
+                            <div className="grid grid-cols-3 gap-4">
+                                <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/20 text-center">
+                                    <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider mb-1">Antrian</p>
+                                    <p className="text-xl font-bold">{ocrStats?.counts?.waiting || 0}</p>
+                                </div>
+                                <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/20 text-center">
+                                    <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider mb-1">Sukses</p>
+                                    <p className="text-xl font-bold">{ocrStats?.counts?.completed || 0}</p>
+                                </div>
+                                <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/20 text-center">
+                                    <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider mb-1">Gagal</p>
+                                    <p className="text-xl font-bold">{ocrStats?.counts?.failed || 0}</p>
+                                </div>
+                            </div>
+                        </>
+                    )}
+                </div>
+            </div>
+
             {/* 🔍 SEMANTIC SEARCH BAR */}
             <div className="bg-white/50 dark:bg-slate-900/50 backdrop-blur-xl p-6 rounded-3xl border border-white/20 shadow-xl shadow-indigo-500/5 relative overflow-hidden group">
                 <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
@@ -81,10 +204,17 @@ export default function Dashboard({ stats, docList, logs, docStats, TOTAL_SLOTS,
                                     </div>
 
                                     <div className="flex justify-between items-start mb-2 relative z-10">
-                                        <div className="p-2 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg text-indigo-600 dark:text-indigo-400">
-                                            {doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />}
+                                        <div className={`p-2 rounded-lg 
+                                            ${doc.matchType === 'invoice' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' :
+                                                doc.matchType === 'external_item' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' :
+                                                    doc.matchType === 'tax_summary' ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' :
+                                                        'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'}`}>
+                                            {doc.matchType === 'invoice' ? <Package size={20} /> :
+                                                doc.matchType === 'external_item' ? <Truck size={20} /> :
+                                                    doc.matchType === 'tax_summary' ? <FileBarChart size={20} /> :
+                                                        (doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />)}
                                         </div>
-                                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${doc.score > 0.25 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'}`}>
+                                        <span className={`text-xs font-bold px-2 py-1 rounded-full ${doc.score > 0.3 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}`}>
                                             {(doc.score * 100).toFixed(0)}% Match
                                         </span>
                                     </div>
@@ -92,25 +222,58 @@ export default function Dashboard({ stats, docList, logs, docStats, TOTAL_SLOTS,
                                     <h4 className="font-bold text-slate-800 dark:text-white mb-1 line-clamp-1 group-hover/card:text-indigo-600 dark:group-hover/card:text-indigo-400 transition-colors relative z-10 cursor-pointer" onClick={() => handleViewDoc(doc)}>
                                         {doc.title}
                                     </h4>
-                                    <p className="text-xs text-slate-500 dark:text-slate-400 relative z-10 mb-3">
+                                    <p className="text-xs text-slate-500 dark:text-slate-400 relative z-10 mb-3 block truncate">
                                         {new Date(doc.uploadDate).toLocaleDateString()} • {doc.size}
                                     </p>
 
-                                    <div className="flex gap-2 relative z-10">
-                                        <button
-                                            onClick={() => handleViewDoc(doc)}
-                                            className="flex-1 text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-600 dark:text-slate-300 py-1.5 rounded-lg transition-colors font-medium"
-                                        >
-                                            Lihat File
-                                        </button>
+                                    {/* OCR Snippet Result */}
+                                    {doc.ocrContent && (
+                                        <div className="relative z-10 mb-3 text-[10px] text-slate-500 bg-slate-50 dark:bg-slate-900/50 p-2 rounded border border-slate-100 dark:border-slate-800 line-clamp-2 italic">
+                                            "{doc.ocrContent.substring(0, 100).replace(/\n/g, ' ')}..."
+                                        </div>
+                                    )}
+
+                                    <div className="relative z-10">
                                         <button
                                             onClick={(e) => {
                                                 e.stopPropagation();
-                                                handleNavigateToFolder(doc.folderId);
+                                                if (doc.matchType === 'invoice') {
+                                                    handleDownloadInvoice(doc.data || doc);
+                                                } else {
+                                                    handleDownload(doc.data || doc);
+                                                }
                                             }}
-                                            className="flex-1 text-xs bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400 py-1.5 rounded-lg transition-colors font-medium flex items-center justify-center gap-1"
+                                            className="w-full text-xs bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg transition-all font-medium flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
                                         >
-                                            📂 {doc.folderName || 'General'}
+                                            <Download size={14} /> Download File
+                                        </button>
+                                    </div>
+                                    <div className="mt-2 relative z-10">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                if (doc.matchType === 'invoice') {
+                                                    setActiveTab('inventory');
+                                                    setActiveInvTab('internal');
+                                                } else if (doc.matchType === 'external_item') {
+                                                    setActiveTab('inventory');
+                                                    setActiveInvTab('external');
+                                                } else if (doc.matchType === 'tax_summary') {
+                                                    setActiveTab('tax-summary');
+                                                } else {
+                                                    handleNavigateToFolder(doc.folderId);
+                                                }
+                                            }}
+                                            className={`w-full text-[10px] py-1 rounded-lg transition-colors font-bold flex items-center justify-center gap-1 uppercase tracking-wider
+                                                ${doc.matchType === 'invoice' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 hover:bg-amber-100' :
+                                                    doc.matchType === 'external_item' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100' :
+                                                        doc.matchType === 'tax_summary' ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 hover:bg-purple-100' :
+                                                            'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
+                                        >
+                                            {doc.matchType === 'invoice' ? `📦 ${doc.folderName}` :
+                                                doc.matchType === 'external_item' ? `🚚 ${doc.folderName}` :
+                                                    doc.matchType === 'tax_summary' ? `📊 ${doc.folderName}` :
+                                                        `📂 ${doc.folderName || 'General'}`}
                                         </button>
                                     </div>
                                 </div>
@@ -123,15 +286,15 @@ export default function Dashboard({ stats, docList, logs, docStats, TOTAL_SLOTS,
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <SummaryCard
                     title="Kapasitas Rak"
-                    value={`${stats.occupancy.toFixed(0)}%`}
-                    subtext={`${stats.empty} Slot Kosong`}
+                    value={`${(stats?.occupancy || 0).toFixed(0)}%`}
+                    subtext={`${stats?.empty || 0} Slot Kosong`}
                     icon={Grid3X3}
                     colorClass="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400"
                 />
                 <SummaryCard
                     title="Arsip Digital"
                     value={docList.length}
-                    subtext={`${docStats.totalSizeMB} MB Total Data`}
+                    subtext={`${docStats?.totalSizeMB || '0'} MB Total Data`}
                     icon={ScanLine}
                     colorClass="bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
                 />
@@ -151,15 +314,15 @@ export default function Dashboard({ stats, docList, logs, docStats, TOTAL_SLOTS,
                     </h3>
                     <div className="space-y-4">
                         <div className="w-full bg-gray-100 dark:bg-slate-800 rounded-full h-6 overflow-hidden flex shadow-inner">
-                            <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${(stats.stored / TOTAL_SLOTS) * 100}%` }} title={`Tersimpan: ${stats.stored}`}></div>
-                            <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${(stats.borrowed / TOTAL_SLOTS) * 100}%` }} title={`Dipinjam: ${stats.borrowed}`}></div>
-                            <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${(stats.audit / TOTAL_SLOTS) * 100}%` }} title={`Audit: ${stats.audit}`}></div>
+                            <div className="bg-emerald-500 h-full transition-all duration-500" style={{ width: `${((stats?.stored || 0) / (TOTAL_SLOTS || 1)) * 100}%` }} title={`Tersimpan: ${stats?.stored || 0}`}></div>
+                            <div className="bg-amber-500 h-full transition-all duration-500" style={{ width: `${((stats?.borrowed || 0) / (TOTAL_SLOTS || 1)) * 100}%` }} title={`Dipinjam: ${stats?.borrowed || 0}`}></div>
+                            <div className="bg-purple-500 h-full transition-all duration-500" style={{ width: `${((stats?.audit || 0) / (TOTAL_SLOTS || 1)) * 100}%` }} title={`Audit: ${stats?.audit || 0}`}></div>
                         </div>
                         <div className="grid grid-cols-2 gap-4 text-sm">
-                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="text-gray-600 dark:text-slate-400">Tersimpan ({stats.stored})</span></div>
-                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-500"></div><span className="text-gray-600 dark:text-slate-400">Dipinjam ({stats.borrowed})</span></div>
-                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-purple-500"></div><span className="text-gray-600 dark:text-slate-400">Audit ({stats.audit})</span></div>
-                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-gray-200 dark:bg-slate-700"></div><span className="text-gray-600 dark:text-slate-400">Kosong ({stats.empty})</span></div>
+                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500"></div><span className="text-gray-600 dark:text-slate-400">Tersimpan ({stats?.stored || 0})</span></div>
+                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-500"></div><span className="text-gray-600 dark:text-slate-400">Dipinjam ({stats?.borrowed || 0})</span></div>
+                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-purple-500"></div><span className="text-gray-600 dark:text-slate-400">Audit ({stats?.audit || 0})</span></div>
+                            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-gray-200 dark:bg-slate-700"></div><span className="text-gray-600 dark:text-slate-400">Kosong ({stats?.empty || 0})</span></div>
                         </div>
                     </div>
                 </Card>

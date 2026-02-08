@@ -146,7 +146,12 @@ export const db = {
         } catch { return []; }
     },
     async getTaxSummaries() {
-        return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
+        try {
+            const response = await fetch(`${API_URL}/tax-summaries`);
+            return await response.json();
+        } catch {
+            return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
+        }
     },
     async getUsers() {
         try {

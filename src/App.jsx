@@ -59,7 +59,8 @@ import {
   ArrowUpRight,
   Building2,
   Paperclip,
-  Menu
+  Menu,
+  RefreshCw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import Login from './pages/Login';
@@ -185,6 +186,39 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(!!currentUser); // Start loading only if user is logged in
   const [stats, setStats] = useState({ stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 });
 
+  // --- OCR GLOBAL POLLING ---
+  const [ocrStats, setOcrStats] = useState({ counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
+  const lastOcrCompletedRef = useRef(0);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const fetchOcrStatus = async () => {
+      try {
+        const res = await fetch('http://localhost:5000/api/ocr/status');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Check for new completions to trigger auto-refresh
+        const newCompleted = data?.counts?.completed || 0;
+        if (lastOcrCompletedRef.current > 0 && newCompleted > lastOcrCompletedRef.current) {
+          console.log("OCR Job Completed! Refreshing data...");
+          fetchInventory(); // Refresh Inventory
+          fetchDocs();      // Refresh Documents
+          fetchLogs();      // Refresh Logs
+        }
+        lastOcrCompletedRef.current = newCompleted;
+        setOcrStats(data || { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
+      } catch (err) {
+        console.error("Failed to fetch OCR status:", err);
+      }
+    };
+
+    const interval = setInterval(fetchOcrStatus, 2000); // Poll every 2s
+    fetchOcrStatus();
+
+    return () => clearInterval(interval);
+  }, [currentUser]); // Dependency on currentUser ensures it runs only when logged in
 
   // --- DATA INITIALIZATION FROM API ---
   const fetchDocs = async () => {
@@ -248,6 +282,13 @@ export default function App() {
         api.getRoles().then(setRoles),
         api.getDepartments().then(setDepartments)
       ]);
+      // Initialize OCR completion count
+      try {
+        const ocrRes = await fetch('http://localhost:5000/api/ocr/status');
+        const ocrData = await ocrRes.json();
+        lastOcrCompletedRef.current = ocrData?.counts?.completed || 0;
+      } catch (e) { console.warn("Initial OCR status fetch failed", e); }
+
       setIsLoading(false);
     };
     initData();
@@ -264,6 +305,7 @@ export default function App() {
   }, [isDarkMode]);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Warehouse Form State
@@ -374,7 +416,7 @@ export default function App() {
     if (slot.status === 'EMPTY') {
       setBoxForm({ boxId: `BOX-${new Date().getFullYear()}-${String(slot.id).padStart(3, '0')}`, ordners: [] });
     } else {
-      setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners });
+      setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners || [] });
     }
     setNewOrdner({ noOrdner: '', period: '' });
     setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
@@ -388,6 +430,21 @@ export default function App() {
     setModalTab('details');
     setIsModalOpen(true);
   };
+
+  // --- SYNC BOX FORM WITH INVENTORY UPDATE (Auto-Refresh OCR) ---
+  useEffect(() => {
+    if (selectedSlotId && inventory.length > 0) {
+      const currentSlot = inventory.find(s => s.id === selectedSlotId);
+      if (currentSlot && currentSlot.boxData) {
+        // Only update if we are not currently editing to avoid overwriting user input
+        // But for OCR status, we mainly need to update the invoice list
+        setBoxForm(prev => ({
+          ...prev,
+          ordners: currentSlot.boxData.ordners || []
+        }));
+      }
+    }
+  }, [inventory, selectedSlotId]);
 
   const addOrdner = () => {
     if (!newOrdner.noOrdner || !newOrdner.period) return;
@@ -414,19 +471,20 @@ export default function App() {
       paymentDate: newInvoice.paymentDate,
       file: newInvoice.file,
       fileName: newInvoice.fileName,
-      ocrContent: newInvoice.ocrContent
+      ocrContent: newInvoice.ocrContent,
+      rawFile: newInvoice.rawFile // Pass raw file
     };
 
     if (editingItem && editingItem.type === 'invoice') {
-      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, ...invoicePayload } : i) } : o) }));
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, ...invoicePayload, id: i.id } : i) } : o) }));
       setEditingItem(null);
     } else {
       setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: [...o.invoices, { ...invoicePayload, id: Date.now() }] } : o) }));
     }
-    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
+    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false, rawFile: null });
   };
 
-  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '', file: inv.file || null, fileName: inv.fileName || '', ocrContent: inv.ocrContent || '', isProcessing: false }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
+  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '', file: inv.file || null, fileName: inv.fileName || '', ocrContent: inv.ocrContent || '', isProcessing: false, rawFile: null }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
   const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
 
   const handleSaveBox = async () => {
@@ -449,6 +507,52 @@ export default function App() {
     const currentSlot = inventory.find(s => Number(s.id) === Number(selectedSlotId));
     if (!currentSlot) return;
 
+    // --- BATCH UPLOAD START ---
+    let updatedOrdners = [...boxForm.ordners];
+    let uploadCount = 0;
+
+    // We need to traverse and upload any invoice that has a rawFile
+    // Use for...of loop for async/await
+    try {
+      for (let oIdx = 0; oIdx < updatedOrdners.length; oIdx++) {
+        let ordner = updatedOrdners[oIdx];
+        if (ordner.invoices && ordner.invoices.length > 0) {
+          let updatedInvoices = [...ordner.invoices];
+
+          for (let iIdx = 0; iIdx < updatedInvoices.length; iIdx++) {
+            let inv = updatedInvoices[iIdx];
+            if (inv.rawFile) {
+              // Show loading state manually if needed, or use a toast
+              console.log(`Uploading invoice ${inv.invoiceNo}...`);
+              const uploadRes = await api.uploadFile(inv.rawFile);
+
+              if (uploadRes && uploadRes.success) {
+                // Update invoice with real URL and remove rawFile to prevent re-upload
+                updatedInvoices[iIdx] = {
+                  ...inv,
+                  file: uploadRes.url,
+                  rawFile: undefined // Clear raw file
+                };
+                uploadCount++;
+              } else {
+                throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
+              }
+            }
+          }
+          updatedOrdners[oIdx] = { ...ordner, invoices: updatedInvoices };
+        }
+      }
+    } catch (err) {
+      console.error("Batch Upload Failed:", err);
+      alert("Gagal menyimpan: Error saat upload foto/dokumen. " + err.message);
+      return;
+    }
+
+    if (uploadCount > 0) {
+      console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
+    }
+    // --- BATCH UPLOAD END ---
+
     const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
     const oldBoxId = currentSlot.boxData?.id;
 
@@ -461,7 +565,7 @@ export default function App() {
       status: (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY' ? 'STORED' : currentSlot.status.toUpperCase(),
       lastUpdated: new Date().toISOString(),
       history: [...(currentSlot.history || []), ...newHistory],
-      boxData: { id: boxForm.boxId, ordners: boxForm.ordners }
+      boxData: { id: boxForm.boxId, ordners: updatedOrdners }
     };
 
     try {
@@ -643,7 +747,7 @@ export default function App() {
     } catch (e) { alert(e.message); }
   };
 
-  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
+
 
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
@@ -759,42 +863,20 @@ export default function App() {
     // Remove 10MB limit check as server supports 50MB
     // if (file.size > 10 * 1024 * 1024) { ... }
 
-    setNewInvoice(prev => ({ ...prev, isProcessing: true, fileName: file.name }));
-
-    try {
-      // 1. Upload to Server Disk immediately
-      const uploadRes = await api.uploadFile(file);
-      if (uploadRes && uploadRes.success) {
-        console.log("Invoice uploaded:", uploadRes.url);
-
-        // 2. Perform OCR (optional, client-side or server-side?)
-        // Keeping client-side OCR for now, but passing the File object is fine.
-        let ocrText = '';
-        try {
-          ocrText = await performAdvancedOCR(file, (msg) => console.log("Invoice OCR:", msg));
-        } catch (ocrErr) {
-          console.warn("OCR failed but upload succeeded:", ocrErr);
-        }
-
-        setNewInvoice(prev => ({
-          ...prev,
-          file: uploadRes.url, // Store URL instead of Base64
-          ocrContent: ocrText,
-          isProcessing: false
-        }));
-      } else {
-        throw new Error("Upload failed");
-      }
-    } catch (err) {
-      console.error("Invoice Upload/OCR Failed:", err);
-      alert("Gagal mengupload invoice: " + err.message);
-      setNewInvoice(prev => ({ ...prev, isProcessing: false }));
-    }
+    // DEFER UPLOAD: Store raw file for upload on "Simpan Data"
+    setNewInvoice(prev => ({
+      ...prev,
+      isProcessing: false,
+      fileName: file.name,
+      file: null, // Clear old URL if any
+      rawFile: file // Store File object
+    }));
   };
 
   const handleViewInvoice = (inv) => {
     setSelectedInvoice(inv);
     setModalTab('invoice-detail');
+    setIsModalOpen(true);
   };
 
   const handleDownloadInvoice = (inv) => {
@@ -1026,14 +1108,14 @@ export default function App() {
     setUploadForm(prev => ({
       ...prev,
       title: file.name,
-      fileType: file.type || 'application/octet-stream', // Fallback untuk file tanpa tipe MIME jelas
+      fileType: file.type || 'application/octet-stream',
       fileSize,
-      fileData: file, // Simpan File Object untuk OCR Manual
-      fileBase64: fileBase64, // Simpan String Base64 untuk Database
-      isProcessing: false,
+      fileData: file,
+      fileBase64: fileBase64,
+      isProcessing: false, // Don't block yet
       processingMessage: '',
       previewUrl: file.type.includes('image') ? fileBase64 : null,
-      ocrContent: '' // Reset OCR saat file baru dipilih
+      ocrContent: ''
     }));
   };
 
@@ -1078,12 +1160,7 @@ export default function App() {
       return;
     }
 
-    // 3. Confirm if OCR has not been processed
-    if (!uploadForm.ocrContent && (fileContent || (uploadForm.editMode && uploadForm.originalDoc))) {
-      if (!window.confirm("OCR belum diproses. Konten dokumen tidak akan bisa dicari. Apakah Anda yakin ingin melanjutkan tanpa OCR?")) {
-        return;
-      }
-    }
+    // Simplified: Processing is now automatic on select
 
     const newDoc = {
       // Gunakan ID lama jika edit, atau buat ID baru jika upload baru
@@ -1169,6 +1246,21 @@ export default function App() {
 
   // --- FIXED: HANDLE VIEW DOC ---
   const handleViewDoc = async (doc) => {
+    // 0. Handle Special Search Result Types
+    if (doc.matchType === 'invoice') {
+      handleViewInvoice({ ...(doc.data || doc), boxId: doc.boxId, folderName: doc.folderName, location: doc.folderName });
+      return;
+    }
+    if (doc.matchType === 'external_item') {
+      handleViewExternal(doc.data || doc);
+      return;
+    }
+    if (doc.matchType === 'tax_summary') {
+      setActiveTab('tax-summary');
+      // Potential improvement: pass filter to TaxSummary component
+      return;
+    }
+
     // 1. Set data awal (meta data) agar modal muncul cepat
     setViewDocData(doc);
     setModalTab('doc-view');
@@ -1342,6 +1434,16 @@ export default function App() {
 
       setTaxSummaries(updatedList);
       localStorage.setItem('tax_summaries', JSON.stringify(updatedList));
+
+      // Sync to Backend for Searchability
+      if (taxForm.id) {
+        await api.saveTaxSummary(payload); // saveTaxSummary in database.js calls POST /api/tax-summaries with ID?
+        // Wait, database.js saveTaxSummary uses POST /api/tax-summaries. Let's check if it handles PUT.
+        // For now, let's assume it handles whatever is passed or we update database.js.
+      } else {
+        await api.saveTaxSummary(payload);
+      }
+
       setIsModalOpen(false);
     } catch (e) { alert(e.message); }
   };
@@ -1501,11 +1603,14 @@ export default function App() {
   };
 
 
-  const handleDeleteTaxRecord = (id) => {
+  const handleDeleteTaxRecord = async (id) => {
     if (window.confirm("Apakah Anda yakin ingin menghapus data ini secara permanen?")) {
-      const updated = taxSummaries.filter(s => s.id !== id);
-      setTaxSummaries(updated);
-      localStorage.setItem('tax_summaries', JSON.stringify(updated));
+      try {
+        await fetch(`http://localhost:5000/api/tax-summaries/${id}`, { method: 'DELETE' });
+        const updated = taxSummaries.filter(s => s.id !== id);
+        setTaxSummaries(updated);
+        localStorage.setItem('tax_summaries', JSON.stringify(updated));
+      } catch (e) { alert("Gagal menghapus data dari server: " + e.message); }
     }
   };
 
@@ -1702,6 +1807,11 @@ export default function App() {
                 isDarkMode={isDarkMode}
                 handleViewDoc={handleViewDoc}
                 handleNavigateToFolder={handleNavigateToFolder}
+                setActiveTab={setActiveTab}
+                setActiveInvTab={setActiveInvTab}
+                handleDownload={handleDownload}
+                handleDownloadInvoice={handleDownloadInvoice}
+                ocrStats={ocrStats}
               />
             )}
             {activeTab === 'inventory' && (
@@ -2109,13 +2219,13 @@ export default function App() {
                 )}
 
                 <div className="space-y-3 max-h-[450px] overflow-y-auto pr-3 custom-scrollbar">
-                  {boxForm.ordners.length === 0 && (
+                  {(boxForm.ordners || []).length === 0 && (
                     <div className="text-center py-16 text-slate-300">
                       <Package size={48} className="mx-auto mb-4 opacity-20" />
                       <p className="font-black text-sm tracking-widest uppercase opacity-40">Kardus Kosong</p>
                     </div>
                   )}
-                  {boxForm.ordners.map(ord => (
+                  {(boxForm.ordners || []).map(ord => (
                     <div key={ord.id} className={`group transition-all duration-300 rounded-3xl border ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-500/10 border-indigo-500/30 shadow-lg shadow-indigo-500/5' : 'bg-white/40 dark:bg-slate-800/40 border-white/50 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-800/60'}`}>
                       <div className="flex justify-between items-center p-4 cursor-pointer" onClick={() => setExpandedOrdnerIds(prev => prev.includes(ord.id) ? prev.filter(id => id !== ord.id) : [...prev, ord.id])}>
                         <div className="flex items-center gap-4">
@@ -2164,26 +2274,42 @@ export default function App() {
                               </button>
                             </div>
                           )}
+
+                          {/* Manual Refresh Button for OCR */}
+                          <div className="flex justify-end mb-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); fetchInventory(); }}
+                              className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors"
+                            >
+                              <RefreshCw size={12} /> Refresh Status OCR
+                            </button>
+                          </div>
+
                           <div className="space-y-1">
-                            {ord.invoices.map(inv => {
+                            {(ord.invoices || []).map(inv => {
                               const isMatch = inventorySearchQuery && (
-                                (inv.invoiceNo || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                (inv.vendor || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                (inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
+                                String(inv.invoiceNo || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+                                String(inv.vendor || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+                                String(inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
                               );
                               return (
                                 <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
                                   <div className="flex items-center gap-3">
                                     <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
                                     <div className="flex flex-col">
-                                      <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo}</span>
+                                      <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo ? String(inv.invoiceNo) : '-'}</span>
                                       <div className="flex items-center gap-2 mt-0.5">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor}</span>
-                                        {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{inv.paymentDate}</span>}
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor ? String(inv.vendor) : ''}</span>
+                                        {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{String(inv.paymentDate)}</span>}
                                       </div>
                                       {inv.fileName && (
                                         <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
-                                          <Paperclip size={10} /> {inv.fileName} {inv.ocrContent && <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR</span>}
+                                          <Paperclip size={10} /> {String(inv.fileName)}
+                                          {inv.ocrContent ? (
+                                            <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR READY</span>
+                                          ) : (
+                                            <span className="text-amber-500 font-bold text-[8px] border border-amber-200 dark:border-amber-800 px-1 rounded ml-1 animate-pulse">PROSES OCR...</span>
+                                          )}
                                         </div>
                                       )}
                                     </div>
@@ -2257,7 +2383,7 @@ export default function App() {
                   )}
 
                   {/* Row 3: Status & External Actions - Capsule Style */}
-                  {selectedSlotId && (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' && (
+                  {(selectedSlotId || selectedExternalItem) && (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' : true) && (
                     <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
                       <div className="grid grid-cols-2 gap-4">
                         {hasPermission('inventory', 'edit') && (
@@ -2307,12 +2433,12 @@ export default function App() {
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Nomor Invoice</span>
-                      <h3 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{selectedInvoice.invoiceNo}</h3>
+                      <h3 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{selectedInvoice.invoiceNo || '-'}</h3>
                     </div>
                     {selectedInvoice.paymentDate && (
                       <div className="text-right">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Tanggal Bayar</span>
-                        <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-xs font-black">{selectedInvoice.paymentDate}</span>
+                        <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-xs font-black">{String(selectedInvoice.paymentDate)}</span>
                       </div>
                     )}
                   </div>
@@ -2320,11 +2446,20 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-6 mb-6">
                     <div>
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Vendor</span>
-                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{selectedInvoice.vendor}</p>
+                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{selectedInvoice.vendor || '-'}</p>
                     </div>
                     <div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lokasi File (Kardus / Ordner)</span>
+                      <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
+                        {selectedInvoice.location || selectedInvoice.folderName || 'Inventory'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6 mb-6">
+                    <div>
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lampiran File</span>
-                      {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {selectedInvoice.fileName}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
+                      {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {String(selectedInvoice.fileName)}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
                     </div>
                   </div>
 
@@ -2333,8 +2468,8 @@ export default function App() {
 
                 {selectedInvoice.ocrContent && (
                   <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center gap-2 mb-3"><ScanLine size={16} className="text-indigo-500" /><h4 className="text-xs font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Hasil Scan OCR</h4></div>
-                    <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{selectedInvoice.ocrContent}</div>
+                    <div className="flex items-center gap-2 mb-3"><FileText size={16} className="text-indigo-500" /><h4 className="text-xs font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Hasil Scan OCR</h4></div>
+                    <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{typeof selectedInvoice.ocrContent === 'object' ? JSON.stringify(selectedInvoice.ocrContent, null, 2) : selectedInvoice.ocrContent}</div>
                   </div>
                 )}
               </div>

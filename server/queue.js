@@ -34,13 +34,14 @@ connection.on('connect', () => {
 export const ocrQueue = new Queue('OCR_QUEUE', { connection });
 
 // Helper to add jobs
-export const addOCRJob = async (docId, filePath, fileType, originalName) => {
-    console.log(`[Queue] Adding Job for DocID: ${docId}`);
+export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {
+    console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}`);
     return await ocrQueue.add('process-ocr', {
         docId,
         filePath,
         fileType,
-        originalName
+        originalName,
+        context // NEW: Metadata for worker (e.g. inventory slot/ordner/invoice IDs)
     }, {
         attempts: 3,
         backoff: {

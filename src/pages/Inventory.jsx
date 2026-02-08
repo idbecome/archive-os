@@ -10,31 +10,45 @@ export default function Inventory({
     onRestoreExternal, onViewExternal
 }) {
 
-    // Helper to check if a slot matches the search query
-    const isMatch = (slot) => {
+    // Unified match helper for both Internal Slot and External Item
+    const isMatch = (item) => {
         if (!inventorySearchQuery) return true;
         const q = inventorySearchQuery.toLowerCase();
 
-        // Check Slot ID
-        if (slot.id && slot.id.toString().includes(q)) return true;
+        // 1. Check ID-like fields (Slot ID or Box ID)
+        if (item.id && String(item.id).toLowerCase().includes(q)) return true;
+        if (item.boxId && String(item.boxId).toLowerCase().includes(q)) return true;
 
-        // Check Box ID
-        if (slot.boxData?.id?.toLowerCase().includes(q)) return true;
+        // 2. Check boxData (could be item.boxData directly or slot.boxData)
+        const data = item.boxData || item;
 
-        // Check Ordners & Invoices
-        if (slot.boxData?.ordners) {
-            return slot.boxData.ordners.some(ord => {
-                const noOrdner = (ord.noOrdner || '').toLowerCase();
-                if (noOrdner.includes(q)) return true;
+        // Safety check for data object
+        if (!data) return false;
+
+        if (data.id && String(data.id).toLowerCase().includes(q)) return true;
+        if (data.destination && String(data.destination).toLowerCase().includes(q)) return true;
+        if (data.sender && String(data.sender).toLowerCase().includes(q)) return true;
+
+        // 3. Check Ordners & Invoices
+        if (data.ordners && Array.isArray(data.ordners)) {
+            return data.ordners.some(ord => {
+                const noOrdner = String(ord.noOrdner || '').toLowerCase();
+                const period = String(ord.period || '').toLowerCase();
+                if (noOrdner.includes(q) || period.includes(q)) return true;
+
                 return ord.invoices?.some(inv =>
-                    (inv.invoiceNo || '').toLowerCase().includes(q) ||
-                    (inv.vendor || '').toLowerCase().includes(q) ||
-                    (inv.ocrContent || '').toLowerCase().includes(q)
+                    String(inv.invoiceNo || '').toLowerCase().includes(q) ||
+                    String(inv.vendor || '').toLowerCase().includes(q) ||
+                    String(inv.ocrContent || '').toLowerCase().includes(q)
                 );
             });
         }
         return false;
     };
+
+    // Calculate match counts for tabs
+    const internalMatchCount = inventory.filter(s => s.status !== 'EMPTY' && isMatch(s)).length;
+    const externalMatchCount = externalItems.filter(isMatch).length;
 
     return (
         <div className="animate-in fade-in zoom-in-95 duration-300">
@@ -76,12 +90,18 @@ export default function Inventory({
                                 className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all duration-300 ${activeInvTab === 'internal' ? 'bg-white dark:bg-slate-700 shadow-lg text-indigo-600 dark:text-white scale-105 ring-1 ring-black/5' : 'text-gray-500 hover:text-gray-700 dark:hover:text-slate-300 hover:bg-white/50'}`}
                             >
                                 <Grid3X3 size={18} /> Gudang
+                                {inventorySearchQuery && internalMatchCount > 0 && (
+                                    <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full animate-bounce">{internalMatchCount}</span>
+                                )}
                             </button>
                             <button
                                 onClick={() => setActiveInvTab('external')}
                                 className={`px-6 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all duration-300 ${activeInvTab === 'external' ? 'bg-white dark:bg-slate-700 shadow-lg text-indigo-600 dark:text-white scale-105 ring-1 ring-black/5' : 'text-gray-500 hover:text-gray-700 dark:hover:text-slate-300 hover:bg-white/50'}`}
                             >
                                 <Truck size={18} /> Indoarsip
+                                {inventorySearchQuery && externalMatchCount > 0 && (
+                                    <span className="bg-indigo-600 text-white text-[10px] px-1.5 py-0.5 rounded-full animate-bounce">{externalMatchCount}</span>
+                                )}
                             </button>
                         </div>
 
@@ -208,11 +228,7 @@ export default function Inventory({
                                             </td>
                                         </tr>
                                     ) : (
-                                        externalItems.filter(item =>
-                                            !inventorySearchQuery ||
-                                            item.boxId.toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                            item.destination.toLowerCase().includes(inventorySearchQuery.toLowerCase())
-                                        ).map(item => (
+                                        externalItems.filter(isMatch).map(item => (
                                             <tr key={item.id} className="hover:bg-white/40 dark:hover:bg-slate-800/40 transition-colors group border-b border-indigo-50 dark:border-slate-800/50">
                                                 <td className="px-6 py-4 font-bold text-slate-800 dark:text-white flex items-center gap-3">
                                                     <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">

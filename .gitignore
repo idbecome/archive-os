@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Uploads
+server/uploads/
+uploads/
+*.sqlite
+*.db

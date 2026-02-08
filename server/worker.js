@@ -10,6 +10,13 @@ import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import db from './db.js';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+
+import { pathToFileURL } from 'url';
+
+// Configure PDF.js worker
+const workerPath = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'legacy', 'build', 'pdf.worker.mjs');
+pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
 
 // Redis Connection
 const connection = new IORedis({
@@ -37,10 +44,107 @@ connection.on('connect', () => {
     lastWorkerError = '';
 });
 
+// Helper: Convert Raw PDF Image Data to PPM (Tesseract Compatible)
+function mkPPM(imgObj) {
+    const { width, height, data } = imgObj;
+    if (!width || !height || !data) return null;
+
+    // Determine channels
+    const size = width * height;
+    const len = data.length;
+    let channels = len / size;
+
+    // PDF.js often returns padded rows or specific formats, but for many scanned PDFs 
+    // it's often clean RGB (3) or RGBA (4) or Gray (1).
+    // Tesseract supports PPM (RGB) and PGM (Gray).
+
+    let header = "";
+    let body = Buffer.from(data);
+
+    if (channels === 1) {
+        // PGM (Gray)
+        header = `P5\n${width} ${height}\n255\n`;
+    } else if (channels === 3) {
+        // PPM (RGB)
+        header = `P6\n${width} ${height}\n255\n`;
+    } else if (channels === 4) {
+        // RGBA -> Convert to RGB (PPM) by dropping alpha
+        // This is expensive in JS but necessary without Canvas
+        header = `P6\n${width} ${height}\n255\n`;
+        const newData = Buffer.alloc(width * height * 3);
+        for (let i = 0; i < size; i++) {
+            newData[i * 3] = data[i * 4];     // R
+            newData[i * 3 + 1] = data[i * 4 + 1]; // G
+            newData[i * 3 + 2] = data[i * 4 + 2]; // B
+        }
+        body = newData;
+    } else {
+        console.warn(`[OCR-PDF] Unsupported channel count: ${channels} (Length: ${len}, Size: ${size})`);
+        return null; // Try to let Tesseract handle it? No, it failed.
+    }
+
+    return Buffer.concat([Buffer.from(header, 'ascii'), body]);
+}
+
+// Helper: Extract Images from PDF (for Scanned PDFs)
+async function extractImagesFromPDF(pdfBuffer, maxPages = Infinity, job = null) {
+    const images = [];
+    try {
+        const uint8Array = new Uint8Array(pdfBuffer);
+        const loadingTask = pdfjsLib.getDocument(uint8Array);
+        const pdfDocument = await loadingTask.promise;
+
+        const numPagesToProcess = maxPages === Infinity ? pdfDocument.numPages : Math.min(pdfDocument.numPages, maxPages);
+        console.log(`[OCR-PDF] Found ${pdfDocument.numPages} pages. Processing ALL ${numPagesToProcess} pages (Full Scan).`);
+
+        for (let i = 1; i <= numPagesToProcess; i++) {
+            if (job) {
+                const percentage = Math.round((i / numPagesToProcess) * 100);
+                await job.updateProgress(percentage);
+            }
+
+            try {
+                const page = await pdfDocument.getPage(i);
+                const ops = await page.getOperatorList();
+
+                for (let j = 0; j < ops.fnArray.length; j++) {
+                    const op = ops.fnArray[j];
+                    if (op === pdfjsLib.OPS.paintImageXObject) {
+                        const imgName = ops.argsArray[j][0];
+                        try {
+                            const imgObj = await page.objs.get(imgName);
+
+                            // Lower threshold to 50x50 to catch low-res scans
+                            if (imgObj && imgObj.data && imgObj.width > 50 && imgObj.height > 50) {
+                                const start = Date.now();
+                                const ppmBuffer = mkPPM(imgObj);
+                                if (ppmBuffer) {
+                                    images.push(ppmBuffer);
+                                    console.log(`[OCR-PDF] Extracted image ${imgName} (${imgObj.width}x${imgObj.height}) in ${Date.now() - start}ms`);
+                                }
+                            } else {
+                                console.log(`[OCR-PDF] Skipped small image: ${imgName} (${imgObj?.width}x${imgObj?.height})`);
+                            }
+                        } catch (e) { console.warn(`[OCR-PDF] Image extract error on page ${i}, image ${imgName}:`, e); }
+                    }
+                }
+            } catch (pageErr) {
+                console.warn(`[OCR-PDF] Page ${i} extraction failed (skipping):`, pageErr);
+            }
+        }
+    } catch (e) {
+        console.error("PDF Image Extraction Failed (Fatal):", e);
+    }
+    console.log(`[OCR-PDF] Total images optimized for OCR: ${images.length}`);
+    return images;
+}
+
 // Worker Processor
 const worker = new Worker('OCR_QUEUE', async (job) => {
-    const { docId, filePath, fileType, originalName } = job.data;
-    console.log(`[Worker] Processing Job ${job.id} for DocID: ${docId}`);
+    const { docId, filePath, fileType, originalName, context } = job.data;
+    const isInventory = context && context.type === 'inventory';
+
+    console.log(`[Worker] Processing Job ${job.id} for ${isInventory ? 'Inventory Invoice' : 'Document'}: ${docId}`);
 
     try {
         // 1. Validate File
@@ -48,12 +152,9 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
             throw new Error(`File not found: ${filePath}`);
         }
 
-        // 2. Update Status to PROCESSING (if not already)
-        // await db.updateDocument(docId, { status: 'processing' }); // Optional specific field
-
+        // 2. OCR Hybrid logic (Internal Text extraction + Tesseract fallback)
         let extractedText = "";
 
-        // 3. Extract Text based on Type
         if (fileType.startsWith('image/')) {
             const tess = await createWorker('eng+ind');
             const { data: { text } } = await tess.recognize(filePath);
@@ -63,7 +164,6 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
         else if (fileType === 'application/pdf') {
             const dataBuffer = fs.readFileSync(filePath);
 
-            // Detection for pdf-parse v2+ (Class) or v1 (Function)
             const PDFParser = typeof pdf === 'function'
                 ? pdf
                 : (pdf.PDFParse || (pdf.default && (pdf.default.PDFParse || (typeof pdf.default === 'function' ? pdf.default : null))) || pdf.default);
@@ -74,43 +174,127 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
             }
 
             try {
-                // Try as class constructor first (v2 API)
+                // Determine if PDFParser is a class or function
+                let data;
+
+                // Case 1: It's a Class (has prototype.constructor) or we previously caught a 'Class constructor' error
+                // We try to instantiate it.
                 if (PDFParser.prototype && PDFParser.prototype.constructor) {
-                    const parser = new PDFParser({ data: dataBuffer });
-                    const result = await parser.getText();
-                    extractedText = `[PDF]\n${result.text || ''}`;
-                    if (parser.destroy) await parser.destroy();
+                    try {
+                        // usage: new PDFParser(dataBuffer)
+                        const instance = new PDFParser(dataBuffer);
+                        // If instance is a promise (rare but possible in some libs), await it
+                        if (typeof instance.then === 'function') {
+                            data = await instance;
+                        } else if (typeof instance.text === 'string') {
+                            // Sync return?
+                            data = instance;
+                        } else {
+                            // Maybe it has a parse method? But pdf-parse usually returns a Promise when called as function.
+                            // If it's a class, let's assume it returns the data object directly or via promise.
+                            data = instance;
+                        }
+                    } catch (e) {
+                        // If 'new' fails, maybe it wasn't a class after all, or construction failed.
+                        // But if it failed with "not a constructor", we should have caught it.
+                        // If it failed with "Class constructor cannot be invoked without 'new'", we are doing 'new' here.
+                        console.warn("[Worker] Class instantiation failed, trying function call:", e.message);
+                        data = await PDFParser(dataBuffer);
+                    }
                 } else {
-                    // Fallback to function (v1 API)
-                    const data = await PDFParser(dataBuffer);
-                    extractedText = `[PDF]\n${data.text || ''}`;
+                    // Case 2: It's a Function
+                    data = await PDFParser(dataBuffer);
                 }
+
+                extractedText = (data && data.text ? data.text : '').trim();
+
+                // Detect Scanned PDF or Failed Text Extraction
+                if (extractedText.length < 50) {
+                    console.log('[Worker] Detected Low Text Content (<50 chars). Checking for Images or Complex Text...');
+
+                    try {
+                        // 1. Try Image Extraction (for Scans)
+                        const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
+
+                        if (images.length > 0) {
+                            console.log(`[Worker] Found ${images.length} images. OCR-ing images...`);
+                            extractedText += "\n\n[OCR SCANNED PDF RESULT]:\n";
+                            const tess = await createWorker('eng+ind');
+                            for (const imgBuffer of images) {
+                                const { data: { text } } = await tess.recognize(imgBuffer);
+                                extractedText += text + "\n";
+                            }
+                            await tess.terminate();
+
+                        } else {
+                            // 2. No Images found? Try PDF.js Text Extraction (Fallback for "Save as PDF" / Tables)
+                            console.log('[Worker] No images found. Attempting PDF.js Text Extraction...');
+                            try {
+                                const uint8Array = new Uint8Array(dataBuffer);
+                                const loadingTask = pdfjsLib.getDocument(uint8Array);
+                                const pdfDocument = await loadingTask.promise;
+                                let pdfJsText = "";
+
+                                for (let i = 1; i <= pdfDocument.numPages; i++) {
+                                    const page = await pdfDocument.getPage(i);
+                                    const tokenizedText = await page.getTextContent();
+                                    const pageText = tokenizedText.items.map(token => token.str).join(' ');
+                                    pdfJsText += pageText + "\n";
+                                }
+
+                                if (pdfJsText.trim().length > 10) {
+                                    extractedText = `[PDF-JS]\n${pdfJsText}`; // Use PDF.js text if better
+                                    console.log('[Worker] PDF.js extraction success.');
+                                } else if (extractedText.trim().length > 0) {
+                                    // 3. If both failed but we have SOME text from pdf-parse, keep it.
+                                    extractedText += "\n\n[INFO] Teks diekstrak terbatas.";
+                                } else {
+                                    // 4. Truly Empty
+                                    extractedText += "\n\n[INFO] Dokumen tampak kosong atau terproteksi. Tidak ada teks atau gambar yang dapat diekstrak.";
+                                }
+                            } catch (pdfJsErr) {
+                                console.error("[Worker] PDF.js Text Extraction Failed:", pdfJsErr);
+                                extractedText += "\n\n[ERROR] Gagal mengekstrak teks sekunder.";
+                            }
+                        }
+                    } catch (imgErr) {
+                        console.error("[Worker] Scanned PDF Fallback Failed:", imgErr);
+                        extractedText += "\n\n[ERROR] Gagal memproses scan.";
+                    }
+                }
+
+                extractedText = `[PDF]\n${extractedText}`;
+
             } catch (pdfErr) {
-                console.warn("[Worker] Preferred PDF parser failed, trying fallback...", pdfErr.message);
-                // Last ditch effort: if it was a class but failed, try it as a function
-                try {
-                    const data = await PDFParser(dataBuffer);
-                    extractedText = `[PDF]\n${data.text || ''}`;
-                } catch (fail) {
+                // If the initial attempt failed
+                if (pdfErr.message.includes("Class constructors cannot be invoked without 'new'")) {
+                    // Retry with 'new' if we haven't already
+                    try {
+                        const data = await new PDFParser(dataBuffer);
+                        extractedText = (data && data.text ? data.text : '').trim();
+                        extractedText = `[PDF]\n${extractedText}`;
+                    } catch (retryErr) {
+                        console.error("[Worker] PDF Retry with 'new' failed:", retryErr);
+                        throw new Error(`PDF Parsing failed: ${pdfErr.message}`);
+                    }
+                } else {
+                    console.error("[Worker] PDF Parsing failed:", pdfErr);
                     throw new Error(`PDF Parsing failed: ${pdfErr.message}`);
                 }
             }
         }
         else if (
             fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-            originalName.endsWith('.docx') ||
-            originalName.endsWith('.doc') ||
+            (originalName && (originalName.endsWith('.docx') || originalName.endsWith('.doc'))) ||
             fileType.includes('msword')
         ) {
-            // Mammoth is primarily for .docx, for legacy .doc it might fail but it's our best pure JS attempt
             const result = await mammoth.extractRawText({ path: filePath });
             extractedText = `[WORD]\n${result.value}`;
         }
         else if (
             fileType.includes('spreadsheet') ||
             fileType.includes('excel') ||
-            originalName.endsWith('.xlsx') ||
-            originalName.endsWith('.xls')
+            (originalName && (originalName.endsWith('.xlsx') || originalName.endsWith('.xls')))
         ) {
             const workbook = XLSX.readFile(filePath);
             let result = "";
@@ -121,73 +305,75 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
             });
             extractedText = `[EXCEL]\n${result}`;
         }
-        else if (
-            fileType.includes('presentation') ||
-            fileType.includes('powerpoint') ||
-            originalName.endsWith('.pptx')
-        ) {
-            try {
-                const data = await fs.readFile(filePath);
-                const zip = await JSZip.loadAsync(data);
-                let fullText = "";
-                let slideIndex = 1;
-
-                const slideFiles = Object.keys(zip.files).filter(name => name.startsWith('ppt/slides/slide') && name.endsWith('.xml'));
-                slideFiles.sort((a, b) => {
-                    const numA = parseInt(a.replace(/\D/g, ''));
-                    const numB = parseInt(b.replace(/\D/g, ''));
-                    return numA - numB;
-                });
-
-                for (const filename of slideFiles) {
-                    const content = await zip.file(filename).async('text');
-                    // Simple regex to extract content between <a:t> and </a:t>
-                    const matches = content.match(/<a:t>([^<]+)<\/a:t>/g);
-                    let slideText = "";
-                    if (matches) {
-                        slideText = matches.map(m => m.replace(/<a:t>|<\/a:t>/g, '')).join(' ');
-                    }
-                    fullText += `--- Slide ${slideIndex} ---\n${slideText}\n\n`;
-                    slideIndex++;
-                }
-                extractedText = `[POWERPOINT]\n${fullText}`;
-            } catch (pptxErr) {
-                console.error("PPTX Extraction Error:", pptxErr);
-                extractedText = `[POWERPOINT] Gagal ekstraksi: ${pptxErr.message}`;
-            }
-        }
         else {
             extractedText = "Format not supported for server-side extraction.";
         }
 
-        // 4. Update Database
-        // We need to fetch the current doc to merge or just update specific fields
-        // Assuming db.updateDocument handles merge or we pass what we want to update
+        // 3. Update Database
+        if (isInventory) {
+            // NEW: Update Inventory Slot (JSON manipulation)
+            // NEW: Update Inventory Slot (JSON manipulation) - Wrapped in Promise
+            const slotId = context.slotId;
+            const ordnerId = context.ordnerId;
+            const invoiceId = context.invoiceId;
 
-        // RE-FETCH to ensure we have latest state if needed, or just update
-        // We'll trust db.updateDocument to handle it.
-        // We also update the Vector if possible, but that might be separate.
+            await new Promise((resolve, reject) => {
+                db.get("SELECT box_data, boxData FROM inventory WHERE id = ?", [slotId], (err, row) => {
+                    if (err) return reject(new Error(`[Worker] Failed to fetch inventory ${slotId}: ${err.message}`));
+                    if (!row) return reject(new Error(`[Worker] Inventory ${slotId} not found`));
 
-        // For now, just update Text and Status
-        const updatePayload = {
-            ocrContent: extractedText,
-            // status: 'ready' // If we add a status field
-        };
+                    try {
+                        const raw = row.box_data || row.boxData;
+                        const box = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        let updated = false;
 
-        // We should check if db.updateDocument exists and works with partial updates
-        // server/db.js usually interacts with JSON file or SQLite
+                        if (box && box.ordners) {
+                            box.ordners.forEach(ord => {
+                                if (ord.id == ordnerId && ord.invoices) {
+                                    ord.invoices.forEach(inv => {
+                                        if (inv.id == invoiceId) {
+                                            inv.ocrContent = extractedText;
+                                            updated = true;
+                                        }
+                                    });
+                                }
+                            });
 
-        // Let's assume we can pass partial update.
-        // We might need to implement a specific method in db.js if it doesn't support it.
+                            if (updated) {
+                                db.run("UPDATE inventory SET box_data = ?, boxData = NULL WHERE id = ?",
+                                    [JSON.stringify(box), slotId],
+                                    (upErr) => {
+                                        if (upErr) reject(new Error(`[Worker] Failed to update inventory ${slotId} with OCR: ${upErr.message}`));
+                                        else {
+                                            console.log(`[Worker] Inventory OCR Completed & Saved: Slot ${slotId}, Invoice ${invoiceId}`);
+                                            resolve();
+                                        }
+                                    }
+                                );
+                            } else {
+                                console.warn(`[Worker] Invoice ${invoiceId} not found in Ordner ${ordnerId}`);
+                                resolve(); // Treat as success to avoid retry loops for logical errors
+                            }
+                        } else {
+                            resolve();
+                        }
+                    } catch (pe) {
+                        reject(new Error(`[Worker] JSON Parse error for inventory: ${pe.message}`));
+                    }
+                });
+            });
 
-        // Reading db to make sure we don't overwrite other fields blindly
-        const currentDoc = await db.getDocumentById(docId);
-        if (currentDoc) {
-            const newDoc = { ...currentDoc, ...updatePayload };
-            await db.updateDocument(docId, newDoc);
-            console.log(`[Worker] Job ${job.id} Completed. OCR updated.`);
         } else {
-            console.error(`[Worker] Document ${docId} not found in DB.`);
+            // Standard Document Update
+            const currentDoc = await db.getDocumentById(docId);
+            if (currentDoc) {
+                // Merge OCR and set status to 'done' (or just update content)
+                const newDoc = { ...currentDoc, ocrContent: extractedText, status: 'done' };
+                await db.updateDocument(docId, newDoc);
+                console.log(`[Worker] Document OCR Completed: ${docId}`);
+            } else {
+                console.error(`[Worker] Document ${docId} not found in DB.`);
+            }
         }
 
     } catch (err) {
@@ -195,7 +381,10 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
         throw err;
     }
 
-}, { connection });
+}, {
+    connection,
+    concurrency: 2 // Enable parallel processing
+});
 
 worker.on('completed', job => {
     console.log(`[Worker] Job ${job.id} has completed!`);

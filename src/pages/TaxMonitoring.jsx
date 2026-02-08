@@ -292,6 +292,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
                 if (newAuditFile) {
                     const folderId = await getOrCreateAuditFolder(newAuditTitle);
+
+                    let ocrText = ''; // OCR will be handled by background worker
+
                     const base64 = await new Promise((resolve, reject) => {
                         const reader = new FileReader();
                         reader.onload = (e) => resolve(e.target.result);
@@ -308,11 +311,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                         auditId: currentAuditId,
                         stepIndex: 0,
                         fileData: base64,
-                        file_data: base64, // RESTORED: Pastikan data terkirim ke backend
-                        filedata: base64, // RESTORED: Backend mungkin menggunakan lowercase
+                        file_data: base64,
+                        filedata: base64,
                         folderId: folderId,
                         department: 'Tax',
-                        owner: currentUser?.name || 'Admin'
+                        owner: currentUser?.name || 'Admin',
+                        ocrContent: '' // Will be handled by background worker
                     };
                     await api.createDocument(doc);
                 }
@@ -437,6 +441,16 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         try {
             const folderId = await getOrCreateAuditFolder(selectedAudit.title);
 
+            // Perform OCR Client-Side for immediate availability
+            let ocrText = '';
+            try {
+                if (uploadForm.file) {
+                    ocrText = await performAdvancedOCR(uploadForm.file, (msg) => setUploadForm(prev => ({ ...prev, processingMessage: msg })));
+                }
+            } catch (ocrErr) {
+                console.warn("Client-side OCR failed, continuing upload...", ocrErr);
+            }
+
             // Backend will handle OCR via Queue
             const newDoc = {
                 id: String(Date.now()),
@@ -452,7 +466,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 folderId: folderId,
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team',
-                ocrContent: '' // Server will fill this
+                ocrContent: ocrText // Sent to server immediately
             };
 
             await api.createDocument(newDoc);
@@ -999,7 +1013,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 truncate">
                                             {newAuditFile ? newAuditFile.name : 'Pilih File...'}
                                         </span>
-                                        <input type="file" className="hidden" onChange={e => setNewAuditFile(e.target.files[0])} />
+                                        <input type="file" className="hidden" onChange={e => setNewAuditFile(e.target.files[0])} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
                                     </label>
                                 </div>
                             )}

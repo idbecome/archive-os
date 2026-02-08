@@ -6,7 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
-import { addOCRJob } from './queue.js'; // NEW
+import { addOCRJob, ocrQueue } from './queue.js'; // NEW
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -60,10 +60,6 @@ function saveBase64ToFile(base64Data, id, extension = 'bin') {
     try {
         const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
-            // Not a base64 string, maybe already a path or raw content?
-            // If it doesn't look like base64, assume it's legacy content or invalid.
-            // For safety, we can return null or try to write raw.
-            // Let's assume valid base64 is sent from frontend.
             return null;
         }
 
@@ -80,6 +76,212 @@ function saveBase64ToFile(base64Data, id, extension = 'bin') {
     }
 }
 
+// --- UNIVERSAL SEARCH API (AI SEMANTIC) ---
+app.get('/api/search', (req, res) => {
+    const query = (req.query.q || '').toLowerCase();
+    if (!query) return res.json([]);
+
+    const results = [];
+
+    // 1. Search Documents
+    const docPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM documents`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = rows.filter(doc => {
+                const title = (doc.title || '').toLowerCase();
+                const ocr = (doc.ocrContent || '').toLowerCase();
+                return title.includes(query) || ocr.includes(query);
+            }).map(doc => {
+                // Calculate Relevance Score
+                let score = 0;
+                if (doc.title.toLowerCase().includes(query)) score += 0.5;
+                if (doc.ocrContent && doc.ocrContent.toLowerCase().includes(query)) score += 0.3;
+                // Exact match bonus
+                if (doc.title.toLowerCase() === query) score += 0.5;
+
+                return {
+                    id: doc.id,
+                    title: doc.title,
+                    type: doc.type || 'document',
+                    size: doc.size,
+                    uploadDate: doc.uploadDate,
+                    folderId: doc.folderId,
+                    folderName: 'Digital Archive', // Todo: Join foldernames if needed
+                    score: score,
+                    matchType: 'document'
+                };
+            });
+            resolve(matches);
+        });
+    });
+
+    // 2. Search Inventory (Invoices inside Boxes)
+    const invPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM inventory`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = [];
+            rows.forEach(slot => {
+                const rawData = slot.box_data || slot.boxData;
+                if (!rawData) return;
+                try {
+                    const box = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+                    if (box.ordners) {
+                        box.ordners.forEach(ord => {
+                            if (ord.invoices) {
+                                ord.invoices.forEach(inv => {
+                                    const invNo = (inv.invoiceNo || '').toLowerCase();
+                                    const vendor = (inv.vendor || '').toLowerCase();
+                                    const ocr = (typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || '')).toLowerCase();
+
+                                    if (invNo.includes(query) || vendor.includes(query) || ocr.includes(query)) {
+                                        let score = 0;
+                                        if (invNo.includes(query)) score += 0.5;
+                                        if (vendor.includes(query)) score += 0.4;
+                                        if (ocr.includes(query)) score += 0.3;
+
+                                        matches.push({
+                                            id: `INV-${inv.id}`,
+                                            title: `Invoice: ${inv.invoiceNo} (${inv.vendor})`,
+                                            type: inv.file && inv.file.match(/image\//) ? 'image/jpeg' : 'application/pdf',
+                                            size: inv.fileName || 'Invoice',
+                                            uploadDate: inv.paymentDate || new Date().toISOString(),
+                                            folderId: 'INVENTORY', // Special flag for frontend
+                                            folderName: `Box ${box.boxId} / Ordner ${ord.noOrdner}`,
+                                            score: score,
+                                            matchType: 'invoice',
+                                            data: inv, // Pass full object for viewing
+                                            boxId: box.boxId,
+                                            slotId: slot.id,
+                                            ocrContent: typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || ''), // Include OCR for display
+                                            url: inv.file // Ensure URL is passed for download/view
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // Ignore parse errors
+                }
+            });
+            resolve(matches);
+        });
+    });
+
+    // 3. Search External Items (Indoarsip)
+    const extPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM external_items`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = [];
+            rows.forEach(item => {
+                const boxId = (item.boxId || '').toLowerCase();
+                const dest = (item.destination || '').toLowerCase();
+                const sender = (item.sender || '').toLowerCase();
+
+                let score = 0;
+                let found = false;
+
+                if (boxId.includes(query)) { score += 0.6; found = true; }
+                if (dest.includes(query)) { score += 0.4; found = true; }
+                if (sender.includes(query)) { score += 0.4; found = true; }
+
+                // Nested search in boxData (if exists)
+                let boxDataFound = false;
+                try {
+                    const data = JSON.parse(item.boxData || '{}');
+                    if (data.ordners) {
+                        data.ordners.forEach(ord => {
+                            if (String(ord.noOrdner || '').toLowerCase().includes(query)) boxDataFound = true;
+                            if (ord.invoices) {
+                                ord.invoices.forEach(inv => {
+                                    if (String(inv.invoiceNo || '').toLowerCase().includes(query)) boxDataFound = true;
+                                    if (String(inv.vendor || '').toLowerCase().includes(query)) boxDataFound = true;
+                                });
+                            }
+                        });
+                    }
+                } catch (e) { }
+
+                if (boxDataFound) { score += 0.3; found = true; }
+
+                if (found) {
+                    matches.push({
+                        id: `EXT-${item.id}`,
+                        title: `Box Eksternal: ${item.boxId}`,
+                        type: 'external',
+                        size: item.destination,
+                        uploadDate: item.sentDate,
+                        folderId: 'INVENTORY_EXT',
+                        folderName: '📦 Box Eksternal (Indoarsip)',
+                        score: score,
+                        matchType: 'external_item',
+                        data: item
+                    });
+                }
+            });
+            resolve(matches);
+        });
+    });
+
+    // 4. Search Tax Summaries
+    const taxSumPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM tax_summaries`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = [];
+            rows.forEach(record => {
+                const month = (record.month || '').toLowerCase();
+                const year = String(record.year || '').toLowerCase();
+
+                let score = 0;
+                let found = false;
+
+                if (month.includes(query)) { score += 0.5; found = true; }
+                if (year.includes(query)) { score += 0.5; found = true; }
+
+                // Check specific values if query is a number
+                if (!isNaN(query) && query.length > 3) {
+                    if (String(record.pph23).includes(query)) { score += 0.4; found = true; }
+                    if (String(record.pph42).includes(query)) { score += 0.4; found = true; }
+                }
+
+                if (found) {
+                    matches.push({
+                        id: `TAXSUM-${record.id}`,
+                        title: `Ringkasan Pajak ${record.month} ${record.year}`,
+                        type: 'tax_summary',
+                        size: `PPH 23: ${record.pph23}`,
+                        uploadDate: new Date().toISOString(),
+                        folderId: 'TAX_SUMMARY',
+                        folderName: '📊 Tax Compliance',
+                        score: score,
+                        matchType: 'tax_summary',
+                        data: record
+                    });
+                }
+            });
+            resolve(matches);
+        });
+    });
+
+    Promise.all([docPromise, invPromise, extPromise, taxSumPromise]).then(([docs, invs, exts, taxSums]) => {
+        // Merge and Sort by Score
+        const allResults = [...docs, ...invs, ...exts, ...taxSums].sort((a, b) => b.score - a.score);
+        res.json(allResults.slice(0, 50)); // Limit to top 50
+    }).catch(err => {
+        console.error("Search Error:", err);
+        res.status(500).json({ error: "Search failed" });
+    });
+});
+
+
 // Helper: Process Inventory Object to Extract Files
 function processInventoryFiles(dataObj, contextId) {
     if (!dataObj || !dataObj.ordners) return dataObj;
@@ -94,6 +296,45 @@ function processInventoryFiles(dataObj, contextId) {
                     if (savedUrl) {
                         inv.file = savedUrl;
                         console.log(`Inventory File Saved to Disk: ${savedUrl}`);
+
+                        // Queue OCR for this unique invoice
+                        const absolutePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+                        addOCRJob(contextId, absolutePath, inv.fileType || 'application/pdf', inv.fileName, {
+                            type: 'inventory',
+                            slotId: contextId,
+                            ordnerId: ord.id,
+                            invoiceId: inv.id
+                        }).catch(e => console.error("Inventory OCR Queue Error:", e));
+                    }
+                } else if (inv.file && (inv.file.startsWith('/uploads/') || inv.file.startsWith('http')) && (!inv.ocrContent || inv.ocrContent.length < 5)) {
+                    // Extract relative path if it's a full URL
+                    let relativePath = inv.file;
+                    if (inv.file.startsWith('http')) {
+                        try {
+                            const urlObj = new URL(inv.file);
+                            relativePath = urlObj.pathname;
+                        } catch (e) { relativePath = inv.file; }
+                    }
+
+                    // Auto-detect fileType from extension if missing
+                    let type = inv.fileType;
+                    if (!type) {
+                        const ext = path.extname(inv.fileName || relativePath).toLowerCase();
+                        if (['.jpg', '.jpeg', '.png', '.bmp', '.webp'].includes(ext)) type = 'image/jpeg';
+                        else if (['.pdf'].includes(ext)) type = 'application/pdf';
+                        else if (['.docx', '.doc'].includes(ext)) type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+                        else if (['.xlsx', '.xls'].includes(ext)) type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                    }
+
+                    // Only queue if we have a valid path starting with /uploads/
+                    if (relativePath.startsWith('/uploads/')) {
+                        const absolutePath = path.join(UPLOADS_DIR, path.basename(relativePath));
+                        addOCRJob(contextId, absolutePath, type || 'application/pdf', inv.fileName, {
+                            type: 'inventory',
+                            slotId: contextId,
+                            ordnerId: ord.id,
+                            invoiceId: inv.id
+                        }).catch(e => console.error("Inventory OCR Queue Error (Retry):", e));
                     }
                 }
             });
@@ -279,6 +520,29 @@ app.delete('/api/roles/:id', (req, res) => {
     });
 });
 
+// --- OCR STATUS API ---
+app.get('/api/ocr/status', async (req, res) => {
+    try {
+        const counts = await ocrQueue.getJobCounts('active', 'waiting', 'completed', 'failed');
+        const activeJobs = await ocrQueue.getJobs(['active'], 0, 10, true); // Get first 10 active jobs
+
+        const activeDetails = activeJobs.map(job => ({
+            id: job.id,
+            filename: job.data.originalName || 'Unknown File',
+            progress: job.progress || 0,
+            type: job.data.context?.type === 'inventory' ? 'Inventory' : 'Document'
+        }));
+
+        res.json({
+            counts,
+            activeJobs: activeDetails
+        });
+    } catch (error) {
+        console.error("OCR Status Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 // --- INVENTORY ---
 app.get('/api/inventory', (req, res) => {
     db.all("SELECT * FROM inventory", [], (err, rows) => {
@@ -392,6 +656,7 @@ app.get('/api/inventory/external', (req, res) => {
             return {
                 ...r,
                 boxData,
+                box_data: boxData, // Add alias for consistency with new schema
                 history
             };
         }));
@@ -513,7 +778,7 @@ app.delete('/api/folders/:id', (req, res) => {
 app.get('/api/documents', (req, res) => {
     const { auditId, stepIndex, folderId } = req.query;
     // OPTIMIZATION: Exclude fileData (LONGTEXT) from list view for performance
-    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex";
+    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, status";
     let sql = `SELECT ${columns} FROM documents`;
     let params = [];
     let whereClauses = [];
@@ -651,10 +916,13 @@ app.post('/api/documents', async (req, res) => {
         absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
     }
 
-    // 2. Insert into DB (Status: PROCESSING)
-    // We skip OCR and Vector generation here.
+    // 2. Insert into DB (Status: PROCESSING if no OCR provided, otherwise DONE?)
+    // If client provides OCR, we use it.
+    const initialOcr = req.body.ocrContent || '';
+    const status = initialOcr ? 'done' : 'processing';
+
     db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, '', auditId, stepIndex, finalFileData, 'processing'],
+        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, finalFileData, status],
         async (err) => {
             if (err) {
                 console.error("DB INSERT ERROR:", err.message);
@@ -673,10 +941,10 @@ app.post('/api/documents', async (req, res) => {
 
             await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
 
-            // Response with 'processing' status
+            // Response with actual OCR content if provided, status: processing because embedding is async
             res.json({
                 id, title, type, size, uploadDate, url: fileUrl, folderId, department, owner,
-                ocrContent: '', auditId, stepIndex, status: 'processing'
+                ocrContent: initialOcr, auditId, stepIndex, status: 'processing'
             });
         }
     );
@@ -733,10 +1001,17 @@ app.put('/api/documents/:id', (req, res) => {
             const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
             const finalFileData = newSavedUrl ? null : content;
 
-            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
-                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), req.params.id],
+            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1, status = ? WHERE id = ?",
+                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), req.params.id, ocrContent ? 'done' : 'processing'],
                 async (err) => {
                     if (err) return res.status(500).json({ error: err.message });
+
+                    // Add Job for revision
+                    if (newSavedUrl) {
+                        const absolutePath = path.join(UPLOADS_DIR, path.basename(newSavedUrl));
+                        addOCRJob(req.params.id, absolutePath, req.body.type || 'application/octet-stream', title);
+                    }
+
                     await systemLog(null, "Update/Version", `Update file & save version: "${title}"`);
                     res.json({ success: true });
                 }

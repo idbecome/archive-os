@@ -103,11 +103,11 @@ async function extractFromPDF(file, onProgress) {
         const textContent = await page.getTextContent();
         let pageText = textContent.items.map(item => item.str).join(' ');
 
-        // HYBRID MODE: Check if page is likely Scanned (little text)
-        if (pageText.trim().length < 50) {
-            onProgress(`Halaman ${i}: Teks sedikit, mencoba OCR scan...`, Math.round((i / pdf.numPages) * 100));
+        // HYBRID MODE: Check if page is likely Scanned (very little text)
+        if (pageText.trim().length < 10) {
+            onProgress(`Halaman ${i}: Teks sangat sedikit, mencoba OCR scan...`, Math.round((i / pdf.numPages) * 100));
             try {
-                const viewport = page.getViewport({ scale: 2.0 });
+                const viewport = page.getViewport({ scale: 2.5 });
                 const canvas = document.createElement('canvas');
                 const context = canvas.getContext('2d');
                 canvas.height = viewport.height;
