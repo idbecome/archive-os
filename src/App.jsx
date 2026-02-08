@@ -71,6 +71,7 @@ import TaxMonitoring from './pages/TaxMonitoring';
 import TaxSummary from './pages/TaxSummary';
 import TaxCalculation from './pages/TaxCalculation';
 import MasterData from './pages/MasterData';
+import Profile from './pages/Profile';
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
 const API_URL = 'http://localhost:5000/api';
@@ -405,6 +406,13 @@ export default function App() {
     setCurrentUser(null);
     localStorage.removeItem('archive_user');
     addLog(currentUser?.name, 'Logout', 'User logged out');
+  };
+
+  const handleUpdateProfile = (updatedUser) => {
+    setCurrentUser(updatedUser);
+    localStorage.setItem('archive_user', JSON.stringify(updatedUser));
+    // Update users list if needed
+    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
   };
 
   // --- WAREHOUSE HANDLERS (API INTEGRATED) ---
@@ -1922,6 +1930,12 @@ export default function App() {
                 setRoles={setRoles}
                 setDepartments={setDepartments}
                 hasPermission={hasPermission}
+              />
+            )}
+            {activeTab === 'profile' && (
+              <Profile
+                currentUser={currentUser}
+                onUpdateProfile={handleUpdateProfile}
               />
             )}
           </div>

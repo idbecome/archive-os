@@ -413,6 +413,48 @@ app.put('/api/users/:id', (req, res) => {
     });
 });
 
+app.put('/api/users/profile/:id', (req, res) => {
+    const { name, currentPassword, newPassword } = req.body;
+    const userId = req.params.id;
+
+    db.get("SELECT * FROM users WHERE id = ?", [userId], (err, user) => {
+        if (err || !user) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        // If trying to update password, verify current password first
+        if (newPassword) {
+            if (user.password !== currentPassword) {
+                return res.status(400).json({ success: false, error: 'Password saat ini salah' });
+            }
+        }
+
+        const updatedName = name || user.name;
+        const updatedPassword = newPassword || user.password;
+
+        db.run("UPDATE users SET name = ?, password = ? WHERE id = ?",
+            [updatedName, updatedPassword, userId],
+            async function (err) {
+                if (err) return res.status(500).json({ success: false, error: err.message });
+
+                const oldValues = { name: user.name, password: '***' };
+                const newValues = { name: updatedName, password: newPassword ? '***' : '***' };
+
+                await systemLog(user.name, "Update Profile", `User ${user.username} updated their profile`, JSON.stringify(oldValues), JSON.stringify(newValues));
+
+                res.json({
+                    success: true,
+                    user: {
+                        ...user,
+                        name: updatedName,
+                        password: updatedPassword
+                    }
+                });
+            }
+        );
+    });
+});
+
 app.delete('/api/users/:id', (req, res) => {
     db.run("DELETE FROM users WHERE id = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json({ error: err.message });
