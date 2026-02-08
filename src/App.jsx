@@ -1933,7 +1933,7 @@ export default function App() {
                   className={`group relative flex flex-col items-center justify-center border-dashed rounded-2xl p-10 text-center transition-all duration-300 cursor-pointer ${uploadForm.fileData ? 'border-2 border-indigo-500 bg-indigo-50/30 dark:bg-indigo-900/10' : 'border border-slate-200 dark:border-slate-700 hover:border-indigo-300 hover:bg-slate-50/50 dark:hover:bg-slate-800/30'}`}
                   onClick={() => fileInputRef.current.click()}
                 >
-                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
 
                   <div className="mb-4 p-4 rounded-full bg-slate-50 dark:bg-slate-800 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition-colors duration-300">
                     <UploadCloud className="text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors duration-300" size={32} />
@@ -1944,7 +1944,7 @@ export default function App() {
                   </p>
                   {!uploadForm.title && (
                     <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-medium uppercase tracking-wider">
-                      PDF atau Gambar (Max 30MB)
+                      Semua Jenis File (PDF, Gambar, Office) - Max 30MB
                     </p>
                   )}
                 </div>
@@ -2153,7 +2153,7 @@ export default function App() {
 
                               {/* Attachment Button */}
                               <div className="relative">
-                                <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf" />
+                                <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
                                 <button onClick={() => invoiceFileInputRef.current.click()} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${newInvoice.file ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}`} title={newInvoice.fileName || "Lampirkan File (OCR Auto)"}>
                                   {newInvoice.isProcessing ? <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip size={14} />}
                                 </button>

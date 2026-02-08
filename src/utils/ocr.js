@@ -23,8 +23,11 @@ export const performAdvancedOCR = async (file, onProgress = (msg) => { }) => {
     console.log(`Starting Advanced OCR for: ${name} (${type})`);
 
     try {
-        // 1. IMAGES (JPG, PNG, BMP, etc.)
-        if (type.startsWith('image/')) {
+        // 1. IMAGES (JPG, JPEG, PNG, BMP, TIFF, WEBP, etc.)
+        if (type.startsWith('image/') ||
+            name.endsWith('.jpg') || name.endsWith('.jpeg') ||
+            name.endsWith('.png') || name.endsWith('.bmp') ||
+            name.endsWith('.tiff') || name.endsWith('.webp')) {
             return await extractFromImage(file, onProgress);
         }
 

@@ -39,6 +39,39 @@ const db = {
     },
     close: () => {
         pool.end();
+    },
+    // Helper methods for Worker (Promise-based)
+    getDocumentById: (id) => {
+        return new Promise((resolve, reject) => {
+            pool.query("SELECT * FROM documents WHERE id = ?", [id], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows ? rows[0] : null);
+            });
+        });
+    },
+    updateDocument: (id, data) => {
+        return new Promise((resolve, reject) => {
+            // Filter out fields that are not columns or should not be updated
+            // For simplicity, we'll update fields that match known columns roughly
+            // or just use the keys from data.
+            // ID should not be updated.
+            const keys = Object.keys(data).filter(k => k !== 'id');
+            if (keys.length === 0) return resolve();
+
+            const setClause = keys.map(k => `${k} = ?`).join(', ');
+            const values = keys.map(k => {
+                const val = data[k];
+                if (typeof val === 'object' && val !== null) return JSON.stringify(val);
+                return val;
+            });
+            values.push(id);
+
+            const sql = `UPDATE documents SET ${setClause} WHERE id = ?`;
+            pool.query(sql, values, (err, result) => {
+                if (err) reject(err);
+                else resolve(result);
+            });
+        });
     }
 };
 
