@@ -561,7 +561,7 @@ export default function TaxCalculation() {
                                 <tr>
                                     <th className="px-4 py-3">Tanggal</th>
                                     <th className="px-4 py-3">Wajib Pajak</th>
-                                    <th className="px-4 py-3">Jenis Pajak</th>
+                                    <th className="px-4 py-3 whitespace-nowrap">Jenis Pajak</th>
                                     <th className="px-4 py-3 text-right">Tarif</th>
                                     <th className="px-4 py-3">Objek Pajak</th>
                                     <th className="px-4 py-3 text-center">Aksi</th>
@@ -584,7 +584,7 @@ export default function TaxCalculation() {
                                                 <div className="font-medium text-gray-900 dark:text-gray-200">{item.name || '-'}</div>
                                                 <div className="text-xs text-gray-500">{item.id_type}: {item.identity_number}</div>
                                             </td>
-                                            <td className="px-4 py-3">
+                                            <td className="px-4 py-3 whitespace-nowrap">
                                                 <span className="px-2 py-1 rounded bg-indigo-50 text-indigo-600 text-xs font-medium">
                                                     PPh {item.tax_type}
                                                 </span>

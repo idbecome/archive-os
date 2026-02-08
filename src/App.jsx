@@ -99,7 +99,7 @@ export default function App() {
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  const [activeTab, setActiveTab] = useState('inventory');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedSlotId, setSelectedSlotId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState('details');
@@ -1823,6 +1823,12 @@ export default function App() {
                 handleDownload={handleDownload}
                 handleDownloadInvoice={handleDownloadInvoice}
                 ocrStats={ocrStats}
+                taxSummaries={taxSummaries}
+                taxAudits={taxAudits}
+                users={users}
+                departments={departments}
+                externalItems={externalItems}
+                folders={folders}
               />
             )}
             {activeTab === 'inventory' && (

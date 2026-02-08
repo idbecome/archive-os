@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2 } from 'lucide-react';
+import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
 
 export default function Dashboard({
@@ -15,7 +15,13 @@ export default function Dashboard({
     setActiveInvTab,
     handleDownload,
     handleDownloadInvoice,
-    ocrStats = { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] }
+    ocrStats = { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] },
+    taxSummaries = [],
+    taxAudits = [],
+    users = [],
+    departments = [],
+    externalItems = [],
+    folders = []
 }) {
     // Defensive Defaults
     const stats = propStats || { occupancy: 0, stored: 0, borrowed: 0, audit: 0, empty: 0 };
@@ -283,27 +289,58 @@ export default function Dashboard({
                 )}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <SummaryCard
-                    title="Kapasitas Rak"
+                    title="Gudang Internal"
                     value={`${(stats?.occupancy || 0).toFixed(0)}%`}
-                    subtext={`${stats?.empty || 0} Slot Kosong`}
+                    subtext={`${stats?.empty || 0} Slot Tersedia`}
                     icon={Grid3X3}
                     colorClass="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400"
                 />
                 <SummaryCard
-                    title="Arsip Digital"
+                    title="Gudang Eksternal"
+                    value={externalItems?.length || 0}
+                    subtext="Box di Indoarsip"
+                    icon={Truck}
+                    colorClass="bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400"
+                />
+                <SummaryCard
+                    title="Audit Pajak"
+                    value={(taxAudits?.filter(a => a.status !== 'Selesai') || []).length}
+                    subtext={`${taxAudits?.length || 0} Total Pemeriksaan`}
+                    icon={FileSearch}
+                    colorClass="bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400"
+                />
+                <SummaryCard
+                    title="Kepatuhan SPT"
+                    value={taxSummaries?.length || 0}
+                    subtext="Laporan Tersimpan"
+                    icon={FileBarChart}
+                    colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
+                />
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <SummaryCard
+                    title="Dokumen Digital"
                     value={docList.length}
-                    subtext={`${docStats?.totalSizeMB || '0'} MB Total Data`}
+                    subtext={`${docStats?.totalSizeMB || '0'} MB Data`}
                     icon={ScanLine}
                     colorClass="bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
                 />
                 <SummaryCard
-                    title="Aktivitas"
-                    value={logs.length}
-                    subtext="Total Log Sistem"
-                    icon={History}
-                    colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
+                    title="Struktur Folder"
+                    value={folders?.length || 0}
+                    subtext="Folder Direktori"
+                    icon={FolderOpen}
+                    colorClass="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400"
+                />
+                <SummaryCard
+                    title="Pengguna Sistem"
+                    value={users?.length || 0}
+                    subtext={`${departments?.length || 0} Departemen`}
+                    icon={Users}
+                    colorClass="bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
                 />
             </div>
 
@@ -347,9 +384,13 @@ export default function Dashboard({
                     </div>
                 </Card>
             </div>
-            <Card className="max-h-[300px] overflow-y-auto">
-                <h3 className="font-bold mb-4 sticky top-0 bg-white dark:bg-slate-900/0 backdrop-blur-sm z-10">Log Aktivitas (Audit Trail)</h3>
-                <div className="space-y-3">
+            <Card className="max-h-[400px] overflow-y-auto relative p-0">
+                <div className="sticky top-0 bg-white dark:bg-slate-900 z-10 p-6 pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                        <History size={20} className="text-purple-500" /> Log Aktivitas (Audit Trail)
+                    </h3>
+                </div>
+                <div className="p-6 pt-2 space-y-3">
                     {logs.map(log => (
                         <div key={log.id} className="border-b border-slate-100 dark:border-slate-800 pb-2">
                             <div
