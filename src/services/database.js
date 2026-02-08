@@ -57,11 +57,14 @@ export const db = {
         try {
             const response = await fetch(`${API_URL}/documents`);
             const data = await response.json();
-            return data.map(doc => ({
-                ...doc,
-                fileData: doc.fileData || doc.file_data || doc.filedata,
-                versionsHistory: doc.versions_history || []
-            }));
+            return data.map(doc => {
+                const rawVersions = doc.versionsHistory || doc.versions_history;
+                return {
+                    ...doc,
+                    fileData: doc.fileData || doc.file_data || doc.filedata,
+                    versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
+                };
+            });
         } catch { return []; }
     },
 
@@ -71,11 +74,14 @@ export const db = {
             const response = await fetch(`${API_URL}/documents?${query}`);
             if (!response.ok) throw new Error('Gagal mengambil dokumen');
             const data = await response.json();
-            return data.map(doc => ({
-                ...doc,
-                fileData: doc.fileData || doc.file_data || doc.filedata,
-                versionsHistory: doc.versions_history || []
-            }));
+            return data.map(doc => {
+                const rawVersions = doc.versionsHistory || doc.versions_history;
+                return {
+                    ...doc,
+                    fileData: doc.fileData || doc.file_data || doc.filedata,
+                    versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
+                };
+            });
         } catch (e) {
             console.error("DB Error (Documents):", e);
             return [];
@@ -88,9 +94,11 @@ export const db = {
             const response = await fetch(`${API_URL}/documents/${id}`);
             if (!response.ok) throw new Error('Gagal mengambil detail dokumen');
             const doc = await response.json();
+            const rawVersions = doc.versionsHistory || doc.versions_history;
             return {
                 ...doc,
-                fileData: doc.fileData || doc.file_data || doc.filedata
+                fileData: doc.fileData || doc.file_data || doc.filedata,
+                versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
             };
         } catch (e) { console.error(e); return null; }
     },

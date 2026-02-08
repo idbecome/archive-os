@@ -933,63 +933,140 @@ app.post('/api/documents', async (req, res) => {
     // Support multiple casing for fileData
     const content = fileData || file_data || filedata;
 
-    let fileUrl = url;
-    let savedPath = null;
-    let absoluteFilePath = null;
-    let finalFileData = null;
+    // --- AUTOMATIC REVISION CHECK ---
+    // Check if a document with same name exists in the same folder
+    const normalizedFolderId = (folderId === "null" || folderId === "") ? null : folderId;
+    const checkSql = "SELECT * FROM documents WHERE title = ? AND (" + (normalizedFolderId ? "folderId = ?" : "folderId IS NULL") + ")";
+    const checkParams = normalizedFolderId ? [title, normalizedFolderId] : [title];
 
-    // 1. Save File (Base64 -> Disk)
-    if (content) {
-        // If content is Base64, save to disk
-        const ext = title.split('.').pop() || 'bin';
-        const savedUrl = saveBase64ToFile(content, id, ext);
-
-        if (savedUrl) {
-            fileUrl = savedUrl; // /uploads/filename
-            savedPath = savedUrl;
-            absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
-            finalFileData = null; // Don't save base64 to DB if on disk
-        } else {
-            // Fallback: If save failed or not base64, keep in DB (Legacy)
-            finalFileData = content;
+    db.get(checkSql, checkParams, async (err, existingDoc) => {
+        if (err) {
+            console.error("Duplicate check error:", err);
+            return res.status(500).json({ error: "Check duplicate failed" });
         }
-    } else if (url && url.startsWith('/uploads/')) {
-        // Already uploaded via /api/upload
-        absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
-    }
 
-    // 2. Insert into DB (Status: PROCESSING if no OCR provided, otherwise DONE?)
-    // If client provides OCR, we use it.
-    const initialOcr = req.body.ocrContent || '';
-    const status = initialOcr ? 'done' : 'processing';
+        if (existingDoc) {
+            console.log(`Duplicate found: ${title} in folder ${folderId || 'Root'}. Creating revision for ID: ${existingDoc.id}`);
 
-    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, finalFileData, status],
-        async (err) => {
-            if (err) {
-                console.error("DB INSERT ERROR:", err.message);
-                return res.status(500).json({ error: "Database Insert Failed: " + err.message });
+            // Re-use versioning logic similar to PUT /api/documents/:id
+            let versionsHistory = [];
+            try { versionsHistory = existingDoc.versionsHistory ? JSON.parse(existingDoc.versionsHistory) : []; } catch (e) { }
+
+            // Archive current version
+            let archivedUrl = existingDoc.url;
+            let archivedFileData = null;
+            if (existingDoc.fileData && existingDoc.fileData.startsWith('data:')) {
+                const ext = existingDoc.title.split('.').pop() || 'bin';
+                const archivedPath = saveBase64ToFile(existingDoc.fileData, `ARCHIVE-${existingDoc.id}-${Date.now()}`, ext);
+                if (archivedPath) archivedUrl = archivedPath;
+                else archivedFileData = existingDoc.fileData;
+            } else {
+                archivedFileData = existingDoc.fileData;
             }
 
-            // 3. Add to Queue
-            if (absoluteFilePath) {
-                try {
-                    console.log(`[Queue] Adding job for ${id}`);
-                    await addOCRJob(id, absoluteFilePath, type || 'application/octet-stream', title);
-                } catch (qErr) {
-                    console.error("Queue Error:", qErr);
-                }
-            }
-
-            await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
-
-            // Response with actual OCR content if provided, status: processing because embedding is async
-            res.json({
-                id, title, type, size, uploadDate, url: fileUrl, folderId, department, owner,
-                ocrContent: initialOcr, auditId, stepIndex, status: 'processing'
+            versionsHistory.push({
+                timestamp: existingDoc.uploadDate || new Date().toISOString(),
+                size: existingDoc.size,
+                type: existingDoc.type,
+                fileData: archivedFileData,
+                url: archivedUrl,
+                title: existingDoc.title,
+                user: existingDoc.owner || 'System'
             });
+
+            // Save new file
+            let fileUrl = url;
+            let savedPath = null;
+            let absoluteFilePath = null;
+            let finalFileData = null;
+
+            if (content) {
+                const ext = title.split('.').pop() || 'bin';
+                const savedUrl = saveBase64ToFile(content, existingDoc.id, ext);
+                if (savedUrl) {
+                    fileUrl = savedUrl;
+                    savedPath = savedUrl;
+                    absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+                    finalFileData = null;
+                } else {
+                    finalFileData = content;
+                }
+            } else if (url && url.startsWith('/uploads/')) {
+                absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
+            }
+
+            const initialOcr = req.body.ocrContent || '';
+            const status = initialOcr ? 'done' : 'processing';
+
+            db.run("UPDATE documents SET type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [type, size, uploadDate, fileUrl, initialOcr, finalFileData, JSON.stringify(versionsHistory), status, existingDoc.id],
+                async (updateErr) => {
+                    if (updateErr) return res.status(500).json({ error: "Revision update failed: " + updateErr.message });
+
+                    if (absoluteFilePath) {
+                        try {
+                            await addOCRJob(existingDoc.id, absoluteFilePath, type || 'application/octet-stream', title);
+                        } catch (qErr) { console.error("Queue Error:", qErr); }
+                    }
+
+                    await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${title}" v${existingDoc.version + 1}`);
+                    res.json({ success: true, id: existingDoc.id, version: existingDoc.version + 1, isRevision: true });
+                }
+            );
+            return;
         }
-    );
+
+        // --- ORIGINAL INSERT LOGIC ---
+        let fileUrl = url;
+        let savedPath = null;
+        let absoluteFilePath = null;
+        let finalFileData = null;
+
+        // 1. Save File (Base64 -> Disk)
+        if (content) {
+            const ext = title.split('.').pop() || 'bin';
+            const savedUrl = saveBase64ToFile(content, id, ext);
+
+            if (savedUrl) {
+                fileUrl = savedUrl;
+                savedPath = savedUrl;
+                absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+                finalFileData = null;
+            } else {
+                finalFileData = content;
+            }
+        } else if (url && url.startsWith('/uploads/')) {
+            absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
+        }
+
+        const initialOcr = req.body.ocrContent || '';
+        const status = initialOcr ? 'done' : 'processing';
+
+        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, finalFileData, status],
+            async (err) => {
+                if (err) {
+                    console.error("DB INSERT ERROR:", err.message);
+                    return res.status(500).json({ error: "Database Insert Failed: " + err.message });
+                }
+
+                if (absoluteFilePath) {
+                    try {
+                        await addOCRJob(id, absoluteFilePath, type || 'application/octet-stream', title);
+                    } catch (qErr) {
+                        console.error("Queue Error:", qErr);
+                    }
+                }
+
+                await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
+
+                res.json({
+                    id, title, type, size, uploadDate, url: fileUrl, folderId, department, owner,
+                    ocrContent: initialOcr, auditId, stepIndex, status: 'processing'
+                });
+            }
+        );
+    });
 });
 
 app.put('/api/documents/:id', (req, res) => {
@@ -1043,8 +1120,8 @@ app.put('/api/documents/:id', (req, res) => {
             const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
             const finalFileData = newSavedUrl ? null : content;
 
-            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1, status = ? WHERE id = ?",
-                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), req.params.id, ocrContent ? 'done' : 'processing'],
+            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), ocrContent ? 'done' : 'processing', req.params.id],
                 async (err) => {
                     if (err) return res.status(500).json({ error: err.message });
 
@@ -1264,7 +1341,7 @@ app.post('/api/documents/:id/restore', (req, res) => {
         const newUrl = versionToRestore.url || doc.url; // Use restored URL or keep current if undefined (legacy)
         const newFileData = versionToRestore.fileData || null;
 
-        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
+        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = 'ready' WHERE id = ?",
             [newFileData, newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), req.params.id],
             async (err) => {
                 if (err) return res.status(500).json({ error: err.message });

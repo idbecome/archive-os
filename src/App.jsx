@@ -1186,7 +1186,7 @@ export default function App() {
       uploader: currentUser?.name || 'Admin',
       folderId: currentFolderId,
       version: 1,
-      versionsHistory: [],
+      versionsHistory: uploadForm.editMode ? (uploadForm.originalDoc?.versionsHistory || []) : [],
       locked: false
     };
 
@@ -1400,6 +1400,22 @@ export default function App() {
     } catch (e) {
       console.error("Download error:", e);
       alert("Gagal mengunduh file: " + e.message);
+    }
+  };
+
+  const handleRestoreVersion = async (docId, versionTimestamp) => {
+    if (!window.confirm("Yakin ingin mengembalikan dokumen ke versi ini? Versi saat ini akan disimpan sebagai revisi baru.")) return;
+    try {
+      await api.restoreDocumentVersion(docId, versionTimestamp);
+      fetchDocs();
+      // If detail modal is open, we might need to refresh its data
+      if (viewDocData && viewDocData.id === docId) {
+        const updated = await api.getDocumentById(docId);
+        if (updated) setViewDocData(updated);
+      }
+      alert("Berhasil mengembalikan versi dokumen.");
+    } catch (e) {
+      alert("Gagal mengembalikan versi: " + e.message);
     }
   };
 

@@ -207,17 +207,29 @@ function initDb() {
         }
     });
 
-    db.all("SHOW COLUMNS FROM documents LIKE 'versionsHistory'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating documents table: Adding versionsHistory column...");
-            db.run("ALTER TABLE documents ADD COLUMN versionsHistory LONGTEXT");
-        }
-    });
-
     db.all("SHOW COLUMNS FROM documents LIKE 'version'", [], (err, rows) => {
         if (!err && rows.length === 0) {
             console.log("Migrating documents table: Adding version column...");
             db.run("ALTER TABLE documents ADD COLUMN version INT DEFAULT 1");
+            // Ensure existing documents have version 1
+            setTimeout(() => {
+                db.run("UPDATE documents SET version = 1 WHERE version IS NULL");
+            }, 1000);
+        } else {
+            // Even if column exists, check for NULLs
+            db.run("UPDATE documents SET version = 1 WHERE version IS NULL");
+        }
+    });
+
+    db.all("SHOW COLUMNS FROM documents LIKE 'versionsHistory'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating documents table: Adding versionsHistory column...");
+            db.run("ALTER TABLE documents ADD COLUMN versionsHistory LONGTEXT");
+            setTimeout(() => {
+                db.run("UPDATE documents SET versionsHistory = '[]' WHERE versionsHistory IS NULL");
+            }, 1000);
+        } else {
+            db.run("UPDATE documents SET versionsHistory = '[]' WHERE versionsHistory IS NULL");
         }
     });
 

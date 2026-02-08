@@ -40,6 +40,11 @@ export default function Documents({
     const [opProgress, setOpProgress] = useState(0);
     const [isExecutingOp, setIsExecutingOp] = useState(false);
 
+    // --- REVISION STATE ---
+    const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
+    const [selectedDocForRevision, setSelectedDocForRevision] = useState(null);
+    const [isRestoring, setIsRestoring] = useState(false);
+
     const startMgmtOp = (type, itemType, item) => {
         setMgmtOp({ type, itemType, item });
         setIsMgmtModalOpen(true);
@@ -76,6 +81,21 @@ export default function Documents({
             alert("Operasi gagal: " + e.message);
             setIsExecutingOp(false);
             setOpProgress(0);
+        }
+    };
+
+    const handleRestoreVersion = async (docId, versionTimestamp) => {
+        if (!window.confirm("Yakin ingin mengembalikan dokumen ke versi ini? Versi saat ini akan disimpan sebagai revisi baru.")) return;
+
+        setIsRestoring(true);
+        try {
+            await api.restoreDocumentVersion(docId, versionTimestamp);
+            setIsRevisionModalOpen(false);
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            alert("Gagal mengembalikan versi: " + e.message);
+        } finally {
+            setIsRestoring(false);
         }
     };
 
@@ -437,6 +457,17 @@ export default function Documents({
                                                         <button onClick={(e) => { e.stopPropagation(); handleDownload(doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
                                                             <Download size={14} className="text-green-500" /> Download
                                                         </button>
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setSelectedDocForRevision(doc);
+                                                                setIsRevisionModalOpen(true);
+                                                                setActiveMenuId(null);
+                                                            }}
+                                                            className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                                        >
+                                                            <History size={14} className="text-indigo-500" /> Riwayat Revisi
+                                                        </button>
                                                         <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
 
                                                         {hasPermission('documents', 'create') && (
@@ -478,6 +509,9 @@ export default function Documents({
                                             <button onClick={(e) => { e.stopPropagation(); handleDownload(doc); }} className="p-2 bg-white dark:bg-slate-800 text-gray-500 hover:text-green-600 rounded-full shadow-md border border-gray-100 dark:border-slate-700" title="Download">
                                                 <Download size={16} />
                                             </button>
+                                            <button onClick={(e) => { e.stopPropagation(); setSelectedDocForRevision(doc); setIsRevisionModalOpen(true); }} className="p-2 bg-white dark:bg-slate-800 text-gray-500 hover:text-indigo-600 rounded-full shadow-md border border-gray-100 dark:border-slate-700" title="Riwayat Revisi">
+                                                <History size={16} />
+                                            </button>
                                         </div>
 
                                         <div className="flex items-center justify-center py-4 mb-2 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-100 dark:border-slate-800">
@@ -499,7 +533,12 @@ export default function Documents({
                                                 {doc.status === 'processing' ? (
                                                     <span className="text-amber-500 font-bold animate-pulse">PROSES OCR...</span>
                                                 ) : (
-                                                    <span className="font-bold text-indigo-500">v{doc.version}</span>
+                                                    <div className="flex flex-col items-end">
+                                                        <span className="font-bold text-indigo-500">v{doc.version}</span>
+                                                        {doc.versionsHistory?.length > 0 && (
+                                                            <span className="text-[8px] text-slate-400 font-medium">({doc.versionsHistory.length} Revisi)</span>
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
 
@@ -582,7 +621,13 @@ export default function Documents({
                                                 {doc.size}
                                             </div>
                                             <div className="col-span-2 hidden md:flex items-center">
-                                                <span className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-xs font-bold rounded-md">v{doc.version}</span>
+                                                <div className="flex flex-col">
+                                                    <span className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-xs font-bold rounded-md">v{doc.version}</span>
+                                                    {doc.versionsHistory && (Array.isArray(doc.versionsHistory) ? doc.versionsHistory.length > 0 : (typeof doc.versionsHistory === 'string' && doc.versionsHistory !== '[]')) && (
+                                                        <span className="text-[9px] text-slate-400 font-medium ml-1">({Array.isArray(doc.versionsHistory) ? doc.versionsHistory.length : JSON.parse(doc.versionsHistory).length} Revisi)</span>
+                                                    )}
+                                                </div>
+
                                             </div>
                                             <div className="col-span-2 md:col-span-3 flex items-center justify-end gap-2">
                                                 <div className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 mr-2">
@@ -591,6 +636,9 @@ export default function Documents({
                                                     </button>
                                                     <button onClick={(e) => { e.stopPropagation(); handleDownload(doc) }} className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 rounded-lg" title="Download">
                                                         <Download size={16} />
+                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); setSelectedDocForRevision(doc); setIsRevisionModalOpen(true); }} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg" title="Riwayat Revisi">
+                                                        <History size={16} />
                                                     </button>
                                                 </div>
                                                 <div className="relative">
@@ -612,6 +660,17 @@ export default function Documents({
                                                                 </button>
                                                                 <button onClick={() => { handleDownload(doc); setActiveMenuId(null); }} className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
                                                                     <Download size={14} className="text-green-500" /> Download
+                                                                </button>
+                                                                <button
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        setSelectedDocForRevision(doc);
+                                                                        setIsRevisionModalOpen(true);
+                                                                        setActiveMenuId(null);
+                                                                    }}
+                                                                    className="w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                                                >
+                                                                    <History size={14} className="text-indigo-500" /> Riwayat Revisi
                                                                 </button>
                                                                 <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
 
@@ -658,18 +717,20 @@ export default function Documents({
                         </div>
                     )}
                 </div>
-            </div>
+            </div >
 
             {/* Global Backdrop for Menus - Click anywhere to close */}
-            {(activeMenuId || activeFolderMenuId) && (
-                <div
-                    className="fixed inset-0 z-[100] bg-transparent"
-                    onClick={() => {
-                        setActiveMenuId(null);
-                        setActiveFolderMenuId(null);
-                    }}
-                />
-            )}
+            {
+                (activeMenuId || activeFolderMenuId) && (
+                    <div
+                        className="fixed inset-0 z-[100] bg-transparent"
+                        onClick={() => {
+                            setActiveMenuId(null);
+                            setActiveFolderMenuId(null);
+                        }}
+                    />
+                )
+            }
 
             {/* MANAGEMENT MODAL (COPY/MOVE) */}
             <Modal
@@ -900,6 +961,75 @@ export default function Documents({
                 )
             }
 
+            {/* REVISION HISTORY MODAL */}
+            <Modal
+                isOpen={isRevisionModalOpen}
+                onClose={() => setIsRevisionModalOpen(false)}
+                title="Riwayat Revisi Dokumen"
+                size="max-w-xl"
+            >
+                <div className="space-y-4">
+                    <div className="flex items-center gap-3 p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800/50">
+                        <div className="p-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm">
+                            <FileText size={24} className="text-indigo-600" />
+                        </div>
+                        <div>
+                            <h4 className="font-bold text-slate-800 dark:text-white truncate max-w-[300px]">{selectedDocForRevision?.title}</h4>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-widest">ID: {selectedDocForRevision?.id} • Versi Saat Ini: v{selectedDocForRevision?.version}</p>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-2 custom-scrollbar">
+                        {(() => {
+                            let history = [];
+                            try {
+                                const rawH = selectedDocForRevision?.versionsHistory;
+                                history = Array.isArray(rawH) ? rawH : (typeof rawH === 'string' ? JSON.parse(rawH) : []);
+
+                            } catch (e) { }
+
+                            if (history.length === 0) {
+                                return (
+                                    <div className="py-12 text-center text-slate-400 italic bg-slate-50 dark:bg-slate-800/30 rounded-2xl border border-dashed border-slate-200 dark:border-slate-700">
+                                        Belum ada riwayat revisi untuk dokumen ini.
+                                    </div>
+                                );
+                            }
+
+                            return history.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)).map((rev, idx) => (
+                                <div key={idx} className="group flex items-center gap-4 p-4 bg-white dark:bg-slate-800/50 border border-slate-100 dark:border-slate-800 rounded-2xl hover:border-indigo-200 dark:hover:border-indigo-800 transition-all">
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="px-1.5 py-0.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 text-[10px] font-bold rounded uppercase">Revisi</span>
+                                            <span className="text-xs font-bold text-slate-700 dark:text-slate-200">{new Date(rev.timestamp).toLocaleString()}</span>
+                                        </div>
+                                        <p className="text-[10px] text-slate-400 font-medium truncate">Diunggah oleh: <span className="text-indigo-600 dark:text-indigo-400">{rev.user}</span> • Ukuran: {rev.size}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <a
+                                            href={rev.url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="p-2 bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-blue-600 rounded-xl transition-colors"
+                                            title="Lihat Versi Ini"
+                                        >
+                                            <Eye size={16} />
+                                        </a>
+                                        <button
+                                            onClick={() => handleRestoreVersion(selectedDocForRevision.id, rev.timestamp)}
+                                            disabled={isRestoring}
+                                            className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] font-black uppercase tracking-widest rounded-xl shadow-lg shadow-indigo-600/20 transition-all flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                                        >
+                                            <RefreshCw size={14} className={isRestoring ? 'animate-spin' : ''} />
+                                            Restore
+                                        </button>
+                                    </div>
+                                </div>
+                            ));
+                        })()}
+                    </div>
+                </div>
+            </Modal>
         </>
     );
 }
