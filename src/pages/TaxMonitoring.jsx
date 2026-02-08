@@ -81,7 +81,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         if (selectedAudit && activeStep) {
             loadFiles(selectedAudit);
         }
-    }, [activeStep]); // Deleted dependency selectedAudit to avoid double fetch, relying on explicit step change or initial load
+    }, [activeStep, selectedAudit]);
 
     // POLL STATUS for processing files
     useEffect(() => {
