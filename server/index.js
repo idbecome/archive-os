@@ -823,7 +823,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 import mammoth from 'mammoth';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 
 // --- OCR HELPER ---
 // --- OCR HELPER ---
@@ -1311,6 +1311,139 @@ app.delete('/api/tax-summaries/:id', (req, res) => {
     db.run("DELETE FROM tax_summaries WHERE id = ?", [req.params.id], (err) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ success: true });
+    });
+});
+
+// --- TAX OBJECTS (DATABASE WP) ---
+// Table is created in db.js initDb()
+
+app.get('/api/tax-objects', (req, res) => {
+    db.all("SELECT * FROM tax_objects ORDER BY created_at DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/tax-objects', (req, res) => {
+    const { idType, identityNumber, name, taxType, taxObjectCode, taxObjectName, dpp, rate, pph } = req.body;
+
+    db.run(`INSERT INTO tax_objects (
+        id_type, identity_number, name, tax_type, 
+        tax_object_code, tax_object_name, dpp, rate, pph
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [idType, identityNumber, name, taxType, taxObjectCode, taxObjectName, dpp, rate, pph],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.put('/api/tax-objects/:id', (req, res) => {
+    const { idType, identityNumber, name, taxType, taxObjectCode, taxObjectName, dpp, rate, pph } = req.body;
+
+    db.run(`UPDATE tax_objects SET 
+        id_type = ?, identity_number = ?, name = ?, tax_type = ?, 
+        tax_object_code = ?, tax_object_name = ?, dpp = ?, rate = ?, pph = ?
+        WHERE id = ?`,
+        [idType, identityNumber, name, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, req.params.id],
+        (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.delete('/api/tax-objects/:id', (req, res) => {
+    db.run("DELETE FROM tax_objects WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// --- MASTER TAX OBJECTS (IMPORT EXCEL) ---
+
+// Uses existing 'upload' configuration from earlier in file
+
+
+app.get('/api/master-tax-objects/template', (req, res) => {
+    // Create a new workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const wsData = [
+        ['Jenis PPh', 'Kode Objek Pajak', 'Nama Objek Pajak', 'Tarif (%)', 'Keterangan'], // Header
+        ['21', '21-100-01', 'Upah Pegawai Tidak Tetap', 5, 'Contoh pengisian'],
+        ['23', '23-100-02', 'Jasa Teknik', 2, 'Contoh pengisian'],
+        ['4(2)', '4(2)-100-03', 'Sewa Tanah dan Bangunan', 10, 'Contoh pengisian']
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Adjust column width
+    ws['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 50 }, { wch: 10 }, { wch: 30 }];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+
+    // Write to buffer
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename="Template_Master_Objek_Pajak.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+});
+
+app.post('/api/master-tax-objects/import', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        console.log("Processing file:", req.file.path);
+
+        if (!fs.existsSync(req.file.path)) {
+            throw new Error(`File not found at path: ${req.file.path}`);
+        }
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        // Expected headers based on template: 'Jenis PPh', 'Kode Objek Pajak', 'Nama Objek Pajak', 'Keterangan'
+
+        const insertData = [];
+        data.forEach(row => {
+            const taxType = row['Jenis PPh'];
+            const code = row['Kode Objek Pajak'];
+            const name = row['Nama Objek Pajak'];
+            const rate = row['Tarif (%)'];
+            const note = row['Keterangan'];
+
+            if (taxType && code && name) {
+                insertData.push([taxType, code, name, rate, note]);
+            }
+        });
+
+        if (insertData.length === 0) {
+            return res.json({ success: true, count: 0, message: "Tidak ada data valid untuk diimpor." });
+        }
+
+        const sql = "INSERT INTO master_tax_objects (tax_type, code, name, rate, note) VALUES ?";
+        db.run(sql, [insertData], function (err) {
+            if (err) {
+                console.error("Import error:", err);
+                return res.status(500).json({ error: 'Gagal mengimpor data: ' + err.message });
+            }
+            res.json({ success: true, count: insertData.length, message: `Berhasil mengimpor ${insertData.length} data objek pajak!` });
+        });
+    } catch (error) {
+        console.error("Error processing Excel:", error);
+        res.status(500).json({ error: 'Failed to process Excel file: ' + (error.stack || error.toString()) });
+    }
+});
+
+app.get('/api/master-tax-objects', (req, res) => {
+    db.all("SELECT * FROM master_tax_objects ORDER BY tax_type, code", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
     });
 });
 

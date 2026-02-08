@@ -167,6 +167,28 @@ function initDb() {
             sender VARCHAR(100),
             boxData TEXT,
             history TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS tax_objects (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            id_type VARCHAR(50),
+            identity_number VARCHAR(100),
+            name VARCHAR(255),
+            tax_type VARCHAR(50),
+            tax_object_code VARCHAR(100),
+            tax_object_name VARCHAR(255),
+            dpp DECIMAL(15, 2),
+            rate DECIMAL(5, 2),
+            pph DECIMAL(15, 2),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS master_tax_objects (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            tax_type VARCHAR(50),
+            code VARCHAR(100),
+            name VARCHAR(255),
+            note TEXT,
+            rate DECIMAL(5, 2),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`
     ];
 
@@ -219,6 +241,22 @@ function initDb() {
             db.run("ALTER TABLE documents ADD COLUMN status VARCHAR(50) DEFAULT 'ready'");
         }
     });
+
+    // Rate migrations
+    db.all("SHOW COLUMNS FROM master_tax_objects LIKE 'rate'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating master_tax_objects table: Adding rate column...");
+            db.run("ALTER TABLE master_tax_objects ADD COLUMN rate DECIMAL(5, 2)");
+        }
+    });
+
+    db.all("SHOW COLUMNS FROM tax_objects LIKE 'rate'", [], (err, rows) => {
+        if (!err && rows.length === 0) {
+            console.log("Migrating tax_objects table: Adding rate column...");
+            db.run("ALTER TABLE tax_objects ADD COLUMN rate DECIMAL(5, 2)");
+        }
+    });
+
 
     // Seed Data
     db.all("SELECT count(*) as count FROM users", [], (err, rows) => {
