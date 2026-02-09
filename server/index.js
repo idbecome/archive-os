@@ -1524,6 +1524,82 @@ app.get('/api/tax-objects/export', (req, res) => {
     });
 });
 
+// --- NEW: TAX OBJECTS TEMPLATE & IMPORT ---
+
+app.get('/api/tax-objects/template', (req, res) => {
+    const wb = XLSX.utils.book_new();
+    const wsData = [
+        ['Jenis ID', 'Nomor Identitas', 'Nama Wajib Pajak', 'Jenis PPh', 'Kode Objek', 'Nama Objek', 'DPP', 'Tarif (%)', 'Total PPh'],
+        ['NPWP', '01.234.567.8-901.000', 'PT Contoh Sejahtera', '23', '24-100-02', 'Jasa Teknik', 10000000, 2, 200000],
+        ['KTP', '3201234567890001', 'Budi Santoso', '21', '21-100-01', 'Upah Pegawai', 5000000, 5, 250000]
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    
+    // Adjust column widths
+    ws['!cols'] = [
+        { wch: 10 }, { wch: 25 }, { wch: 30 }, { wch: 10 }, 
+        { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 15 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Template Database WP');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename="Template_Database_WP.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+});
+
+app.post('/api/tax-objects/import', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        if (!fs.existsSync(req.file.path)) {
+            throw new Error(`File not found at path: ${req.file.path}`);
+        }
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        const insertData = [];
+        data.forEach(row => {
+            const idType = row['Jenis ID'] || 'NPWP';
+            const idNumber = row['Nomor Identitas'] || '';
+            const name = row['Nama Wajib Pajak'] || '';
+            const taxType = row['Jenis PPh'] || '23';
+            const code = row['Kode Objek'] || '';
+            const objName = row['Nama Objek'] || '';
+            const dpp = Number(row['DPP']) || 0;
+            const rate = Number(row['Tarif (%)']) || 0;
+            const pph = Number(row['Total PPh']) || 0;
+
+            if (name) {
+                insertData.push([idType, idNumber, name, taxType, code, objName, dpp, rate, pph]);
+            }
+        });
+
+        if (insertData.length === 0) {
+            return res.json({ success: true, count: 0, message: "Tidak ada data valid untuk diimpor." });
+        }
+
+        const sql = `INSERT INTO tax_objects (id_type, identity_number, name, tax_type, tax_object_code, tax_object_name, dpp, rate, pph) VALUES ?`;
+        
+        db.run(sql, [insertData], function (err) {
+            if (err) {
+                console.error("Import error:", err);
+                return res.status(500).json({ error: 'Gagal mengimpor data: ' + err.message });
+            }
+            res.json({ success: true, count: insertData.length, message: `Berhasil mengimpor ${insertData.length} data ke Database WP!` });
+        });
+    } catch (error) {
+        console.error("Error processing Excel:", error);
+        res.status(500).json({ error: 'Failed to process Excel file: ' + (error.stack || error.toString()) });
+    }
+});
+
 // --- MASTER TAX OBJECTS (IMPORT EXCEL) ---
 
 // Uses existing 'upload' configuration from earlier in file

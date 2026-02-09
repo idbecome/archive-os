@@ -189,6 +189,17 @@ function initDb() {
             note TEXT,
             rate DECIMAL(5, 2),
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )`,
+        `CREATE TABLE IF NOT EXISTS job_queue (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255),
+            data LONGTEXT,
+            status VARCHAR(50) DEFAULT 'waiting',
+            progress INT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            processed_at DATETIME,
+            finished_at DATETIME,
+            error TEXT
         )`
     ];
 

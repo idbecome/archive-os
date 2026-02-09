@@ -1,37 +1,62 @@
-import { Queue } from 'bullmq';
-import IORedis from 'ioredis';
+import db from './db.js';
 
-// Redis Connection
-const connection = new IORedis({
-    host: 'localhost',
-    port: 6379,
-    maxRetriesPerRequest: null,
-    retryStrategy(times) {
-        // Log only every 5 attempts to reduce noise
-        if (times % 5 === 0) {
-            console.warn(`[Redis] Retrying connection (attempt ${times})...`);
-        }
-        return Math.min(times * 500, 15000); // Max 15s delay
+// Simple MySQL-based Queue Replacement for BullMQ
+class DbQueue {
+    constructor(name) {
+        this.name = name;
     }
-});
 
-let lastErrorMsg = '';
-connection.on('error', (err) => {
-    // Only log if the error message changed to avoid spamming the same error
-    if (err.message !== lastErrorMsg) {
-        console.error('[Redis] Connection Issue:', err.message);
-        console.info('[Redis] Tip: Make sure Redis is running (Docker or Memurai).');
-        lastErrorMsg = err.message;
+    async add(name, data, opts) {
+        return new Promise((resolve, reject) => {
+            const sql = "INSERT INTO job_queue (name, data, status, created_at) VALUES (?, ?, 'waiting', NOW())";
+            db.run(sql, [name, JSON.stringify(data)], function (err) {
+                if (err) reject(err);
+                else resolve({ id: this.lastID, name, data });
+            });
+        });
     }
-});
 
-connection.on('connect', () => {
-    console.log('[Redis] Connected successfully.');
-    lastErrorMsg = ''; // Reset on success
-});
+    async getJobCounts(...statuses) {
+        return new Promise((resolve, reject) => {
+            db.all("SELECT status, COUNT(*) as count FROM job_queue GROUP BY status", [], (err, rows) => {
+                if (err) return reject(err);
+                const counts = { active: 0, waiting: 0, completed: 0, failed: 0 };
+                if (rows) {
+                    rows.forEach(r => {
+                        if (counts[r.status] !== undefined) counts[r.status] = r.count;
+                    });
+                }
+                resolve(counts);
+            });
+        });
+    }
 
-// Initialize Queue
-export const ocrQueue = new Queue('OCR_QUEUE', { connection });
+    async getJobs(types, start, end, asc) {
+        return new Promise((resolve, reject) => {
+            if (!types || types.length === 0) return resolve([]);
+            const placeholders = types.map(() => '?').join(',');
+            const limit = (end - start) + 1;
+            const offset = start;
+            const order = asc ? 'ASC' : 'DESC';
+
+            const sql = `SELECT * FROM job_queue WHERE status IN (${placeholders}) ORDER BY created_at ${order} LIMIT ? OFFSET ?`;
+            const params = [...types, limit, offset];
+
+            db.all(sql, params, (err, rows) => {
+                if (err) return reject(err);
+                resolve((rows || []).map(r => ({
+                    id: r.id,
+                    data: JSON.parse(r.data),
+                    progress: r.progress || 0,
+                    status: r.status,
+                    finishedOn: r.finished_at ? new Date(r.finished_at).getTime() : null
+                })));
+            });
+        });
+    }
+}
+
+export const ocrQueue = new DbQueue('OCR_QUEUE');
 
 // Helper to add jobs
 export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {

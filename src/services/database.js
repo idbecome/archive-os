@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:5000/api';
+const API_URL = '/api';
 
 export const db = {
     async getInventory() {
@@ -153,6 +153,37 @@ export const db = {
             return await response.json();
         } catch { return []; }
     },
+
+    async createTaxAudit(data) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Gagal membuat audit');
+            return await response.json();
+        } catch (e) { console.error("Gagal membuat tax audit", e); throw e; }
+    },
+
+    async updateTaxAudit(id, data) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Gagal update audit');
+        } catch (e) { console.error("Gagal update tax audit", e); throw e; }
+    },
+
+    async deleteTaxAudit(id) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits/${id}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Gagal hapus audit');
+        } catch (e) { console.error("Gagal hapus tax audit", e); throw e; }
+    },
+
     async getTaxSummaries() {
         try {
             const response = await fetch(`${API_URL}/tax-summaries`);

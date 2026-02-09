@@ -197,7 +197,7 @@ export default function App() {
 
     const fetchOcrStatus = async () => {
       try {
-        const res = await fetch('http://localhost:5000/api/ocr/status');
+        const res = await fetch(`/api/ocr/status`);
         if (!res.ok) return;
         const data = await res.json();
 
@@ -286,7 +286,7 @@ export default function App() {
       ]);
       // Initialize OCR completion count
       try {
-        const ocrRes = await fetch('http://localhost:5000/api/ocr/status');
+        const ocrRes = await fetch(`/api/ocr/status`);
         const ocrData = await ocrRes.json();
         lastOcrCompletedRef.current = ocrData?.counts?.completed || 0;
       } catch (e) { console.warn("Initial OCR status fetch failed", e); }
@@ -1631,7 +1631,7 @@ export default function App() {
   const handleDeleteTaxRecord = async (id) => {
     if (window.confirm("Apakah Anda yakin ingin menghapus data ini secara permanen?")) {
       try {
-        await fetch(`http://localhost:5000/api/tax-summaries/${id}`, { method: 'DELETE' });
+        await fetch(`http://${window.location.hostname}:5000/api/tax-summaries/${id}`, { method: 'DELETE' });
         const updated = taxSummaries.filter(s => s.id !== id);
         setTaxSummaries(updated);
         localStorage.setItem('tax_summaries', JSON.stringify(updated));

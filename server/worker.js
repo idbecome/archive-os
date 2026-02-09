@@ -1,5 +1,3 @@
-import { Worker } from 'bullmq';
-import IORedis from 'ioredis';
 import path from 'path';
 import fs from 'fs';
 import { createWorker } from 'tesseract.js';
@@ -18,31 +16,8 @@ import { pathToFileURL } from 'url';
 const workerPath = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'legacy', 'build', 'pdf.worker.mjs');
 pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
 
-// Redis Connection
-const connection = new IORedis({
-    host: 'localhost',
-    port: 6379,
-    maxRetriesPerRequest: null,
-    retryStrategy(times) {
-        if (times % 5 === 0) {
-            console.warn(`[Redis/Worker] Retrying connection (attempt ${times})...`);
-        }
-        return Math.min(times * 500, 15000);
-    }
-});
-
-let lastWorkerError = '';
-connection.on('error', (err) => {
-    if (err.message !== lastWorkerError) {
-        console.error('[Redis/Worker] Connection Issue:', err.message);
-        lastWorkerError = err.message;
-    }
-});
-
-connection.on('connect', () => {
-    console.log('[Redis/Worker] Connected successfully.');
-    lastWorkerError = '';
-});
+// Standard Font Path for PDF.js
+const standardFontDataUrl = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts/');
 
 // Helper: Convert Raw PDF Image Data to PPM (Tesseract Compatible)
 function mkPPM(imgObj) {
@@ -91,7 +66,10 @@ async function extractImagesFromPDF(pdfBuffer, maxPages = Infinity, job = null) 
     const images = [];
     try {
         const uint8Array = new Uint8Array(pdfBuffer);
-        const loadingTask = pdfjsLib.getDocument(uint8Array);
+        const loadingTask = pdfjsLib.getDocument({
+            data: uint8Array,
+            standardFontDataUrl: pathToFileURL(standardFontDataUrl).href
+        });
         const pdfDocument = await loadingTask.promise;
 
         const numPagesToProcess = maxPages === Infinity ? pdfDocument.numPages : Math.min(pdfDocument.numPages, maxPages);
@@ -139,8 +117,8 @@ async function extractImagesFromPDF(pdfBuffer, maxPages = Infinity, job = null) 
     return images;
 }
 
-// Worker Processor
-const worker = new Worker('OCR_QUEUE', async (job) => {
+// Core Processing Logic (Decoupled from Queue System)
+async function processOCRJob(job) {
     const { docId, filePath, fileType, originalName, context } = job.data;
     const isInventory = context && context.type === 'inventory';
 
@@ -163,124 +141,69 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
         }
         else if (fileType === 'application/pdf') {
             const dataBuffer = fs.readFileSync(filePath);
+            
+            let pdfText = "";
+            let isScanned = false;
+            
+            // 1. Try PDF.js Text Extraction (Better layout & reliability)
+            try {
+                const uint8Array = new Uint8Array(dataBuffer);
+                const loadingTask = pdfjsLib.getDocument({
+                    data: uint8Array,
+                    standardFontDataUrl: pathToFileURL(standardFontDataUrl).href
+                });
+                const pdfDocument = await loadingTask.promise;
+                
+                const numPages = pdfDocument.numPages;
+                let totalTextLength = 0;
 
-            const PDFParser = typeof pdf === 'function'
-                ? pdf
-                : (pdf.PDFParse || (pdf.default && (pdf.default.PDFParse || (typeof pdf.default === 'function' ? pdf.default : null))) || pdf.default);
-
-            if (!PDFParser) {
-                console.error("[Worker] PDF Library Error: Could not find parser in", pdf);
-                throw new Error("PDF parsing library not initialized correctly.");
+                // Extract text from up to 50 pages
+                for (let i = 1; i <= Math.min(numPages, 50); i++) {
+                    const page = await pdfDocument.getPage(i);
+                    const tokenizedText = await page.getTextContent();
+                    const pageText = tokenizedText.items.map(token => token.str).join(' ');
+                    pdfText += pageText + "\n";
+                    totalTextLength += pageText.length;
+                }
+                
+                // Heuristic: If average text per page < 50 chars, assume scanned
+                if (totalTextLength / Math.min(numPages, 50) < 50) {
+                    isScanned = true;
+                }
+            } catch (e) {
+                console.error("[Worker] PDF.js Text Extraction Error:", e);
             }
 
-            try {
-                // Determine if PDFParser is a class or function
-                let data;
+            extractedText = pdfText.trim();
 
-                // Case 1: It's a Class (has prototype.constructor) or we previously caught a 'Class constructor' error
-                // We try to instantiate it.
-                if (PDFParser.prototype && PDFParser.prototype.constructor) {
-                    try {
-                        // usage: new PDFParser(dataBuffer)
-                        const instance = new PDFParser(dataBuffer);
-                        // If instance is a promise (rare but possible in some libs), await it
-                        if (typeof instance.then === 'function') {
-                            data = await instance;
-                        } else if (typeof instance.text === 'string') {
-                            // Sync return?
-                            data = instance;
-                        } else {
-                            // Maybe it has a parse method? But pdf-parse usually returns a Promise when called as function.
-                            // If it's a class, let's assume it returns the data object directly or via promise.
-                            data = instance;
+            // 2. If Scanned or Low Text, Try OCR on Images
+            if (isScanned || extractedText.length < 50) {
+                console.log('[Worker] PDF appears to be scanned or low text. Attempting OCR...');
+                try {
+                    const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
+                    if (images.length > 0) {
+                        const tess = await createWorker('eng+ind');
+                        let ocrText = "";
+                        for (const imgBuffer of images) {
+                            const { data: { text } } = await tess.recognize(imgBuffer);
+                            ocrText += text + "\n";
                         }
-                    } catch (e) {
-                        // If 'new' fails, maybe it wasn't a class after all, or construction failed.
-                        // But if it failed with "not a constructor", we should have caught it.
-                        // If it failed with "Class constructor cannot be invoked without 'new'", we are doing 'new' here.
-                        console.warn("[Worker] Class instantiation failed, trying function call:", e.message);
-                        data = await PDFParser(dataBuffer);
-                    }
-                } else {
-                    // Case 2: It's a Function
-                    data = await PDFParser(dataBuffer);
-                }
-
-                extractedText = (data && data.text ? data.text : '').trim();
-
-                // Detect Scanned PDF or Failed Text Extraction
-                if (extractedText.length < 50) {
-                    console.log('[Worker] Detected Low Text Content (<50 chars). Checking for Images or Complex Text...');
-
-                    try {
-                        // 1. Try Image Extraction (for Scans)
-                        const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
-
-                        if (images.length > 0) {
-                            console.log(`[Worker] Found ${images.length} images. OCR-ing images...`);
-                            extractedText += "\n\n[OCR SCANNED PDF RESULT]:\n";
-                            const tess = await createWorker('eng+ind');
-                            for (const imgBuffer of images) {
-                                const { data: { text } } = await tess.recognize(imgBuffer);
-                                extractedText += text + "\n";
-                            }
-                            await tess.terminate();
-
+                        await tess.terminate();
+                        
+                        if (ocrText.trim().length > 20) {
+                            extractedText = `[OCR-SCAN]\n${ocrText}\n\n[METADATA]\n${extractedText}`;
                         } else {
-                            // 2. No Images found? Try PDF.js Text Extraction (Fallback for "Save as PDF" / Tables)
-                            console.log('[Worker] No images found. Attempting PDF.js Text Extraction...');
-                            try {
-                                const uint8Array = new Uint8Array(dataBuffer);
-                                const loadingTask = pdfjsLib.getDocument(uint8Array);
-                                const pdfDocument = await loadingTask.promise;
-                                let pdfJsText = "";
-
-                                for (let i = 1; i <= pdfDocument.numPages; i++) {
-                                    const page = await pdfDocument.getPage(i);
-                                    const tokenizedText = await page.getTextContent();
-                                    const pageText = tokenizedText.items.map(token => token.str).join(' ');
-                                    pdfJsText += pageText + "\n";
-                                }
-
-                                if (pdfJsText.trim().length > 10) {
-                                    extractedText = `[PDF-JS]\n${pdfJsText}`; // Use PDF.js text if better
-                                    console.log('[Worker] PDF.js extraction success.');
-                                } else if (extractedText.trim().length > 0) {
-                                    // 3. If both failed but we have SOME text from pdf-parse, keep it.
-                                    extractedText += "\n\n[INFO] Teks diekstrak terbatas.";
-                                } else {
-                                    // 4. Truly Empty
-                                    extractedText += "\n\n[INFO] Dokumen tampak kosong atau terproteksi. Tidak ada teks atau gambar yang dapat diekstrak.";
-                                }
-                            } catch (pdfJsErr) {
-                                console.error("[Worker] PDF.js Text Extraction Failed:", pdfJsErr);
-                                extractedText += "\n\n[ERROR] Gagal mengekstrak teks sekunder.";
-                            }
+                             extractedText = `[PDF-LOW-TEXT]\n${extractedText}\n(OCR yielded no text)`;
                         }
-                    } catch (imgErr) {
-                        console.error("[Worker] Scanned PDF Fallback Failed:", imgErr);
-                        extractedText += "\n\n[ERROR] Gagal memproses scan.";
+                    } else {
+                         extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
                     }
+                } catch (ocrErr) {
+                    console.error("[Worker] OCR Failed:", ocrErr);
+                    extractedText += `\n[OCR-ERROR] ${ocrErr.message}`;
                 }
-
-                extractedText = `[PDF]\n${extractedText}`;
-
-            } catch (pdfErr) {
-                // If the initial attempt failed
-                if (pdfErr.message.includes("Class constructors cannot be invoked without 'new'")) {
-                    // Retry with 'new' if we haven't already
-                    try {
-                        const data = await new PDFParser(dataBuffer);
-                        extractedText = (data && data.text ? data.text : '').trim();
-                        extractedText = `[PDF]\n${extractedText}`;
-                    } catch (retryErr) {
-                        console.error("[Worker] PDF Retry with 'new' failed:", retryErr);
-                        throw new Error(`PDF Parsing failed: ${pdfErr.message}`);
-                    }
-                } else {
-                    console.error("[Worker] PDF Parsing failed:", pdfErr);
-                    throw new Error(`PDF Parsing failed: ${pdfErr.message}`);
-                }
+            } else {
+                extractedText = `[PDF-NATIVE]\n${extractedText}`;
             }
         }
         else if (
@@ -380,22 +303,59 @@ const worker = new Worker('OCR_QUEUE', async (job) => {
         console.error(`[Worker] Job ${job.id} Failed:`, err);
         throw err;
     }
+}
 
-}, {
-    connection,
-    concurrency: 2 // Enable parallel processing
-});
+// --- POLLING WORKER (Replaces BullMQ/Redis) ---
+async function startPolling() {
+    console.log("[Worker] Starting MySQL Polling (No Redis)...");
+    
+    const poll = async () => {
+        try {
+            // 1. Fetch one waiting job
+            db.get("SELECT * FROM job_queue WHERE status = 'waiting' ORDER BY created_at ASC LIMIT 1", [], async (err, row) => {
+                if (err) {
+                    console.error("[Worker] Poll Error:", err);
+                    return setTimeout(poll, 5000);
+                }
 
-worker.on('completed', job => {
-    console.log(`[Worker] Job ${job.id} has completed!`);
-});
+                if (row) {
+                    // 2. Mark as Active
+                    db.run("UPDATE job_queue SET status = 'active', processed_at = NOW() WHERE id = ?", [row.id], async () => {
+                        
+                        // Construct Job Object
+                        const job = {
+                            id: row.id,
+                            data: JSON.parse(row.data),
+                            updateProgress: async (progress) => {
+                                db.run("UPDATE job_queue SET progress = ? WHERE id = ?", [progress, row.id], () => {});
+                            }
+                        };
 
-worker.on('failed', (job, err) => {
-    console.log(`[Worker] Job ${job.id} has failed with ${err.message}`);
-});
+                        try {
+                            await processOCRJob(job);
+                            // 3. Mark Completed
+                            db.run("UPDATE job_queue SET status = 'completed', finished_at = NOW(), progress = 100 WHERE id = ?", [row.id], () => {
+                                setTimeout(poll, 100); // Process next immediately
+                            });
+                        } catch (e) {
+                            // 4. Mark Failed
+                            db.run("UPDATE job_queue SET status = 'failed', finished_at = NOW(), error = ? WHERE id = ?", [e.message, row.id], () => {
+                                setTimeout(poll, 1000);
+                            });
+                        }
+                    });
+                } else {
+                    // No jobs, wait 2 seconds
+                    setTimeout(poll, 2000);
+                }
+            });
+        } catch (e) {
+            console.error("[Worker] Critical Error:", e);
+            setTimeout(poll, 5000);
+        }
+    };
 
-worker.on('error', err => {
-    console.error('[Worker] Fatal Error:', err.message);
-});
+    poll();
+}
 
-console.log("[Worker] OCR Worker Started...");
+startPolling();

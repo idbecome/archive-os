@@ -40,7 +40,7 @@ export default function Dashboard({
 
         setIsSearching(true);
         try {
-            const res = await fetch(`http://localhost:5000/api/search?q=${encodeURIComponent(semanticQuery)}`);
+            const res = await fetch(`http://${window.location.hostname}:5000/api/search?q=${encodeURIComponent(semanticQuery)}`);
             const data = await res.json();
             setSearchResults(data);
         } catch (err) {

@@ -1,0 +1,32 @@
+# c:\Users\WE150072\OneDrive - YanmarGlobal\Documents\Project\archiveOS\docker-compose.yml
+
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: archive-os-backend
+    restart: always
+    ports:
+      - "5000:5000"
+    environment:
+      # Gunakan host.docker.internal agar container bisa akses MySQL di Windows Anda
+      - DB_HOST=host.docker.internal
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=archive_os
+    volumes:
+      - ./uploads:/app/uploads # Agar file upload tidak hilang saat container restart
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: archive-os-frontend
+    restart: always
+    ports:
+      - "80:80" # Ini yang membuat Anda bisa akses tanpa port
+    depends_on:
+      - backend

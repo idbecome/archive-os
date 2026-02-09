@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Calculator, User, FileText, Building2, CreditCard, Database, Save, Trash2, Search, Upload, Download } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
@@ -13,6 +13,7 @@ export default function TaxCalculation() {
     const [showObjectDropdown, setShowObjectDropdown] = useState(false);
     const [masterData, setMasterData] = useState([]);
     const [isImporting, setIsImporting] = useState(false);
+    const masterFileInputRef = useRef(null);
 
     // Form State for "Objek Pajak"
     const [formData, setFormData] = useState({
@@ -31,7 +32,7 @@ export default function TaxCalculation() {
 
     const fetchDatabase = async () => {
         try {
-            const res = await fetch('http://localhost:5000/api/tax-objects');
+            const res = await fetch(`http://${window.location.hostname}:5000/api/tax-objects`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setSavedData(data);
@@ -47,7 +48,7 @@ export default function TaxCalculation() {
 
     const fetchMasterData = async () => {
         try {
-            const res = await fetch('http://localhost:5000/api/master-tax-objects');
+            const res = await fetch(`http://${window.location.hostname}:5000/api/master-tax-objects`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setMasterData(data);
@@ -71,15 +72,16 @@ export default function TaxCalculation() {
         }
     }, [activeTab]);
 
-    const handleDownloadTemplate = () => {
-        window.open('http://localhost:5000/api/master-tax-objects/template', '_blank');
+    // --- DATABASE WP HANDLERS ---
+    const handleDownloadDatabaseTemplate = () => {
+        window.open(`http://${window.location.hostname}:5000/api/tax-objects/template`, '_blank');
     };
 
     const handleExportDatabase = () => {
-        window.open('http://localhost:5000/api/tax-objects/export', '_blank');
+        window.open(`http://${window.location.hostname}:5000/api/tax-objects/export`, '_blank');
     };
 
-    const handleImport = async (e) => {
+    const handleImportDatabase = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
 
@@ -88,7 +90,41 @@ export default function TaxCalculation() {
 
         setIsImporting(true);
         try {
-            const res = await fetch('http://localhost:5000/api/master-tax-objects/import', {
+            const res = await fetch(`http://${window.location.hostname}:5000/api/tax-objects/import`, {
+                method: 'POST',
+                body: formData
+            });
+            const result = await res.json();
+            if (res.ok) {
+                alert(result.message);
+                fetchDatabase();
+            } else {
+                alert('Gagal import: ' + result.error);
+            }
+        } catch (error) {
+            console.error("Import error:", error);
+            alert('Terjadi kesalahan saat upload.');
+        } finally {
+            setIsImporting(false);
+            e.target.value = null; // Reset input
+        }
+    };
+
+    // --- MASTER DATA HANDLERS (Objek Pajak) ---
+    const handleDownloadMasterTemplate = () => {
+        window.open(`http://${window.location.hostname}:5000/api/master-tax-objects/template`, '_blank');
+    };
+
+    const handleImportMaster = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        setIsImporting(true);
+        try {
+            const res = await fetch(`http://${window.location.hostname}:5000/api/master-tax-objects/import`, {
                 method: 'POST',
                 body: formData
             });
@@ -119,8 +155,8 @@ export default function TaxCalculation() {
             };
 
             const url = editingId
-                ? `http://localhost:5000/api/tax-objects/${editingId}`
-                : 'http://localhost:5000/api/tax-objects';
+            ? `http://${window.location.hostname}:5000/api/tax-objects/${editingId}`
+            : `http://${window.location.hostname}:5000/api/tax-objects`;
 
             const method = editingId ? 'PUT' : 'POST';
 
@@ -175,7 +211,7 @@ export default function TaxCalculation() {
     const handleDelete = async (id) => {
         if (!window.confirm('Yakin ingin menghapus data ini?')) return;
         try {
-            await fetch(`http://localhost:5000/api/tax-objects/${id}`, { method: 'DELETE' });
+            await fetch(`http://${window.location.hostname}:5000/api/tax-objects/${id}`, { method: 'DELETE' });
             fetchDatabase();
         } catch (error) {
             console.error("Error deleting data:", error);
@@ -257,10 +293,29 @@ export default function TaxCalculation() {
                     {/* Form Section */}
                     <div className="lg:col-span-2 space-y-6">
                         <Card className={`relative ${showObjectDropdown ? 'z-30' : 'z-10'}`}>
-                            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 mb-6 border-b pb-2 dark:border-gray-700 flex items-center gap-2">
-                                <User size={20} className="text-indigo-600" />
-                                Data Subjek & Objek Pajak
-                            </h3>
+                            <div className="flex justify-between items-center mb-6 border-b pb-2 dark:border-gray-700">
+                                <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 flex items-center gap-2">
+                                    <User size={20} className="text-indigo-600" />
+                                    Data Subjek & Objek Pajak
+                                </h3>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={handleDownloadMasterTemplate}
+                                        className="text-xs flex items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors"
+                                        title="Download Template Master Objek Pajak"
+                                    >
+                                        <Download size={14} /> Template Master
+                                    </button>
+                                    <button
+                                        onClick={() => masterFileInputRef.current.click()}
+                                        className="text-xs flex items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors"
+                                        title="Import Master Objek Pajak"
+                                    >
+                                        <Upload size={14} /> Import Master
+                                    </button>
+                                    <input type="file" ref={masterFileInputRef} onChange={handleImportMaster} accept=".xlsx, .xls" className="hidden" />
+                                </div>
+                            </div>
 
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Identity Type */}
@@ -374,8 +429,8 @@ export default function TaxCalculation() {
                                             ).length === 0 ? (
                                                 <div className="px-4 py-3 text-sm text-gray-500 text-center">
                                                     Tidak ada data ditemukan. <br />
-                                                    <button onClick={() => setActiveTab('database')} className="text-indigo-600 hover:underline mt-1">
-                                                        Import Master Data?
+                                                    <button onClick={() => masterFileInputRef.current.click()} className="text-indigo-600 hover:underline mt-1">
+                                                        Import Master Data Sekarang?
                                                     </button>
                                                 </div>
                                             ) : (
@@ -513,7 +568,7 @@ export default function TaxCalculation() {
                             </h3>
                             <div className="flex gap-2">
                                 <button
-                                    onClick={handleDownloadTemplate}
+                                    onClick={handleDownloadDatabaseTemplate}
                                     className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-600 hover:bg-green-100 rounded-lg flex items-center gap-1 transition-colors border border-green-200"
                                     title="Download Template Excel"
                                 >
@@ -530,13 +585,13 @@ export default function TaxCalculation() {
                                     <input
                                         type="file"
                                         accept=".xlsx, .xls"
-                                        onChange={handleImport}
+                                        onChange={handleImportDatabase}
                                         className="absolute inset-0 opacity-0 cursor-pointer"
                                         disabled={isImporting}
                                     />
                                     <button
                                         className={`px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg flex items-center gap-1 transition-colors border border-blue-200 ${isImporting ? 'opacity-50 cursor-wait' : ''}`}
-                                        title="Import Master Data dari Excel"
+                                        title="Import Database WP dari Excel"
                                     >
                                         <Upload size={14} /> {isImporting ? 'Uploading...' : 'Import Excel'}
                                     </button>

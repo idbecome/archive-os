@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"vite\" \"node --watch server/index.js\" \"node --watch server/worker.js\"",
+    "dev": "concurrently \"vite --host\" \"node --watch server/index.js\" \"node --watch server/worker.js\"",
     "server": "node --watch server/index.js",
     "worker": "node --watch server/worker.js",
     "build": "vite build",
