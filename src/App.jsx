@@ -351,6 +351,51 @@ export default function App() {
 
   // --- HANDLERS: WAREHOUSE ---
 
+  const syncBoxFolder = async (boxId, status, oldBoxId = null) => {
+    if (!boxId) return null;
+    try {
+      const allFolders = await api.getFolders();
+      // Cari folder di root yang namanya persis atau diawali dengan ID Box (untuk folder yang sudah di-rename)
+      let folder = allFolders.find(f => {
+        const isRoot = !f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0';
+        if (!isRoot) return false;
+        const targetId = oldBoxId || boxId;
+        return f.name === targetId || f.name.startsWith(`${targetId}_`);
+      });
+
+      // Jika folder belum ada dan status bukan penghapusan, buat folder baru
+      if (!folder && status !== 'EMPTY' && status !== 'REMOVED') {
+        const res = await api.createFolder({
+          name: boxId,
+          parentId: null,
+          privacy: 'public',
+          owner: currentUser?.name || 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        folder = updatedFolders.find(f => f.name === boxId && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      }
+
+      if (folder) {
+        let newName = boxId;
+        // Jika box pindah/dihapus/keluar, rename dengan format: no_box_uniq no_status box
+        if (status !== 'STORED' && status !== 'IMPORTED') {
+          newName = `${boxId}_${Date.now()} ${status} box`;
+        }
+
+        if (newName !== folder.name) {
+          await api.updateFolder(folder.id, { name: newName });
+          await fetchFolders();
+        }
+        return folder.id;
+      }
+      return null;
+    } catch (err) {
+      console.error("Folder sync failed:", err);
+      return null;
+    }
+  };
+
   // --- PERMISSIONS HELPERS ---
   const hasPermission = (moduleId, action = 'view') => {
     return checkPermission(currentUser, roles, moduleId, action);
@@ -516,6 +561,11 @@ export default function App() {
     const currentSlot = inventory.find(s => Number(s.id) === Number(selectedSlotId));
     if (!currentSlot) return;
 
+    // --- SYNC FOLDER (Get or Create Box Folder) ---
+    const oldBoxId = currentSlot.boxData?.id;
+    const boxFolderId = await syncBoxFolder(boxForm.boxId, 'STORED', oldBoxId);
+    // --- END SYNC FOLDER ---
+
     // --- BATCH UPLOAD START ---
     let updatedOrdners = [...boxForm.ordners];
     let uploadCount = 0;
@@ -530,22 +580,54 @@ export default function App() {
 
           for (let iIdx = 0; iIdx < updatedInvoices.length; iIdx++) {
             let inv = updatedInvoices[iIdx];
+            
+            // FIX: Better file type detection using fileName as fallback
+            let fileType = 'image/jpeg';
+            const nameCheck = (inv.fileName || inv.file || '').toLowerCase();
+            if (nameCheck.includes('.pdf') || nameCheck.includes('application/pdf')) {
+                fileType = 'application/pdf';
+            }
+            
+            let fileSize = '0 KB';
+
             if (inv.rawFile) {
               // Show loading state manually if needed, or use a toast
               console.log(`Uploading invoice ${inv.invoiceNo}...`);
+              fileType = inv.rawFile.type;
+              fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
               const uploadRes = await api.uploadFile(inv.rawFile);
 
               if (uploadRes && uploadRes.success) {
-                // Update invoice with real URL and remove rawFile to prevent re-upload
+                // Update invoice with real URL
                 updatedInvoices[iIdx] = {
                   ...inv,
                   file: uploadRes.url,
                   rawFile: undefined // Clear raw file
                 };
+                inv = updatedInvoices[iIdx]; // Update local reference for next step
                 uploadCount++;
               } else {
                 throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
               }
+            }
+
+            // Sinkronisasi lampiran invoice ke tabel documents agar muncul di Documents.jsx
+            if (inv.file && boxFolderId) {
+              const isUrl = typeof inv.file === 'string' && (inv.file.startsWith('http') || inv.file.startsWith('/uploads/'));
+              const docPayload = {
+                id: `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                title: inv.fileName || `Invoice ${inv.invoiceNo}`,
+                type: fileType,
+                size: fileSize,
+                uploadDate: new Date().toISOString(),
+                folderId: String(boxFolderId),
+                uploader: currentUser?.name || 'Admin',
+                ocrContent: inv.ocrContent || '',
+                url: isUrl ? inv.file : null,
+                fileData: isUrl ? null : inv.file
+              };
+              // Server handles duplicate check by title + folderId
+              await api.createDocument(docPayload);
             }
           }
           updatedOrdners[oIdx] = { ...ordner, invoices: updatedInvoices };
@@ -559,11 +641,11 @@ export default function App() {
 
     if (uploadCount > 0) {
       console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
+      await fetchDocs();
     }
     // --- BATCH UPLOAD END ---
 
     const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
-    const oldBoxId = currentSlot.boxData?.id;
 
     let newHistory = isNew
       ? [createHistoryItem('CREATED', `Kardus baru: ${boxForm.boxId}`), createHistoryItem('STORED', `Masuk Slot #${selectedSlotId}`)]
@@ -592,6 +674,11 @@ export default function App() {
     const slotIndex = selectedSlotId - 1;
     const currentSlot = inventory[slotIndex];
 
+    // --- SYNC FOLDER (Rename jika status berubah) ---
+    if (currentSlot.boxData) {
+      await syncBoxFolder(currentSlot.boxData.id, newStatus);
+    }
+
     const updatedSlot = {
       ...currentSlot,
       status: newStatus,
@@ -617,6 +704,11 @@ export default function App() {
     const sourceSlot = inventory[selectedSlotId - 1];
     const targetSlot = inventory[targetId - 1];
 
+    // --- SYNC FOLDER (Rename karena pindah slot) ---
+    if (sourceSlot.boxData) {
+      await syncBoxFolder(sourceSlot.boxData.id, 'MOVED');
+    }
+
     const updatedTarget = { ...targetSlot, status: sourceSlot.status, boxData: sourceSlot.boxData, lastUpdated: new Date().toISOString(), history: [...(targetSlot.history || []), createHistoryItem('MOVED', `Pindahan dr Slot #${selectedSlotId}`)] };
     const updatedSource = { ...sourceSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(sourceSlot.history || []), createHistoryItem('MOVED', `Pindah ke Slot #${targetId}`)] };
 
@@ -639,6 +731,7 @@ export default function App() {
     try {
       // 1. Save to External Items
       if (currentSlot.boxData) {
+        await syncBoxFolder(currentSlot.boxData.id, 'EXTERNAL');
         await api.createExternalItem({
           boxId: currentSlot.boxData.id,
           destination: destination,
@@ -673,6 +766,9 @@ export default function App() {
     if (!window.confirm(`Kembalikan Box ${selectedExternalItem.boxId} ke Slot #${targetId}?`)) return;
 
     try {
+      // Rename folder kembali ke nama asli (tanpa status/timestamp)
+      await syncBoxFolder(selectedExternalItem.boxId, 'STORED');
+
       // 1. Update Inventory Slot
       const updatedSlot = {
         ...targetSlot,
@@ -712,6 +808,10 @@ export default function App() {
   const handleEmptySlot = async () => {
     if (!window.confirm("Kosongkan slot? Data kardus akan dihapus.")) return;
     const currentSlot = inventory[selectedSlotId - 1];
+
+    if (currentSlot.boxData) {
+      await syncBoxFolder(currentSlot.boxData.id, 'REMOVED');
+    }
 
     const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem('REMOVED', `Dikosongkan manual`)] };
 
@@ -839,6 +939,9 @@ export default function App() {
                 ordners: ordners
               };
             }
+
+            // Sync Folder untuk Box yang di-import
+            await syncBoxFolder(boxId, 'IMPORTED');
 
             const updatedSlot = {
               ...currentSlot,

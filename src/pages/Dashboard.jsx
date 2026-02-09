@@ -105,10 +105,29 @@ export default function Dashboard({
                     ) : (
                         /* ACTIVE STATE */
                         <>
-                            <h3 className="text-lg font-bold flex items-center gap-2 mb-6">
-                                <div className="w-3 h-3 bg-white rounded-full animate-ping"></div>
-                                Sedang Memproses OCR...
-                            </h3>
+                            <div className="flex justify-between items-start mb-6">
+                                <h3 className="text-lg font-bold flex items-center gap-2">
+                                    <div className="w-3 h-3 bg-white rounded-full animate-ping"></div>
+                                    Sedang Memproses OCR...
+                                </h3>
+                                <button 
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if(window.confirm("Yakin ingin mereset antrian yang macet? Gunakan ini hanya jika proses tidak berjalan.")) {
+                                            try {
+                                                await fetch(`http://${window.location.hostname}:5000/api/ocr/reset`, { method: 'POST' });
+                                                // Force refresh stats locally to update UI immediately
+                                                window.location.reload();
+                                            } catch(err) {
+                                                alert("Gagal reset: " + err.message);
+                                            }
+                                        }
+                                    }}
+                                    className="text-[10px] bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg border border-white/20 transition-colors font-medium text-white"
+                                >
+                                    Reset Macet
+                                </button>
+                            </div>
 
                             {/* PROGRESS BAR SECTION */}
                             {(ocrStats?.activeJobs || []).length > 0 && (

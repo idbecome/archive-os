@@ -5,7 +5,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 import mammoth from 'mammoth';
-import * as XLSX from 'xlsx';
+import XLSX from 'xlsx';
 import JSZip from 'jszip';
 import db from './db.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -18,6 +18,43 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(workerPath).href;
 
 // Standard Font Path for PDF.js
 const standardFontDataUrl = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'standard_fonts/');
+
+// Helper: Detect if file is PDF by signature (Magic Bytes)
+function isPdfFile(filePath) {
+    try {
+        const buffer = Buffer.alloc(4);
+        const fd = fs.openSync(filePath, 'r');
+        fs.readSync(fd, buffer, 0, 4, 0);
+        fs.closeSync(fd);
+        return buffer.toString() === '%PDF';
+    } catch (e) { return false; }
+}
+
+// Helper: Detect if file is Image by signature
+function isImageFile(filePath) {
+    try {
+        const buffer = Buffer.alloc(12);
+        const fd = fs.openSync(filePath, 'r');
+        fs.readSync(fd, buffer, 0, 12, 0);
+        fs.closeSync(fd);
+        
+        // JPEG: FF D8 FF
+        if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return true;
+        // PNG: 89 50 4E 47
+        if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) return true;
+        // BMP: 42 4D
+        if (buffer[0] === 0x42 && buffer[1] === 0x4D) return true;
+        // TIFF: 49 49 2A 00 or 4D 4D 00 2A
+        if ((buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2A && buffer[3] === 0x00) ||
+            (buffer[0] === 0x4D && buffer[1] === 0x4D && buffer[2] === 0x00 && buffer[3] === 0x2A)) return true;
+        // WebP: RIFF ... WEBP
+        if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return true;
+        // GIF: GIF8
+        if (buffer.toString('ascii', 0, 4) === 'GIF8') return true;
+
+        return false;
+    } catch (e) { return false; }
+}
 
 // Helper: Convert Raw PDF Image Data to PPM (Tesseract Compatible)
 function mkPPM(imgObj) {
@@ -130,16 +167,33 @@ async function processOCRJob(job) {
             throw new Error(`File not found: ${filePath}`);
         }
 
+        // FIX: Auto-detect PDF signature to prevent Tesseract crash on PDF-as-Image
+        let effectiveFileType = fileType;
+        if (isPdfFile(filePath)) {
+            console.log(`[Worker] Detected PDF signature for ${filePath}. Forcing type to application/pdf.`);
+            effectiveFileType = 'application/pdf';
+        } else if (effectiveFileType.startsWith('image/') && !isImageFile(filePath)) {
+             console.warn(`[Worker] File ${filePath} has image MIME type but invalid signature. Skipping Tesseract.`);
+             effectiveFileType = 'application/octet-stream';
+        }
+
         // 2. OCR Hybrid logic (Internal Text extraction + Tesseract fallback)
         let extractedText = "";
 
-        if (fileType.startsWith('image/')) {
-            const tess = await createWorker('eng+ind');
-            const { data: { text } } = await tess.recognize(filePath);
-            await tess.terminate();
-            extractedText = `[OCR IMAGE]\n${text}`;
+        if (effectiveFileType.startsWith('image/')) {
+            let tess = null;
+            try {
+                tess = await createWorker('eng+ind');
+                const { data: { text } } = await tess.recognize(filePath);
+                extractedText = `[OCR IMAGE]\n${text}`;
+            } catch (ocrErr) {
+                console.error("[Worker] Tesseract Image OCR Failed:", ocrErr);
+                extractedText = `[OCR FAILED] ${ocrErr.message}`;
+            } finally {
+                if (tess) await tess.terminate();
+            }
         }
-        else if (fileType === 'application/pdf') {
+        else if (effectiveFileType === 'application/pdf') {
             const dataBuffer = fs.readFileSync(filePath);
             
             let pdfText = "";
@@ -309,6 +363,12 @@ async function processOCRJob(job) {
 async function startPolling() {
     console.log("[Worker] Starting MySQL Polling (No Redis)...");
     
+    // FIX: Reset stuck jobs on startup (Active -> Waiting)
+    db.run("UPDATE job_queue SET status = 'waiting' WHERE status = 'active'", [], (err) => {
+        if (err) console.error("[Worker] Failed to reset stuck jobs:", err);
+        else console.log("[Worker] Startup: Reset stuck 'active' jobs to 'waiting'.");
+    });
+
     const poll = async () => {
         try {
             // 1. Fetch one waiting job

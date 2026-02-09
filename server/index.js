@@ -585,6 +585,14 @@ app.get('/api/ocr/status', async (req, res) => {
     }
 });
 
+// NEW: Reset OCR Queue Endpoint (Fix Stuck Jobs)
+app.post('/api/ocr/reset', (req, res) => {
+    db.run("UPDATE job_queue SET status = 'waiting' WHERE status = 'active'", [], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, message: "Queue reset successfully" });
+    });
+});
+
 // --- INVENTORY ---
 app.get('/api/inventory', (req, res) => {
     db.all("SELECT * FROM inventory", [], (err, rows) => {
