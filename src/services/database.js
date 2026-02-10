@@ -1,4 +1,4 @@
-const API_URL = '/api';
+const API_URL = 'http://localhost:5000/api';
 
 export const db = {
     async getInventory() {
@@ -57,35 +57,12 @@ export const db = {
         try {
             const response = await fetch(`${API_URL}/documents`);
             const data = await response.json();
-            return data.map(doc => {
-                const rawVersions = doc.versionsHistory || doc.versions_history;
-                return {
-                    ...doc,
-                    fileData: doc.fileData || doc.file_data || doc.filedata,
-                    versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
-                };
-            });
+            return data.map(doc => ({
+                ...doc,
+                fileData: doc.fileData || doc.file_data || doc.filedata,
+                versionsHistory: doc.versions_history || []
+            }));
         } catch { return []; }
-    },
-
-    async getDocuments(params = {}) {
-        try {
-            const query = new URLSearchParams(params).toString();
-            const response = await fetch(`${API_URL}/documents?${query}`);
-            if (!response.ok) throw new Error('Gagal mengambil dokumen');
-            const data = await response.json();
-            return data.map(doc => {
-                const rawVersions = doc.versionsHistory || doc.versions_history;
-                return {
-                    ...doc,
-                    fileData: doc.fileData || doc.file_data || doc.filedata,
-                    versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
-                };
-            });
-        } catch (e) {
-            console.error("DB Error (Documents):", e);
-            return [];
-        }
     },
 
     // NEW: Ambil detail dokumen (termasuk fileData) jika di list kosong
@@ -94,11 +71,9 @@ export const db = {
             const response = await fetch(`${API_URL}/documents/${id}`);
             if (!response.ok) throw new Error('Gagal mengambil detail dokumen');
             const doc = await response.json();
-            const rawVersions = doc.versionsHistory || doc.versions_history;
             return {
                 ...doc,
-                fileData: doc.fileData || doc.file_data || doc.filedata,
-                versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
+                fileData: doc.fileData || doc.file_data || doc.filedata
             };
         } catch (e) { console.error(e); return null; }
     },
@@ -153,44 +128,8 @@ export const db = {
             return await response.json();
         } catch { return []; }
     },
-
-    async createTaxAudit(data) {
-        try {
-            const response = await fetch(`${API_URL}/tax-audits`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            if (!response.ok) throw new Error('Gagal membuat audit');
-            return await response.json();
-        } catch (e) { console.error("Gagal membuat tax audit", e); throw e; }
-    },
-
-    async updateTaxAudit(id, data) {
-        try {
-            const response = await fetch(`${API_URL}/tax-audits/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
-            });
-            if (!response.ok) throw new Error('Gagal update audit');
-        } catch (e) { console.error("Gagal update tax audit", e); throw e; }
-    },
-
-    async deleteTaxAudit(id) {
-        try {
-            const response = await fetch(`${API_URL}/tax-audits/${id}`, { method: 'DELETE' });
-            if (!response.ok) throw new Error('Gagal hapus audit');
-        } catch (e) { console.error("Gagal hapus tax audit", e); throw e; }
-    },
-
     async getTaxSummaries() {
-        try {
-            const response = await fetch(`${API_URL}/tax-summaries`);
-            return await response.json();
-        } catch {
-            return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
-        }
+        return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
     },
     async getUsers() {
         try {
@@ -302,17 +241,12 @@ export const db = {
 
     async createDocument(doc) {
         try {
-            const response = await fetch(`${API_URL}/documents`, {
+            await fetch(`${API_URL}/documents`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(doc)
             });
-            if (!response.ok) throw new Error('Gagal buat dokumen');
-            return await response.json();
-        } catch (e) {
-            console.error("createDocument Error:", e);
-            return null;
-        }
+        } catch (e) { console.error("Gagal buat dokumen", e); }
     },
 
     async updateDocument(id, doc) {
@@ -380,21 +314,5 @@ export const db = {
         try {
             await fetch(`${API_URL}/inventory/external/${id}`, { method: 'DELETE' });
         } catch (e) { console.error("Gagal hapus external item", e); }
-    },
-
-    async uploadFile(file) {
-        const formData = new FormData();
-        formData.append('file', file);
-        try {
-            const response = await fetch(`${API_URL}/upload`, {
-                method: 'POST',
-                body: formData
-            });
-            if (!response.ok) throw new Error('Upload failed');
-            return await response.json();
-        } catch (e) {
-            console.error("Upload error:", e);
-            throw e;
-        }
     }
 };

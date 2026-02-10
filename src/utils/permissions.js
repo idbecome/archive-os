@@ -13,8 +13,8 @@ export const checkPermission = (currentUser, roles, moduleId, action = 'view') =
         try { rolePerms = JSON.parse(rolePerms); } catch (e) { rolePerms = {}; }
     }
 
-    if (userRoleData && rolePerms && rolePerms[moduleId]) {
-        return rolePerms[moduleId].includes(action);
+    if (userRoleData && rolePerms) {
+        return rolePerms[moduleId] ? rolePerms[moduleId].includes(action) : false;
     }
 
     // Simple role-based fallback
@@ -32,6 +32,5 @@ export const APP_MODULES = {
     documents: { id: 'documents', label: 'Dokumen Digital' },
     'tax-monitoring': { id: 'tax-monitoring', label: 'Tax Monitoring' },
     'tax-summary': { id: 'tax-summary', label: 'Tax Summary' },
-    'tax-calculation': { id: 'tax-calculation', label: 'Tax Calculation' },
     master: { id: 'master', label: 'Master Data' }
 };
