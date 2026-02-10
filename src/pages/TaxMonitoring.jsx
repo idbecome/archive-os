@@ -1,17 +1,21 @@
 import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X } from 'lucide-react';
+import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp } from 'lucide-react';
+import { db as api } from '../services/database';
+import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
-import { api } from '../api';
 import Modal from '../components/common/Modal';
 
+// ... (code)
+
+// --- CONSTANTS ---
 const AUDIT_STEPS = [
-    { id: 1, title: "Persiapan", description: "Pemeriksaan & Penerbitan SP2" },
-    { id: 2, title: "Pemberitahuan & Pertemuan", description: "Penyampaian Surat & Pertemuan Awal" },
-    { id: 3, title: "Pelaksanaan", description: "Peminjaman Dokumen & Pengujian " },
-    { id: 4, title: "Penyampaian Hasil (SPHP)", description: "Penerbitan SPHP & Tanggapan" },
-    { id: 5, title: "Pembahasan Akhir", description: "Closing Conference & Quality Assurance" },
-    { id: 6, title: "Penetapan & Penagihan", description: "LHP & Penerbitan SKP (KB/LB/Nihil)" },
-    { id: 7, title: "Jalur Sengketa", description: "Keberatan, Banding, Peninjauan Kembali" }
+    { id: 1, title: 'Penyampaian SP2', description: 'Surat Perintah Pemeriksaan disampaikan kepada Wajib Pajak.' },
+    { id: 2, title: 'Peminjaman Dokumen', description: 'Permintaan peminjaman buku, catatan, dan dokumen pendukung.' },
+    { id: 3, title: 'Pengujian Pemeriksaan', description: 'Pelaksanaan pengujian kepatuhan materiil dan formal.' },
+    { id: 4, title: 'Penyampaian SPHP', description: 'Surat Pemberitahuan Hasil Pemeriksaan (SPHP) disampaikan.' },
+    { id: 5, title: 'Pembahasan Akhir', description: 'Closing Conference / Pembahasan Akhir Hasil Pemeriksaan.' },
+    { id: 6, title: 'Risalah Pembahasan', description: 'Penandatanganan Risalah Pembahasan dan Berita Acara.' },
+    { id: 7, title: 'LHP & SKP', description: 'Laporan Hasil Pemeriksaan dan Penerbitan Surat Ketetapan Pajak.' }
 ];
 
 export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, onRefresh }) {
@@ -19,6 +23,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const [activeStep, setActiveStep] = useState(1);
     const [auditFiles, setAuditFiles] = useState([]);
     const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+    // File Detail State
+    const [selectedFileDetail, setSelectedFileDetail] = useState(null);
 
     const [isUploadingFile, setIsUploadingFile] = useState(false); // New state for upload status
     // Checklist Edit State
@@ -34,6 +41,20 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const [newAuditDate, setNewAuditDate] = useState(new Date().toISOString().split('T')[0]);
     const [newAuditFile, setNewAuditFile] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
+
+    // --- UPLOAD FORM STATE (Refactor) ---
+    const [uploadModalOpen, setUploadModalOpen] = useState(false);
+    const [uploadForm, setUploadForm] = useState({
+        file: null,
+        fileData: null,
+        fileName: '',
+        fileType: '',
+        fileSize: '',
+        title: '',
+        ocrContent: '',
+        isProcessing: false,
+        processingMessage: ''
+    });
 
     // List State
     const [searchQuery, setSearchQuery] = useState('');
@@ -57,22 +78,27 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     }, [taxAudits]);
 
     useEffect(() => {
-        if (selectedAudit) {
-            // Auto-select the current active step (or last active)
-            // Auto-select the current active step (or last active)
-            let stepVal = selectedAudit.currentStep ? parseInt(selectedAudit.currentStep) : 1;
-            if (isNaN(stepVal) || stepVal < 1) stepVal = 1;
-            if (stepVal > 7) stepVal = 7;
-            setActiveStep(stepVal);
-            loadFiles(selectedAudit);
-        }
-    }, [selectedAudit]);
-
-    useEffect(() => {
         if (selectedAudit && activeStep) {
             loadFiles(selectedAudit);
         }
-    }, [activeStep]);
+    }, [activeStep, selectedAudit]);
+
+    // POLL STATUS for processing files
+    useEffect(() => {
+        const hasProcessing = auditFiles.some(f => f.status === 'processing' || (f.ocrContent === '' && !f.type.includes('image') && !f.type.includes('pdf')));
+        // Note: Simple check. Better to rely on explicit 'status' field from DB.
+
+        // We'll trust availability of 'status' field from backend now.
+        const processingFiles = auditFiles.filter(f => f.status === 'processing');
+
+        if (processingFiles.length > 0) {
+            const interval = setInterval(() => {
+                console.log("Polling for processing files...", processingFiles.map(f => f.id));
+                loadFiles(selectedAudit);
+            }, 5000);
+            return () => clearInterval(interval);
+        }
+    }, [auditFiles, selectedAudit]);
 
     const loadFiles = async (audit) => {
         setIsLoadingFiles(true);
@@ -266,6 +292,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
                 if (newAuditFile) {
                     const folderId = await getOrCreateAuditFolder(newAuditTitle);
+
+                    let ocrText = ''; // OCR will be handled by background worker
+
                     const base64 = await new Promise((resolve, reject) => {
                         const reader = new FileReader();
                         reader.onload = (e) => resolve(e.target.result);
@@ -282,12 +311,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                         auditId: currentAuditId,
                         stepIndex: 0,
                         fileData: base64,
-                        file_data: base64, // RESTORED: Pastikan data terkirim ke backend
-                        filedata: base64, // RESTORED: Backend mungkin menggunakan lowercase
+                        file_data: base64,
+                        filedata: base64,
                         folderId: folderId,
                         department: 'Tax',
                         owner: currentUser?.name || 'Admin',
-                        ocrContent: 'Initial attachment'
+                        ocrContent: '' // Will be handled by background worker
                     };
                     await api.createDocument(doc);
                 }
@@ -374,9 +403,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         if (onRefresh) onRefresh();
     };
 
-    const handleFileUpload = async (e) => {
+    // --- NEW UPLOAD HANDLERS ---
+    const handleFileSelect = (e) => {
         const file = e.target.files[0];
-        if (!file || !selectedAudit) return;
+        if (!file) return;
 
         if (file.size > 30 * 1024 * 1024) {
             alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
@@ -384,36 +414,73 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             return;
         }
 
-        setIsUploadingFile(true); // Set uploading state to true
-        const folderId = await getOrCreateAuditFolder(selectedAudit.title);
         const reader = new FileReader();
-        reader.onload = async (ev) => {
+        reader.onload = (ev) => {
+            setUploadForm({
+                file: file,
+                fileData: ev.target.result,
+                fileName: file.name,
+                fileType: file.type,
+                fileSize: (file.size / 1024).toFixed(1) + ' KB',
+                title: file.name,
+                ocrContent: '',
+                isProcessing: false,
+                processingMessage: ''
+            });
+            setUploadModalOpen(true);
+        };
+        reader.readAsDataURL(file);
+        e.target.value = null;
+    };
+
+    const handleConfirmUpload = async () => {
+        if (!selectedAudit || !uploadForm.fileData) return;
+
+        setUploadForm(prev => ({ ...prev, isProcessing: true, processingMessage: 'Mengunggah & Mengantrikan OCR...' }));
+
+        try {
+            const folderId = await getOrCreateAuditFolder(selectedAudit.title);
+
+            // Perform OCR Client-Side for immediate availability
+            let ocrText = '';
+            try {
+                if (uploadForm.file) {
+                    ocrText = await performAdvancedOCR(uploadForm.file, (msg) => setUploadForm(prev => ({ ...prev, processingMessage: msg })));
+                }
+            } catch (ocrErr) {
+                console.warn("Client-side OCR failed, continuing upload...", ocrErr);
+            }
+
+            // Backend will handle OCR via Queue
             const newDoc = {
                 id: String(Date.now()),
-                title: file.name,
-                type: file.type,
-                size: (file.size / 1024).toFixed(1) + ' KB',
+                title: uploadForm.title || uploadForm.fileName,
+                type: uploadForm.fileType,
+                size: uploadForm.fileSize,
                 uploadDate: new Date().toISOString(),
                 auditId: selectedAudit.id,
                 stepIndex: activeStep,
-                fileData: ev.target.result,
-                file_data: ev.target.result, // RESTORED: Pastikan data terkirim ke backend
-                filedata: ev.target.result, // RESTORED: Backend mungkin menggunakan lowercase
+                fileData: uploadForm.fileData,
+                file_data: uploadForm.fileData,
+                filedata: uploadForm.fileData,
                 folderId: folderId,
                 department: 'Tax',
-                owner: currentUser?.name || 'Tax Team'
+                owner: currentUser?.name || 'Tax Team',
+                ocrContent: ocrText // Sent to server immediately
             };
-            try {
-                await api.createDocument(newDoc);
-                loadFiles(selectedAudit);
-                if (onRefresh) onRefresh();
-                alert('File berhasil diunggah!');
-            }
-            catch (err) { console.error("Failed to upload file:", err); alert('Gagal mengunggah file: ' + err.message); }
-            finally { setIsUploadingFile(false); } // Reset uploading state
-        };
-        reader.readAsDataURL(file);
-        e.target.value = null; // Clear the input after selection
+
+            await api.createDocument(newDoc);
+
+            loadFiles(selectedAudit); // Reload list (will show 'processing')
+            if (onRefresh) onRefresh();
+            setUploadModalOpen(false); // Close Modal
+
+        } catch (err) {
+            console.error("Failed to upload file:", err);
+            alert('Gagal mengunggah file: ' + err.message);
+        } finally {
+            setUploadForm(prev => ({ ...prev, isProcessing: false }));
+        }
     };
 
     const handleDeleteFile = async (docId) => {
@@ -477,6 +544,67 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + ' Hari';
     };
 
+    const getSmartInsight = () => {
+        // 1. Konteks Pencarian
+        if (searchQuery) {
+            return {
+                text: `Analisis Pencarian: Menampilkan hasil untuk "${searchQuery}". AI memindai nomor surat, judul, dan konten dokumen terkait.`,
+                icon: <Search className="text-indigo-500" size={20} />,
+                color: "border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-900/10 text-indigo-800 dark:text-indigo-200"
+            };
+        }
+
+        // 2. Analisis Pemeriksaan Aktif & Durasi
+        const activeAudits = taxAudits.filter(a => a.status !== 'Done');
+        const longRunning = activeAudits.filter(a => {
+            const days = parseInt(getDuration(a.startDate, new Date()));
+            return days > 30;
+        });
+
+        if (longRunning.length > 0) {
+            return {
+                text: `Peringatan Durasi: Terdapat ${longRunning.length} pemeriksaan yang telah berjalan lebih dari 30 hari. Segera tinjau hambatan pada tahap terkait.`,
+                icon: <AlertCircle className="text-red-500" size={20} />,
+                color: "border-red-200 dark:border-red-800/50 bg-red-50/50 dark:bg-red-900/10 text-red-800 dark:text-red-200"
+            };
+        }
+
+        // 3. Analisis Tahap Kritis (Peminjaman Dokumen)
+        const stuckAtBorrowing = activeAudits.filter(a => a.currentStep === 2);
+        if (stuckAtBorrowing.length > 0) {
+            return {
+                text: `Tahap Kritis: ${stuckAtBorrowing.length} pemeriksaan sedang di tahap 'Peminjaman Dokumen'. Pastikan semua bukti fisik telah di-scan dan di-upload ke sistem.`,
+                icon: <TrendingUp className="text-amber-500" size={20} />,
+                color: "border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200"
+            };
+        }
+
+        // 4. Analisis Kelengkapan (Missing Attachments)
+        const missingSP2 = taxAudits.filter(a => !generalAttachments[a.id]);
+        if (missingSP2.length > 0) {
+            return {
+                text: `Kelengkapan Data: Ditemukan ${missingSP2.length} pemeriksaan tanpa lampiran SP2 digital. Unggah dokumen untuk menjaga validitas audit trail.`,
+                icon: <FileText className="text-purple-500" size={20} />,
+                color: "border-purple-200 dark:border-purple-800/50 bg-purple-50/50 dark:bg-purple-900/10 text-purple-800 dark:text-purple-200"
+            };
+        }
+
+        // 5. Default Tips
+        const tips = [
+            "Tips Kepatuhan: Selalu gunakan fitur 'Notes' untuk mencatat setiap interaksi dengan pemeriksa pajak.",
+            "Info AI: Dokumen yang di-upload di setiap tahap otomatis terindeks untuk pencarian cepat saat pembahasan akhir.",
+            "Saran: Lakukan review mingguan terhadap progress bar pemeriksaan untuk menghindari keterlambatan respon SPHP.",
+            "Sistem Optimal: Semua data pemeriksaan tersinkronisasi dengan aman di Digital Vault."
+        ];
+        return {
+            text: tips[new Date().getHours() % tips.length],
+            icon: <Sparkles className="text-emerald-500" size={20} />,
+            color: "border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-900/10 text-emerald-800 dark:text-emerald-200"
+        };
+    };
+
+    const insight = getSmartInsight();
+
     const filteredAudits = (taxAudits || []).filter(t =>
         (t.title || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
         (t.letterNumber || '').toLowerCase().includes(searchQuery.toLowerCase())
@@ -484,404 +612,425 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
     return (
         <>
-            <div className="space-y-6 animate-in fade-in duration-500">
-            {!selectedAudit ? (
-                <div className="space-y-6">
-                    <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
-                        <input
-                            className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 transition-all dark:text-white"
-                            placeholder="Cari No Surat, Nama WP, atau Judul Pemeriksaan..."
-                            value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                        />
+            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+                {/* AI SMART INSIGHT BANNER */}
+                <div className={`p-4 rounded-2xl border backdrop-blur-md flex items-center gap-4 animate-in slide-in-from-top-4 duration-700 ${insight.color}`}>
+                    <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl shadow-sm shrink-0">
+                        {insight.icon}
                     </div>
-                    <SummaryCard title="Total Pemeriksaan" value={taxAudits.length} icon={ClipboardCheck} colorClass="bg-indigo-100 text-indigo-600" />
-                    <Card>
-                        <div className="flex justify-between items-center mb-6">
-                            <h3 className="font-bold text-lg dark:text-white">Daftar Pemeriksaan</h3>
-                            {hasPermission('tax-monitoring', 'create') && (
-                                <button onClick={openCreateModal} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm flex items-center gap-2 hover:bg-indigo-700">
-                                    <Plus size={16} /> Baru
-                                </button>
-                            )}
+                    <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-0.5">
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Smart Assistant</span>
+                            <div className="w-1 h-1 rounded-full bg-current opacity-40"></div>
+                            <span className="text-[10px] font-bold opacity-60">Audit Intelligence</span>
                         </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full text-sm text-left">
-                                <thead className="bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-300">
-                                    <tr>
-                                        <th className="px-6 py-3">No Surat & Tanggal</th>
-                                        <th className="px-6 py-3">Judul</th>
-                                        <th className="px-6 py-3">Lampiran</th>
-                                        <th className="px-6 py-3">Status</th>
-                                        <th className="px-6 py-3">Progress</th>
-                                        <th className="text-right px-6 py-3">Action</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {filteredAudits.map(audit => {
-                                        let stepsArray = [];
-                                        if (Array.isArray(audit.steps)) {
-                                            stepsArray = audit.steps;
-                                        } else if (typeof audit.steps === 'string') {
-                                            try { stepsArray = JSON.parse(audit.steps); } catch (e) { stepsArray = []; }
-                                        }
-
-                                        const doneSteps = stepsArray.filter(s => s.status === 'Done').length;
-                                        const percent = Math.round((doneSteps / 7) * 100);
-                                        const attachment = generalAttachments[audit.id];
-                                        return (
-                                            <tr key={audit.id} className="border-b dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50">
-                                                <td className="px-6 py-4">
-                                                    <div className="font-bold text-gray-800 dark:text-gray-200">{audit.letterNumber || '-'}</div>
-                                                    <div className="text-xs text-gray-400 mt-1 flex items-center gap-1"><Calendar size={10} /> {audit.startDate ? new Date(audit.startDate).toLocaleDateString() : '-'}</div>
-                                                </td>
-                                                <td className="px-6 py-4 font-medium dark:text-white">{audit.title}</td>
-                                                <td className="px-6 py-4">
-                                                    {attachment ? (
-                                                        <button onClick={() => handleSecureDownload(attachment)} className="flex items-center gap-1 text-blue-600 hover:underline text-xs" title={attachment.title}>
-                                                            <Paperclip size={14} /> Lihat
-                                                        </button>
-                                                    ) : <span className="text-gray-400 text-xs">-</span>}
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <span className={`px-2 py-1 rounded-full text-xs font-semibold ${audit.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{audit.status}</span>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="w-24 bg-gray-200 rounded-full h-1.5 dark:bg-gray-700 relative">
-                                                        <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
-                                                    </div>
-                                                    <span className="text-[10px] text-gray-500 mt-1 block">{percent}%</span>
-                                                </td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <div className="flex items-center justify-end gap-2">
-                                                        <button
-                                                            onClick={() => {
-                                                                const auditWithSteps = { ...audit };
-                                                                if (typeof audit.steps === 'string') {
-                                                                    try { auditWithSteps.steps = JSON.parse(audit.steps); } catch (e) { auditWithSteps.steps = []; }
-                                                                }
-                                                                setSelectedAudit(auditWithSteps);
-                                                            }}
-                                                            className="p-1.5 hover:bg-indigo-50 text-indigo-600 rounded-lg transition-colors"
-                                                            title="Detail"
-                                                        >
-                                                            <FileText size={16} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => {
-                                                                e.stopPropagation();
-                                                                const auditWithSteps = { ...audit };
-                                                                if (typeof audit.steps === 'string') {
-                                                                    try { auditWithSteps.steps = JSON.parse(audit.steps); } catch (e) { auditWithSteps.steps = []; }
-                                                                }
-                                                                openEditModal(auditWithSteps);
-                                                            }}
-                                                            className={`p-1.5 rounded-lg transition-colors ${hasPermission('tax-monitoring', 'edit') ? 'hover:bg-gray-100 text-gray-500' : 'opacity-30 cursor-not-allowed text-gray-300'}`}
-                                                            title="Edit"
-                                                            disabled={!hasPermission('tax-monitoring', 'edit')}
-                                                        >
-                                                            <Edit size={16} />
-                                                        </button>
-                                                        {hasPermission('tax-monitoring', 'delete') && (
-                                                            <button onClick={(e) => handleDeleteAudit(audit.id, e)} className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors" title="Delete">
-                                                                <Trash2 size={16} />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        )
-                                    })}
-                                </tbody>
-                            </table>
-                        </div>
-                    </Card>
+                        <p className="text-sm font-bold leading-relaxed">{insight.text}</p>
+                    </div>
                 </div>
-            ) : (
-                <div className="space-y-6">
-                    <button onClick={() => setSelectedAudit(null)} className="flex items-center gap-2 text-gray-500 hover:text-indigo-600 mb-4 transition-colors">
-                        &larr; Kembali ke Daftar
-                    </button>
-                    <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm">
-                        <div className="flex justify-between items-start mb-6">
-                            <div>
-                                <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{selectedAudit.title}</h2>
-                                <div className="flex items-center gap-4 text-sm text-gray-500">
-                                    <span className="flex items-center gap-1"><FileText size={14} /> {selectedAudit.letterNumber || 'No Surat -'}</span>
-                                    <span className="flex items-center gap-1"><Calendar size={14} /> Mulai: {selectedAudit.startDate ? new Date(selectedAudit.startDate).toLocaleDateString() : '-'}</span>
-                                    <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${selectedAudit.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{selectedAudit.status}</span>
-                                </div>
-                            </div>
-                            <div className="flex flex-col items-end gap-2">
-                                <div className="text-right">
-                                    <p className="text-xs text-gray-500 mb-1">Durasi Total</p>
-                                    <p className="font-bold text-xl text-indigo-600 dark:text-indigo-400">{getDuration(selectedAudit.startDate, selectedAudit.status === 'Done' ? null : new Date())}</p>
-                                </div>
-                                {hasPermission('tax-monitoring', 'edit') && (
-                                    <button onClick={() => openEditModal(selectedAudit)} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Edit size={12} /> Edit Detail</button>
+
+                {!selectedAudit ? (
+                    <div className="space-y-6">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
+                            <input
+                                className="w-full pl-10 pr-4 py-3 rounded-xl border border-gray-200 dark:border-slate-800 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 transition-all dark:text-white"
+                                placeholder="Cari No Surat, Nama WP, atau Judul Pemeriksaan..."
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                            />
+                        </div>
+                        <SummaryCard title="Total Pemeriksaan" value={taxAudits.length} icon={ClipboardCheck} colorClass="bg-indigo-100 text-indigo-600" />
+                        <Card>
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="font-bold text-lg dark:text-white">Daftar Pemeriksaan</h3>
+                                {hasPermission('tax-monitoring', 'create') && (
+                                    <button onClick={openCreateModal} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-sm flex items-center gap-2 hover:bg-indigo-700">
+                                        <Plus size={16} /> Baru
+                                    </button>
                                 )}
                             </div>
-                        </div>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-sm text-left">
+                                    <thead className="bg-gray-50 dark:bg-slate-800 text-gray-700 dark:text-slate-300">
+                                        <tr>
+                                            <th className="px-6 py-3">No Surat & Tanggal</th>
+                                            <th className="px-6 py-3">Judul</th>
+                                            <th className="px-6 py-3">Lampiran</th>
+                                            <th className="px-6 py-3">Status</th>
+                                            <th className="px-6 py-3">Progress</th>
+                                            <th className="text-right px-6 py-3">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {filteredAudits.map(audit => {
+                                            let stepsArray = [];
+                                            if (Array.isArray(audit.steps)) {
+                                                stepsArray = audit.steps;
+                                            } else if (typeof audit.steps === 'string') {
+                                                try { stepsArray = JSON.parse(audit.steps); } catch (e) { stepsArray = []; }
+                                            }
 
-                        {/* TRAIL FLOW VISUALIZATION */}
-
-                        {/* OVERALL PROGRESS & TRAIL FLOW */}
-                        <div className="mb-8 mt-2 space-y-6">
-                            {/* 1. Overall Progress Bar (Restored) */}
-                            <div>
-                                <div className="flex justify-between items-center text-sm mb-2">
-                                    <span className="font-semibold text-gray-700 dark:text-gray-300">Overall Progress</span>
-                                    <span className="text-indigo-600 font-bold">
-                                        {(() => {
-                                            try {
-                                                const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
-                                                    (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
-                                                const done = steps.filter(s => s.status === 'Done').length;
-                                                return Math.round((done / 7) * 100);
-                                            } catch (e) { return 0; }
-                                        })()}%
-                                    </span>
+                                            const doneSteps = stepsArray.filter(s => s.status === 'Done').length;
+                                            const percent = Math.round((doneSteps / 7) * 100);
+                                            const attachment = generalAttachments[audit.id];
+                                            return (
+                                            <tr key={audit.id} 
+                                                style={{ animationDelay: `${(taxAudits.indexOf(audit)) * 50}ms` }}
+                                                className="border-b dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 animate-in zoom-in-95 fade-in fill-mode-both duration-500"
+                                            >
+                                                    <td className="px-6 py-4">
+                                                        <div className="font-bold text-gray-800 dark:text-gray-200">{audit.letterNumber || '-'}</div>
+                                                        <div className="text-xs text-gray-400 mt-1 flex items-center gap-1"><Calendar size={10} /> {audit.startDate ? new Date(audit.startDate).toLocaleDateString() : '-'}</div>
+                                                    </td>
+                                                    <td className="px-6 py-4 font-medium dark:text-white">{audit.title}</td>
+                                                    <td className="px-6 py-4">
+                                                        {attachment ? (
+                                                            <button onClick={() => handleSecureDownload(attachment)} className="flex items-center gap-1 text-blue-600 hover:underline text-xs" title={attachment.title}>
+                                                                <Paperclip size={14} /> Lihat
+                                                            </button>
+                                                        ) : <span className="text-gray-400 text-xs">-</span>}
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <span className={`px-2 py-1 rounded-full text-xs font-semibold ${audit.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{audit.status}</span>
+                                                    </td>
+                                                    <td className="px-6 py-4">
+                                                        <div className="w-24 bg-gray-200 rounded-full h-1.5 dark:bg-gray-700 relative">
+                                                            <div className="bg-indigo-600 h-1.5 rounded-full" style={{ width: `${percent}%` }}></div>
+                                                        </div>
+                                                        <span className="text-[10px] text-gray-500 mt-1 block">{percent}%</span>
+                                                    </td>
+                                                    <td className="px-6 py-4 text-right">
+                                                        <div className="flex items-center justify-end gap-2">
+                                                            <button
+                                                                onClick={() => {
+                                                                    const auditWithSteps = { ...audit };
+                                                                    if (typeof audit.steps === 'string') {
+                                                                        try { auditWithSteps.steps = JSON.parse(audit.steps); } catch (e) { auditWithSteps.steps = []; }
+                                                                    }
+                                                                    setSelectedAudit(auditWithSteps);
+                                                                }}
+                                                                className="p-1.5 hover:bg-indigo-50 text-indigo-600 rounded-lg transition-colors"
+                                                                title="Detail"
+                                                            >
+                                                                <FileText size={16} />
+                                                            </button>
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    const auditWithSteps = { ...audit };
+                                                                    if (typeof audit.steps === 'string') {
+                                                                        try { auditWithSteps.steps = JSON.parse(audit.steps); } catch (e) { auditWithSteps.steps = []; }
+                                                                    }
+                                                                    openEditModal(auditWithSteps);
+                                                                }}
+                                                                className={`p-1.5 rounded-lg transition-colors ${hasPermission('tax-monitoring', 'edit') ? 'hover:bg-gray-100 text-gray-500' : 'opacity-30 cursor-not-allowed text-gray-300'}`}
+                                                                title="Edit"
+                                                                disabled={!hasPermission('tax-monitoring', 'edit')}
+                                                            >
+                                                                <Edit size={16} />
+                                                            </button>
+                                                            {hasPermission('tax-monitoring', 'delete') && (
+                                                                <button onClick={(e) => handleDeleteAudit(audit.id, e)} className="p-1.5 hover:bg-red-50 text-red-500 rounded-lg transition-colors" title="Delete">
+                                                                    <Trash2 size={16} />
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </Card>
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        <button onClick={() => setSelectedAudit(null)} className="flex items-center gap-2 text-gray-500 hover:text-indigo-600 mb-4 transition-colors">
+                            &larr; Kembali ke Daftar
+                        </button>
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-gray-200 dark:border-slate-800 shadow-sm">
+                            <div className="flex justify-between items-start mb-6">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">{selectedAudit.title}</h2>
+                                    <div className="flex items-center gap-4 text-sm text-gray-500">
+                                        <span className="flex items-center gap-1"><FileText size={14} /> {selectedAudit.letterNumber || 'No Surat -'}</span>
+                                        <span className="flex items-center gap-1"><Calendar size={14} /> Mulai: {selectedAudit.startDate ? new Date(selectedAudit.startDate).toLocaleDateString() : '-'}</span>
+                                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${selectedAudit.status === 'Done' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>{selectedAudit.status}</span>
+                                    </div>
                                 </div>
-                                <div className="w-full bg-gray-200 rounded-full h-3 dark:bg-gray-700 overflow-hidden">
-                                    <div
-                                        className="bg-indigo-600 h-3 rounded-full transition-all duration-500 ease-out"
-                                        style={{
-                                            width: `${(() => {
+                                <div className="flex flex-col items-end gap-2">
+                                    <div className="text-right">
+                                        <p className="text-xs text-gray-500 mb-1">Durasi Total</p>
+                                        <p className="font-bold text-xl text-indigo-600 dark:text-indigo-400">{getDuration(selectedAudit.startDate, selectedAudit.status === 'Done' ? null : new Date())}</p>
+                                    </div>
+                                    {hasPermission('tax-monitoring', 'edit') && (
+                                        <button onClick={() => openEditModal(selectedAudit)} className="text-xs text-indigo-600 hover:underline flex items-center gap-1"><Edit size={12} /> Edit Detail</button>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* TRAIL FLOW VISUALIZATION */}
+
+                            {/* OVERALL PROGRESS & TRAIL FLOW */}
+                            <div className="mb-8 mt-2 space-y-6">
+                                {/* 1. Overall Progress Bar (Restored) */}
+                                <div>
+                                    <div className="flex justify-between items-center text-sm mb-2">
+                                        <span className="font-semibold text-gray-700 dark:text-gray-300">Overall Progress</span>
+                                        <span className="text-indigo-600 font-bold">
+                                            {(() => {
                                                 try {
                                                     const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
                                                         (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
                                                     const done = steps.filter(s => s.status === 'Done').length;
                                                     return Math.round((done / 7) * 100);
                                                 } catch (e) { return 0; }
-                                            })()}%`
-                                        }}
-                                    ></div>
+                                            })()}%
+                                        </span>
+                                    </div>
+                                    <div className="w-full bg-gray-200 rounded-full h-3 dark:bg-gray-700 overflow-hidden">
+                                        <div
+                                            className="bg-indigo-600 h-3 rounded-full transition-all duration-500 ease-out"
+                                            style={{
+                                                width: `${(() => {
+                                                    try {
+                                                        const steps = Array.isArray(selectedAudit.steps) ? selectedAudit.steps :
+                                                            (typeof selectedAudit.steps === 'string' ? JSON.parse(selectedAudit.steps || '[]') : []);
+                                                        const done = steps.filter(s => s.status === 'Done').length;
+                                                        return Math.round((done / 7) * 100);
+                                                    } catch (e) { return 0; }
+                                                })()}%`
+                                            }}
+                                        ></div>
+                                    </div>
                                 </div>
-                            </div>
 
-                            {/* 2. Trail Flow Visualization */}
-                            <div>
-                                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Step Tracking</h3>
+                                {/* 2. Trail Flow Visualization */}
+                                <div>
+                                    <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Step Tracking</h3>
 
 
-                                {/* Desktop/Tablet Horizontal Flow */}
-                                <div className="hidden md:flex items-center justify-between relative px-4">
-                                    {/* Connecting Line Background */}
-                                    <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-1 bg-gray-200 dark:bg-slate-700 -z-10" />
+                                    {/* Desktop/Tablet Horizontal Flow */}
+                                    <div className="hidden md:flex items-center justify-between relative px-4">
+                                        {/* Connecting Line Background */}
+                                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-1 bg-gray-200 dark:bg-slate-700 -z-10" />
 
-                                    {AUDIT_STEPS.map((step, index) => {
-                                        const sData = selectedAudit.steps?.[step.id - 1] || {};
-                                        const isDone = sData.status === 'Done';
-                                        const isActive = activeStep === step.id;
-                                        const isPending = !isDone && !isActive;
-                                        const nextStep = selectedAudit.steps?.[step.id] || {};
+                                        {AUDIT_STEPS.map((step, index) => {
+                                            const sData = selectedAudit.steps?.[step.id - 1] || {};
+                                            const isDone = sData.status === 'Done';
+                                            const isActive = activeStep === step.id;
+                                            const isPending = !isDone && !isActive;
+                                            const nextStep = selectedAudit.steps?.[step.id] || {};
 
-                                        // Calculate line colored progress
-                                        // If this step is done, the line to the next step should be green
-                                        const isLineColored = isDone;
+                                            // Calculate line colored progress
+                                            // If this step is done, the line to the next step should be green
+                                            const isLineColored = isDone;
 
-                                        return (
-                                            <div key={step.id} className="relative flex flex-col items-center group cursor-pointer" onClick={() => setActiveStep(step.id)}>
-                                                {/* Connecting Line Colored Overlay (to the right) */}
-                                                {index < AUDIT_STEPS.length - 1 && (
+                                            return (
+                                                <div key={step.id} className="relative flex flex-col items-center group cursor-pointer" onClick={() => setActiveStep(step.id)}>
+                                                    {/* Connecting Line Colored Overlay (to the right) */}
+                                                    {index < AUDIT_STEPS.length - 1 && (
+                                                        <div
+                                                            className={`absolute left-1/2 top-1/2 -translate-y-1/2 h-1 w-full -z-10 transition-all duration-500 ${isDone ? 'bg-emerald-500' : 'bg-transparent'}`}
+                                                            style={{ width: 'calc(100% + 2rem)' }}
+                                                        />
+                                                    )}
+
                                                     <div
-                                                        className={`absolute left-1/2 top-1/2 -translate-y-1/2 h-1 w-full -z-10 transition-all duration-500 ${isDone ? 'bg-emerald-500' : 'bg-transparent'}`}
-                                                        style={{ width: 'calc(100% + 2rem)' }}
-                                                    />
-                                                )}
-
-                                                <div
-                                                    className={`w-10 h-10 rounded-full flex items-center justify-center border-4 transition-all duration-300 z-10
+                                                        className={`w-10 h-10 rounded-full flex items-center justify-center border-4 transition-all duration-300 z-10
                                                 ${isDone
-                                                            ? 'bg-emerald-500 border-emerald-100 dark:border-emerald-900/50 text-white scale-100 shadow-md shadow-emerald-500/20'
-                                                            : isActive
-                                                                ? 'bg-indigo-600 border-indigo-100 dark:border-indigo-900/50 text-white scale-110 shadow-lg shadow-indigo-500/30'
-                                                                : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500'}`}
-                                                >
-                                                    {isDone ? <CheckCircle2 size={18} /> : <span className="text-sm font-bold">{step.id}</span>}
-                                                </div>
+                                                                ? 'bg-emerald-500 border-emerald-100 dark:border-emerald-900/50 text-white scale-100 shadow-md shadow-emerald-500/20'
+                                                                : isActive
+                                                                    ? 'bg-indigo-600 border-indigo-100 dark:border-indigo-900/50 text-white scale-110 shadow-lg shadow-indigo-500/30'
+                                                                    : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500'}`}
+                                                    >
+                                                        {isDone ? <CheckCircle2 size={18} /> : <span className="text-sm font-bold">{step.id}</span>}
+                                                    </div>
 
-                                                <div className="absolute top-12 w-32 text-center transition-all duration-300">
-                                                    <p className={`text-xs font-bold mb-0.5 ${isActive ? 'text-indigo-600 scale-105' : isDone ? 'text-emerald-600' : 'text-gray-400'}`}>
-                                                        {step.title}
-                                                    </p>
-                                                    <p className={`text-[10px] ${isActive ? 'text-indigo-400' : 'text-gray-400 hidden group-hover:block'}`}>
-                                                        {sData.status || 'Pending'}
-                                                    </p>
-                                                </div>
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-
-                                {/* Mobile Vertical Flow (Fallback) */}
-                                <div className="md:hidden space-y-2 pl-4 border-l-2 border-gray-200 dark:border-slate-800 ml-2">
-                                    {AUDIT_STEPS.map((step) => {
-                                        const sData = selectedAudit.steps?.[step.id - 1] || {};
-                                        const isDone = sData.status === 'Done';
-                                        const isActive = activeStep === step.id;
-                                        return (
-                                            <div key={step.id} onClick={() => setActiveStep(step.id)} className={`flex items-center gap-3 relative cursor-pointer ${isActive ? 'pl-2 transition-all' : ''}`}>
-                                                {/* Dot on line */}
-                                                <div className={`absolute -left-[21px] w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${isDone ? 'bg-emerald-500' : isActive ? 'bg-indigo-500' : 'bg-gray-300'}`} />
-
-                                                <div className={`flex-1 p-2 rounded-lg border ${isActive ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}>
-                                                    <div className="flex justify-between items-center">
-                                                        <span className={`text-xs font-bold ${isDone ? 'text-emerald-600' : isActive ? 'text-indigo-600' : 'text-gray-500'}`}>{step.title}</span>
-                                                        {isDone && <CheckCircle2 size={14} className="text-emerald-500" />}
+                                                    <div className="absolute top-12 w-32 text-center transition-all duration-300">
+                                                        <p className={`text-xs font-bold mb-0.5 ${isActive ? 'text-indigo-600 scale-105' : isDone ? 'text-emerald-600' : 'text-gray-400'}`}>
+                                                            {step.title}
+                                                        </p>
+                                                        <p className={`text-[10px] ${isActive ? 'text-indigo-400' : 'text-gray-400 hidden group-hover:block'}`}>
+                                                            {sData.status || 'Pending'}
+                                                        </p>
                                                     </div>
                                                 </div>
-                                            </div>
-                                        )
-                                    })}
+                                            );
+                                        })}
+                                    </div>
+
+                                    {/* Mobile Vertical Flow (Fallback) */}
+                                    <div className="md:hidden space-y-2 pl-4 border-l-2 border-gray-200 dark:border-slate-800 ml-2">
+                                        {AUDIT_STEPS.map((step) => {
+                                            const sData = selectedAudit.steps?.[step.id - 1] || {};
+                                            const isDone = sData.status === 'Done';
+                                            const isActive = activeStep === step.id;
+                                            return (
+                                                <div key={step.id} onClick={() => setActiveStep(step.id)} className={`flex items-center gap-3 relative cursor-pointer ${isActive ? 'pl-2 transition-all' : ''}`}>
+                                                    {/* Dot on line */}
+                                                    <div className={`absolute -left-[21px] w-3 h-3 rounded-full border-2 border-white dark:border-slate-900 ${isDone ? 'bg-emerald-500' : isActive ? 'bg-indigo-500' : 'bg-gray-300'}`} />
+
+                                                    <div className={`flex-1 p-2 rounded-lg border ${isActive ? 'bg-indigo-50 border-indigo-200' : 'bg-white border-gray-100'}`}>
+                                                        <div className="flex justify-between items-center">
+                                                            <span className={`text-xs font-bold ${isDone ? 'text-emerald-600' : isActive ? 'text-indigo-600' : 'text-gray-500'}`}>{step.title}</span>
+                                                            {isDone && <CheckCircle2 size={14} className="text-emerald-500" />}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            )
+                                        })}
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
 
-                    {/* Stepper & Detail Content (Collapsed for brevity but presumed same) */}
+                        {/* Stepper & Detail Content (Collapsed for brevity but presumed same) */}
 
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        <Card className="lg:col-span-2">
-                            <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100 dark:border-slate-800">
-                                <div>
-                                    <h3 className="font-bold text-lg dark:text-white">{(AUDIT_STEPS[activeStep - 1] || AUDIT_STEPS[0]).title}</h3>
-                                    <p className="text-sm text-gray-500">{(AUDIT_STEPS[activeStep - 1] || AUDIT_STEPS[0]).description}</p>
-                                    <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
-                                        <span className="flex items-center gap-1"><Clock size={12} /> Durasi Tahap: {getDuration(selectedAudit.steps?.[activeStep - 1]?.startDate, selectedAudit.steps?.[activeStep - 1]?.endDate)}</span>
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                            <Card className="lg:col-span-2">
+                                <div className="flex justify-between items-center mb-6 pb-4 border-b border-gray-100 dark:border-slate-800">
+                                    <div>
+                                        <h3 className="font-bold text-lg dark:text-white">{(AUDIT_STEPS[activeStep - 1] || AUDIT_STEPS[0]).title}</h3>
+                                        <p className="text-sm text-gray-500">{(AUDIT_STEPS[activeStep - 1] || AUDIT_STEPS[0]).description}</p>
+                                        <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                                            <span className="flex items-center gap-1"><Clock size={12} /> Durasi Tahap: {getDuration(selectedAudit.steps?.[activeStep - 1]?.startDate, selectedAudit.steps?.[activeStep - 1]?.endDate)}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        {(selectedAudit.steps?.[activeStep - 1]?.status || '') === 'Done' && hasPermission('tax-monitoring', 'edit') && (
+                                            <button onClick={handleSendbackStep} className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-lg flex items-center gap-2 hover:bg-amber-200 transition-all text-sm font-semibold">
+                                                <RotateCcw size={16} /> Batalkan Selesai
+                                            </button>
+                                        )}
+                                        {(selectedAudit.steps?.[activeStep - 1]?.status || '') !== 'Done' && hasPermission('tax-monitoring', 'edit') && (
+                                            <button
+                                                onClick={handleFinishStep}
+                                                disabled={activeStep > 1 && selectedAudit.steps?.[activeStep - 2]?.status !== 'Done'}
+                                                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:text-gray-500 text-white rounded-lg flex items-center gap-2 shadow-sm transition-all text-sm font-semibold"
+                                                title={activeStep > 1 && selectedAudit.steps?.[activeStep - 2]?.status !== 'Done' ? "Selesaikan tahap sebelumnya terlebih dahulu" : "Selesaikan tahap ini"}
+                                            >
+                                                <CheckCircle2 size={16} /> Selesai Tahap Ini
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
-                                <div className="flex gap-2">
-                                    {(selectedAudit.steps?.[activeStep - 1]?.status || '') === 'Done' && hasPermission('tax-monitoring', 'edit') && (
-                                        <button onClick={handleSendbackStep} className="px-4 py-2 bg-amber-100 dark:bg-amber-900/30 text-amber-600 dark:text-amber-400 rounded-lg flex items-center gap-2 hover:bg-amber-200 transition-all text-sm font-semibold">
-                                            <RotateCcw size={16} /> Batalkan Selesai
-                                        </button>
-                                    )}
-                                    {(selectedAudit.steps?.[activeStep - 1]?.status || '') !== 'Done' && hasPermission('tax-monitoring', 'edit') && (
-                                        <button
-                                            onClick={handleFinishStep}
-                                            disabled={activeStep > 1 && selectedAudit.steps?.[activeStep - 2]?.status !== 'Done'}
-                                            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed disabled:text-gray-500 text-white rounded-lg flex items-center gap-2 shadow-sm transition-all text-sm font-semibold"
-                                            title={activeStep > 1 && selectedAudit.steps?.[activeStep - 2]?.status !== 'Done' ? "Selesaikan tahap sebelumnya terlebih dahulu" : "Selesaikan tahap ini"}
-                                        >
-                                            <CheckCircle2 size={16} /> Selesai Tahap Ini
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                            {/* Checklists & Inputs ... same as before */}
-                            <div className="space-y-3 mb-6">
-                                {(selectedAudit.steps && selectedAudit.steps[activeStep - 1]?.notes || []).map((note) => (
-                                    <div key={note.id} className="flex items-start gap-3 p-3 rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 group">
-                                        <button onClick={() => handleToggleCheck(note.id)} className={`mt-0.5 ${note.isChecked ? 'text-green-500' : 'text-gray-300 hover:text-gray-400'}`}>
-                                            {note.isChecked ? <CheckSquare size={20} /> : <Square size={20} />}
-                                        </button>
-                                        <div className="flex-1">
-                                            {editingNoteId === note.id ? (
-                                                <div className="space-y-2">
-                                                    <input
-                                                        className="w-full p-2 text-sm bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-800 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none dark:text-white"
-                                                        value={editingNoteText}
-                                                        onChange={e => setEditingNoteText(e.target.value)}
-                                                        autoFocus
-                                                    />
-                                                    <div className="flex items-center gap-2">
+                                {/* Checklists & Inputs ... same as before */}
+                                <div className="space-y-3 mb-6">
+                                    {(selectedAudit.steps && selectedAudit.steps[activeStep - 1]?.notes || []).map((note) => (
+                                        <div key={note.id} className="flex items-start gap-3 p-3 rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 group">
+                                            <button onClick={() => handleToggleCheck(note.id)} className={`mt-0.5 ${note.isChecked ? 'text-green-500' : 'text-gray-300 hover:text-gray-400'}`}>
+                                                {note.isChecked ? <CheckSquare size={20} /> : <Square size={20} />}
+                                            </button>
+                                            <div className="flex-1">
+                                                {editingNoteId === note.id ? (
+                                                    <div className="space-y-2">
                                                         <input
-                                                            className="w-24 p-2 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg dark:text-white"
-                                                            value={editingNotePic}
-                                                            onChange={e => setEditingNotePic(e.target.value)}
-                                                            placeholder="PIC"
+                                                            className="w-full p-2 text-sm bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-800 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none dark:text-white"
+                                                            value={editingNoteText}
+                                                            onChange={e => setEditingNoteText(e.target.value)}
+                                                            autoFocus
                                                         />
-                                                        <button onClick={() => handleUpdateNote(note.id)} className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
-                                                            <Save size={14} />
-                                                        </button>
-                                                        <button onClick={() => setEditingNoteId(null)} className="p-1.5 bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-300 transition-colors">
-                                                            <X size={14} />
-                                                        </button>
+                                                        <div className="flex items-center gap-2">
+                                                            <input
+                                                                className="w-24 p-2 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg dark:text-white"
+                                                                value={editingNotePic}
+                                                                onChange={e => setEditingNotePic(e.target.value)}
+                                                                placeholder="PIC"
+                                                            />
+                                                            <button onClick={() => handleUpdateNote(note.id)} className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
+                                                                <Save size={14} />
+                                                            </button>
+                                                            <button onClick={() => setEditingNoteId(null)} className="p-1.5 bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-300 transition-colors">
+                                                                <X size={14} />
+                                                            </button>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ) : (
-                                                <>
-                                                    <p className={`text-sm ${note.isChecked ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-200'}`}>{note.text}</p>
-                                                    <div className="flex items-center gap-2 mt-1.5">
-                                                        <span className="text-[10px] px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded flex items-center gap-1"><User size={10} /> {note.pic}</span>
-                                                    </div>
-                                                </>
-                                            )}
-                                        </div>
-                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            {editingNoteId !== note.id && hasPermission('tax-monitoring', 'edit') && (
-                                                <button
-                                                    onClick={() => {
-                                                        setEditingNoteId(note.id);
-                                                        setEditingNoteText(note.text);
-                                                        setEditingNotePic(note.pic);
-                                                    }}
-                                                    className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
-                                                >
-                                                    <Edit size={14} />
-                                                </button>
-                                            )}
-                                            {hasPermission('tax-monitoring', 'delete') && (
-                                                <button onClick={() => handleDeleteNote(note.id)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
-                                                    <Trash2 size={16} />
-                                                </button>
-                                            )}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                            {hasPermission('tax-monitoring', 'edit') && (
-                                <div className="flex gap-2 items-start pt-4 border-t border-gray-100 dark:border-slate-800">
-                                    <input id={`note-input-${activeStep}`} className="flex-1 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="Tambah item pekerjaan..." onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; } }} />
-                                    <input id={`pic-input-${activeStep}`} className="w-24 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="PIC" />
-                                    <button onClick={() => { const val = document.getElementById(`note-input-${activeStep}`); const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(val.value, pic.value); val.value = ''; }} className="p-2 bg-indigo-600 text-white rounded-lg"><Plus size={20} /></button>
-                                </div>
-                            )}
-                        </Card>
-                        <div className="space-y-4">
-                            <Card>
-                                <h4 className="font-bold text-sm text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2"><FileText size={16} /> Dokumen Tahap {activeStep}</h4>
-                                <div className="space-y-2 max-h-[300px] overflow-y-auto mb-4 custom-scrollbar">
-                                    {isLoadingFiles ? <div className="text-center py-4 text-xs text-gray-400">Loading...</div> : auditFiles.length === 0 ? <div className="text-center py-4 text-xs text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">Tidak ada dokumen</div> :
-                                        auditFiles.map(file => (
-                                            <div key={file.id} className="flex items-center gap-3 p-2 bg-white dark:bg-slate-800 rounded-lg border border-gray-100 dark:border-slate-700 shadow-sm text-xs group">
-                                                <div className="p-1.5 bg-red-100 text-red-600 rounded"><File size={14} /></div>
-                                                <div className="flex-1 truncate">
-                                                    <button onClick={() => handleSecureDownload(file)} className="font-medium text-blue-600 hover:underline truncate block text-left">{file.title}</button>
-                                                    <span className="text-gray-400">{file.size}</span>
-                                                </div>
-                                                <button onClick={() => handleSecureDownload(file)} className="text-gray-400 hover:text-blue-500 transition-colors" title="Download"><Download size={14} /></button>
-                                                {hasPermission('tax-monitoring', 'delete') && (
-                                                    <button onClick={() => handleDeleteFile(file.id)} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
+                                                ) : (
+                                                    <>
+                                                        <p className={`text-sm ${note.isChecked ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-200'}`}>{note.text}</p>
+                                                        <div className="flex items-center gap-2 mt-1.5">
+                                                            <span className="text-[10px] px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded flex items-center gap-1"><User size={10} /> {note.pic}</span>
+                                                        </div>
+                                                    </>
                                                 )}
                                             </div>
-                                        ))
-                                    }
-                                </div>
-                                {hasPermission('tax-monitoring', 'create') && (
-                                    <label className="block w-full cursor-pointer">
-                                        <div className="w-full py-6 px-6 bg-white dark:bg-slate-800 border-2 border-dashed border-indigo-300 dark:border-indigo-700 rounded-2xl flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all shadow-sm group">
-                                            {isUploadingFile ? (
-                                                <span className="animate-pulse font-bold text-sm">Uploading...</span>
-                                            ) : (
-                                                <>
-                                                    <UploadCloud size={32} className="mb-2 group-hover:scale-110 transition-transform" />
-                                                    <span className="text-sm font-bold">Upload File</span>
-                                                    <span className="text-xs text-slate-400 mt-1">Klik untuk pilih file</span>
-                                                </>
-                                            )}
+                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                {editingNoteId !== note.id && hasPermission('tax-monitoring', 'edit') && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setEditingNoteId(note.id);
+                                                            setEditingNoteText(note.text);
+                                                            setEditingNotePic(note.pic);
+                                                        }}
+                                                        className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
+                                                    >
+                                                        <Edit size={14} />
+                                                    </button>
+                                                )}
+                                                {hasPermission('tax-monitoring', 'delete') && (
+                                                    <button onClick={() => handleDeleteNote(note.id)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
+                                                        <Trash2 size={16} />
+                                                    </button>
+                                                )}
+                                            </div>
                                         </div>
-                                        <input type="file" className="hidden" onChange={handleFileUpload} />
-                                    </label>
+                                    ))}
+                                </div>
+                                {hasPermission('tax-monitoring', 'edit') && (
+                                    <div className="flex gap-2 items-start pt-4 border-t border-gray-100 dark:border-slate-800">
+                                        <input id={`note-input-${activeStep}`} className="flex-1 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="Tambah item pekerjaan..." onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; } }} />
+                                        <input id={`pic-input-${activeStep}`} className="w-24 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="PIC" />
+                                        <button onClick={() => { const val = document.getElementById(`note-input-${activeStep}`); const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(val.value, pic.value); val.value = ''; }} className="p-2 bg-indigo-600 text-white rounded-lg"><Plus size={20} /></button>
+                                    </div>
                                 )}
                             </Card>
+                            <div className="space-y-4">
+                                <Card>
+                                    <h4 className="font-bold text-sm text-gray-700 dark:text-gray-200 mb-3 flex items-center gap-2"><FileText size={16} /> Dokumen Tahap {activeStep}</h4>
+                                    <div className="space-y-2 max-h-[300px] overflow-y-auto mb-4 custom-scrollbar">
+                                        {isLoadingFiles ? <div className="text-center py-4 text-xs text-gray-400">Loading...</div> : auditFiles.length === 0 ? <div className="text-center py-4 text-xs text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">Tidak ada dokumen</div> :
+                                            auditFiles.map(file => (
+                                                <div key={file.id} className="flex items-center gap-3 p-2 bg-white dark:bg-slate-800 rounded-lg border border-gray-100 dark:border-slate-700 shadow-sm text-xs group">
+                                                    <div className="p-1.5 bg-red-100 text-red-600 rounded"><File size={14} /></div>
+                                                    <div className="flex-1 truncate cursor-pointer" onClick={() => setSelectedFileDetail(file)}>
+                                                        <span className="font-medium text-slate-700 dark:text-slate-200 hover:text-indigo-600 truncate block text-left transition-colors">{file.title}</span>
+                                                        <span className="text-gray-400 flex items-center gap-1">
+                                                            {file.size}
+                                                            {file.ocrContent && <span className="text-[9px] bg-green-100 text-green-700 px-1 rounded flex items-center gap-0.5"><FileText size={8} /> OCR</span>}
+                                                        </span>
+                                                    </div>
+                                                    <button onClick={(e) => { e.stopPropagation(); handleSecureDownload(file); }} className="text-gray-400 hover:text-blue-500 transition-colors p-1" title="Download"><Download size={14} /></button>
+                                                    {hasPermission('tax-monitoring', 'delete') && (
+                                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteFile(file.id); }} className="text-gray-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity p-1"><Trash2 size={14} /></button>
+                                                    )}
+                                                </div>
+                                            ))
+                                        }
+                                    </div>
+                                    {hasPermission('tax-monitoring', 'create') && (
+                                        <label className="block w-full cursor-pointer">
+                                            <div className="w-full py-6 px-6 bg-white dark:bg-slate-800 border-2 border-dashed border-indigo-300 dark:border-indigo-700 rounded-2xl flex flex-col items-center justify-center text-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all shadow-sm group">
+                                                {isUploadingFile ? (
+                                                    <span className="animate-pulse font-bold text-sm">Uploading...</span>
+                                                ) : (
+                                                    <>
+                                                        <UploadCloud size={32} className="mb-2 group-hover:scale-110 transition-transform" />
+                                                        <span className="text-sm font-bold">Upload File</span>
+                                                        <span className="text-xs text-slate-400 mt-1">Klik untuk pilih file</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                            <input type="file" className="hidden" onChange={handleFileSelect} />
+                                        </label>
+                                    )}
+                                </Card>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )
-            }
+                )
+                }
             </div>
 
             {/* SINGLE MODAL AT THE END */}
@@ -943,7 +1092,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         <span className="text-xs font-bold text-indigo-700 dark:text-indigo-300 truncate">
                                             {newAuditFile ? newAuditFile.name : 'Pilih File...'}
                                         </span>
-                                        <input type="file" className="hidden" onChange={e => setNewAuditFile(e.target.files[0])} />
+                                        <input type="file" className="hidden" onChange={e => setNewAuditFile(e.target.files[0])} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
                                     </label>
                                 </div>
                             )}
@@ -977,6 +1126,201 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     </div>
                 </div>
             </Modal>
+
+            {/* FILE DETAIL MODAL - NEW */}
+            <Modal
+                isOpen={!!selectedFileDetail}
+                onClose={() => setSelectedFileDetail(null)}
+                title="Detail Dokumen & OCR"
+                size="max-w-4xl"
+            >
+                <div className="flex flex-col md:flex-row gap-6 h-[70vh]">
+                    {/* LEFT: PREVIEW */}
+                    <div className="flex-1 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 relative">
+                        {selectedFileDetail?.type?.startsWith('image/') ? (
+                            <img src={selectedFileDetail.fileData || selectedFileDetail.url} alt="Preview" className="max-w-full max-h-full object-contain" />
+                        ) : selectedFileDetail?.type === 'application/pdf' ? (
+                            <iframe src={selectedFileDetail.fileData || selectedFileDetail.url} className="w-full h-full" title="PDF Preview"></iframe>
+                        ) : (
+                            <div className="text-center p-6 text-slate-500">
+                                <FileText size={48} className="mx-auto mb-2 opacity-50" />
+                                <p>Preview tidak tersedia untuk format ini.</p>
+                                <button onClick={() => handleSecureDownload(selectedFileDetail)} className="mt-4 text-indigo-600 hover:underline">Download File</button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* RIGHT: OCR CONTENT */}
+                    <div className="flex-1 flex flex-col h-full">
+                        <div className="flex justify-between items-center mb-2">
+                            <h4 className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
+                                <FileText size={16} className="text-indigo-500" /> Extracted Text (OCR)
+                            </h4>
+                            {selectedFileDetail?.ocrContent ? (
+                                <span className="text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded border border-emerald-100 dark:border-emerald-800 flex items-center gap-1">
+                                    <CheckCircle2 size={12} /> Auto-Generated
+                                </span>
+                            ) : (
+                                <span className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded border border-amber-100 dark:border-amber-800 flex items-center gap-1 animate-pulse">
+                                    <Clock size={12} /> Pending / Empty
+                                </span>
+                            )}
+                        </div>
+                        <textarea
+                            className="flex-1 w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm font-mono text-slate-700 dark:text-slate-300 focus:border-indigo-500 focus:ring-0 resize-none outline-none leading-relaxed"
+                            value={selectedFileDetail?.ocrContent || ''}
+                            onChange={(e) => setSelectedFileDetail({ ...selectedFileDetail, ocrContent: e.target.value })}
+
+                            placeholder={selectedFileDetail?.ocrContent ? "Teks hasil scan..." : "Teks belum tersedia. Mohon tunggu proses OCR selesai atau klik tombol 'Regenerate/Refresh' di bawah."}
+                        />
+                        <div className="mt-4 flex justify-end gap-3">
+                            <button
+                                onClick={() => setSelectedFileDetail(null)}
+                                className="px-5 py-2.5 rounded-xl text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                            >
+                                Tutup
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    // REGENERATE / REFRESH ACTION
+                                    try {
+                                        const refreshedDoc = await api.getDocumentById(selectedFileDetail.id);
+                                        if (refreshedDoc) {
+                                            setSelectedFileDetail(refreshedDoc);
+                                            alert("Data dokumen diperbarui dari server.");
+                                        }
+                                    } catch (e) { alert("Gagal refresh: " + e.message); }
+                                }}
+                                className="px-5 py-2.5 rounded-xl text-indigo-600 font-bold hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors border border-indigo-100 dark:border-indigo-800"
+                            >
+                                Refresh / Cek OCR
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    /* Logic to save updated OCR content could be added here in future */
+                                    /* For now we just close, assuming it's view only or we implement a save endpoint later */
+                                    // Implementation reserved for future optimization path
+                                    setSelectedFileDetail(null);
+                                    alert("Perubahan teks OCR disimpan di sesi lokal (Simpan ke server segera hadir).");
+                                }}
+                                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all hover:scale-105 active:scale-95"
+                            >
+                                Simpan Koreksi
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </Modal >
+
+            {/* UPLOAD MODAL - NEW */}
+            <Modal
+                isOpen={uploadModalOpen}
+                onClose={() => setUploadModalOpen(false)}
+                title="Upload Dokumen Pemeriksaan"
+                size="max-w-2xl"
+            >
+                <div className="space-y-6">
+                    {/* Preview Section */}
+                    <div className="flex flex-col md:flex-row gap-6">
+                        <div className="w-full md:w-1/3 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 flex items-center justify-center h-48 relative group">
+                            {uploadForm.fileType?.startsWith('image/') ? (
+                                <img src={uploadForm.fileData} alt="Preview" className="max-w-full max-h-full object-contain" />
+                            ) : (
+                                <div className="text-center p-4">
+                                    <FileText size={48} className="mx-auto mb-2 text-slate-400" />
+                                    <p className="text-xs text-slate-500 break-all">{uploadForm.fileName}</p>
+                                </div>
+                            )}
+                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                <p className="text-white text-xs font-bold">{uploadForm.fileSize}</p>
+                            </div>
+                        </div>
+                        <div className="flex-1 space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Judul Dokumen</label>
+                                <input
+                                    className="w-full px-4 py-2 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                                    value={uploadForm.title}
+                                    onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
+                                    placeholder="Masukkan judul dokumen..."
+                                />
+                            </div>
+                            <div>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400">Hasil OCR (Text Extraction)</label>
+                                    {uploadForm.ocrContent && (
+                                        <span className="text-[10px] text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded flex items-center gap-1">
+                                            <CheckCircle2 size={10} /> Berhasil
+                                        </span>
+                                    )}
+                                </div>
+                                <div className="relative">
+                                    <textarea
+                                        className="w-full h-24 px-4 py-2 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 text-xs font-mono resize-none focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
+                                        value={uploadForm.ocrContent}
+                                        onChange={(e) => setUploadForm({ ...uploadForm, ocrContent: e.target.value })}
+                                        placeholder="Klik tombol 'Proses OCR' untuk mengekstrak teks otomatis dari dokumen..."
+                                    />
+                                    {!uploadForm.ocrContent && !uploadForm.isProcessing && (
+                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                            <span className="text-slate-400 text-xs italic">Menunggu proses OCR...</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Progress Bar if processing */}
+                    {uploadForm.isProcessing && (
+                        <div className="space-y-2 animate-in fade-in duration-300">
+                            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
+                                <span>{uploadForm.processingMessage}</span>
+                                <span className="animate-pulse font-bold text-indigo-500">Processing...</span>
+                            </div>
+                            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                                <div className="bg-indigo-600 h-full rounded-full animate-progress-indeterminate"></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Actions */}
+                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                        <button
+                            onClick={() => setUploadModalOpen(false)}
+                            className="px-4 py-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white font-bold text-sm transition-colors"
+                        >
+                            Batal
+                        </button>
+                        <button
+                            onClick={handleConfirmUpload}
+                            disabled={uploadForm.isProcessing}
+                            className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-lg shadow-indigo-500/30 transition-all transform active:scale-95 text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center gap-2"
+                        >
+                            <CloudUpload size={18} /> Upload & Proses Background
+                        </button>
+                    </div>
+                </div>
+            </Modal>
+
+            {/* UPLOAD LOADING OVERLAY */}
+            {
+                isUploadingFile && (
+                    <div className="fixed inset-0 z-[150] bg-black/50 backdrop-blur-sm flex items-center justify-center">
+                        <div className="bg-white dark:bg-slate-900 p-8 rounded-2xl shadow-2xl flex flex-col items-center animate-in zoom-in-95 max-w-sm text-center">
+                            <div className="relative mb-6">
+                                <div className="w-20 h-20 border-4 border-indigo-100 dark:border-indigo-900/30 rounded-full"></div>
+                                <div className="w-20 h-20 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+                                <FileText className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-indigo-600 animate-pulse" size={24} />
+                            </div>
+                            <h3 className="text-xl font-bold text-gray-800 dark:text-white mb-2">Memproses Dokumen...</h3>
+                            <p className="text-sm text-gray-500 dark:text-slate-400">
+                                Sedang mengunggah, melakukan <b>OCR (Ekstraksi Teks)</b>, dan analisis vector. Mohon tunggu sebentar.
+                            </p>
+                        </div>
+                    </div>
+                )
+            }
         </>
     );
 }

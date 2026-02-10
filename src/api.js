@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:5000/api';
+const API_URL = '/api';
 
 const fetchAPI = async (endpoint, options = {}) => {
     const response = await fetch(`${API_URL}${endpoint}`, {
@@ -93,4 +93,10 @@ export const api = {
     createTaxSummary: (data) => fetchAPI('/tax-summaries', { method: 'POST', body: JSON.stringify(data) }),
     updateTaxSummary: (id, data) => fetchAPI(`/tax-summaries/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
     deleteTaxSummary: (id) => fetchAPI(`/tax-summaries/${id}`, { method: 'DELETE' }),
+
+    // Versioning
+    restoreDocumentVersion: (id, versionTimestamp) => fetchAPI(`/documents/${id}/restore`, {
+        method: 'POST',
+        body: JSON.stringify({ versionTimestamp })
+    }),
 };

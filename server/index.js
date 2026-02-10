@@ -5,6 +5,8 @@ import db from './db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import multer from 'multer';
+import { addOCRJob, ocrQueue } from './queue.js'; // NEW
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +17,24 @@ if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+// Configure Multer
+const storage = multer.diskStorage({
+    destination: function (req, file, cb) {
+        cb(null, UPLOADS_DIR);
+    },
+    filename: function (req, file, cb) {
+        // Safe filename: INV-timestamp-originalName
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        cb(null, `INV-${uniqueSuffix}-${safeName}`);
+    }
+});
+
+const upload = multer({
+    storage: storage,
+    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+});
+
 const app = express();
 const PORT = 5000;
 
@@ -23,17 +43,23 @@ console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
 
 app.use(cors());
 app.use(bodyParser.json({ limit: '50mb' }));
+// Dedicated Upload Endpoint
 app.use('/uploads', express.static(UPLOADS_DIR));
+
+app.post('/api/upload', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ success: false, error: 'No file uploaded' });
+    }
+    const fileUrl = `/uploads/${req.file.filename}`;
+    console.log(`File uploaded via Multer: ${fileUrl}`);
+    res.json({ success: true, url: fileUrl });
+});
 
 // Helper: Save Base64 to File
 function saveBase64ToFile(base64Data, id, extension = 'bin') {
     try {
         const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
-            // Not a base64 string, maybe already a path or raw content?
-            // If it doesn't look like base64, assume it's legacy content or invalid.
-            // For safety, we can return null or try to write raw.
-            // Let's assume valid base64 is sent from frontend.
             return null;
         }
 
@@ -50,10 +76,220 @@ function saveBase64ToFile(base64Data, id, extension = 'bin') {
     }
 }
 
+// --- UNIVERSAL SEARCH API (AI SEMANTIC) ---
+app.get('/api/search', (req, res) => {
+    const query = (req.query.q || '').toLowerCase();
+    if (!query) return res.json([]);
+
+    const results = [];
+
+    // 1. Search Documents
+    const docPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM documents`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = rows.filter(doc => {
+                const title = (doc.title || '').toLowerCase();
+                const ocr = (doc.ocrContent || '').toLowerCase();
+                return title.includes(query) || ocr.includes(query);
+            }).map(doc => {
+                // Calculate Relevance Score
+                let score = 0;
+                if (doc.title.toLowerCase().includes(query)) score += 0.5;
+                if (doc.ocrContent && doc.ocrContent.toLowerCase().includes(query)) score += 0.3;
+                // Exact match bonus
+                if (doc.title.toLowerCase() === query) score += 0.5;
+
+                return {
+                    id: doc.id,
+                    title: doc.title,
+                    type: doc.type || 'document',
+                    size: doc.size,
+                    uploadDate: doc.uploadDate,
+                    folderId: doc.folderId,
+                    folderName: 'Digital Archive', // Todo: Join foldernames if needed
+                    score: score,
+                    matchType: 'document'
+                };
+            });
+            resolve(matches);
+        });
+    });
+
+    // 2. Search Inventory (Invoices inside Boxes)
+    const invPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM inventory`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = [];
+            rows.forEach(slot => {
+                const rawData = slot.box_data || slot.boxData;
+                if (!rawData) return;
+                try {
+                    const box = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
+                    if (box.ordners) {
+                        box.ordners.forEach(ord => {
+                            if (ord.invoices) {
+                                ord.invoices.forEach(inv => {
+                                    const invNo = (inv.invoiceNo || '').toLowerCase();
+                                    const vendor = (inv.vendor || '').toLowerCase();
+                                    const ocr = (typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || '')).toLowerCase();
+
+                                    if (invNo.includes(query) || vendor.includes(query) || ocr.includes(query)) {
+                                        let score = 0;
+                                        if (invNo.includes(query)) score += 0.5;
+                                        if (vendor.includes(query)) score += 0.4;
+                                        if (ocr.includes(query)) score += 0.3;
+
+                                        matches.push({
+                                            id: `INV-${inv.id}`,
+                                            title: `Invoice: ${inv.invoiceNo} (${inv.vendor})`,
+                                            type: inv.file && inv.file.match(/image\//) ? 'image/jpeg' : 'application/pdf',
+                                            size: inv.fileName || 'Invoice',
+                                            uploadDate: inv.paymentDate || new Date().toISOString(),
+                                            folderId: 'INVENTORY', // Special flag for frontend
+                                            folderName: `Box ${box.boxId} / Ordner ${ord.noOrdner}`,
+                                            score: score,
+                                            matchType: 'invoice',
+                                            data: inv, // Pass full object for viewing
+                                            boxId: box.boxId,
+                                            slotId: slot.id,
+                                            ocrContent: typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || ''), // Include OCR for display
+                                            url: inv.file // Ensure URL is passed for download/view
+                                        });
+                                    }
+                                });
+                            }
+                        });
+                    }
+                } catch (e) {
+                    // Ignore parse errors
+                }
+            });
+            resolve(matches);
+        });
+    });
+
+    // 3. Search External Items (Indoarsip)
+    const extPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM external_items`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = [];
+            rows.forEach(item => {
+                const boxId = (item.boxId || '').toLowerCase();
+                const dest = (item.destination || '').toLowerCase();
+                const sender = (item.sender || '').toLowerCase();
+
+                let score = 0;
+                let found = false;
+
+                if (boxId.includes(query)) { score += 0.6; found = true; }
+                if (dest.includes(query)) { score += 0.4; found = true; }
+                if (sender.includes(query)) { score += 0.4; found = true; }
+
+                // Nested search in boxData (if exists)
+                let boxDataFound = false;
+                try {
+                    const data = JSON.parse(item.boxData || '{}');
+                    if (data.ordners) {
+                        data.ordners.forEach(ord => {
+                            if (String(ord.noOrdner || '').toLowerCase().includes(query)) boxDataFound = true;
+                            if (ord.invoices) {
+                                ord.invoices.forEach(inv => {
+                                    if (String(inv.invoiceNo || '').toLowerCase().includes(query)) boxDataFound = true;
+                                    if (String(inv.vendor || '').toLowerCase().includes(query)) boxDataFound = true;
+                                });
+                            }
+                        });
+                    }
+                } catch (e) { }
+
+                if (boxDataFound) { score += 0.3; found = true; }
+
+                if (found) {
+                    matches.push({
+                        id: `EXT-${item.id}`,
+                        title: `Box Eksternal: ${item.boxId}`,
+                        type: 'external',
+                        size: item.destination,
+                        uploadDate: item.sentDate,
+                        folderId: 'INVENTORY_EXT',
+                        folderName: '📦 Box Eksternal (Indoarsip)',
+                        score: score,
+                        matchType: 'external_item',
+                        data: item
+                    });
+                }
+            });
+            resolve(matches);
+        });
+    });
+
+    // 4. Search Tax Summaries
+    const taxSumPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM tax_summaries`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+
+            const matches = [];
+            rows.forEach(record => {
+                const month = (record.month || '').toLowerCase();
+                const year = String(record.year || '').toLowerCase();
+
+                let score = 0;
+                let found = false;
+
+                if (month.includes(query)) { score += 0.5; found = true; }
+                if (year.includes(query)) { score += 0.5; found = true; }
+
+                // Check specific values if query is a number
+                if (!isNaN(query) && query.length > 3) {
+                    // Cari di dalam string JSON data
+                    const dataStr = typeof record.data === 'string' ? record.data : JSON.stringify(record.data || {});
+                    if (dataStr.toLowerCase().includes(query)) {
+                        score += 0.4;
+                        found = true;
+                    }
+                }
+
+                if (found) {
+                    matches.push({
+                        id: `TAXSUM-${record.id}`,
+                        title: `Ringkasan Pajak ${record.month} ${record.year}`,
+                        type: 'tax_summary',
+                        size: `PPH 23: ${record.pph23}`,
+                        uploadDate: new Date().toISOString(),
+                        folderId: 'TAX_SUMMARY',
+                        folderName: '📊 Tax Compliance',
+                        score: score,
+                        matchType: 'tax_summary',
+                        data: record
+                    });
+                }
+            });
+            resolve(matches);
+        });
+    });
+
+    Promise.all([docPromise, invPromise, extPromise, taxSumPromise]).then(([docs, invs, exts, taxSums]) => {
+        // Merge and Sort by Score
+        const allResults = [...docs, ...invs, ...exts, ...taxSums].sort((a, b) => b.score - a.score);
+        res.json(allResults.slice(0, 50)); // Limit to top 50
+    }).catch(err => {
+        console.error("Search Error:", err);
+        res.status(500).json({ error: "Search failed" });
+    });
+});
+
+
 // Helper: Process Inventory Object to Extract Files
 function processInventoryFiles(dataObj, contextId) {
     if (!dataObj || !dataObj.ordners) return dataObj;
-    
+
     dataObj.ordners.forEach(ord => {
         if (ord.invoices && Array.isArray(ord.invoices)) {
             ord.invoices.forEach(inv => {
@@ -64,6 +300,45 @@ function processInventoryFiles(dataObj, contextId) {
                     if (savedUrl) {
                         inv.file = savedUrl;
                         console.log(`Inventory File Saved to Disk: ${savedUrl}`);
+
+                        // Queue OCR for this unique invoice
+                        const absolutePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+                        addOCRJob(contextId, absolutePath, inv.fileType || 'application/pdf', inv.fileName, {
+                            type: 'inventory',
+                            slotId: contextId,
+                            ordnerId: ord.id,
+                            invoiceId: inv.id
+                        }).catch(e => console.error("Inventory OCR Queue Error:", e));
+                    }
+                } else if (inv.file && (inv.file.startsWith('/uploads/') || inv.file.startsWith('http')) && (!inv.ocrContent || inv.ocrContent.length < 5)) {
+                    // Extract relative path if it's a full URL
+                    let relativePath = inv.file;
+                    if (inv.file.startsWith('http')) {
+                        try {
+                            const urlObj = new URL(inv.file);
+                            relativePath = urlObj.pathname;
+                        } catch (e) { relativePath = inv.file; }
+                    }
+
+                    // Auto-detect fileType from extension if missing
+                    let type = inv.fileType;
+                    if (!type) {
+                        const ext = path.extname(inv.fileName || relativePath).toLowerCase();
+                        if (['.jpg', '.jpeg', '.png', '.bmp', '.webp'].includes(ext)) type = 'image/jpeg';
+                        else if (['.pdf'].includes(ext)) type = 'application/pdf';
+                        else if (['.docx', '.doc'].includes(ext)) type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+                        else if (['.xlsx', '.xls'].includes(ext)) type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+                    }
+
+                    // Only queue if we have a valid path starting with /uploads/
+                    if (relativePath.startsWith('/uploads/')) {
+                        const absolutePath = path.join(UPLOADS_DIR, path.basename(relativePath));
+                        addOCRJob(contextId, absolutePath, type || 'application/pdf', inv.fileName, {
+                            type: 'inventory',
+                            slotId: contextId,
+                            ordnerId: ord.id,
+                            invoiceId: inv.id
+                        }).catch(e => console.error("Inventory OCR Queue Error (Retry):", e));
                     }
                 }
             });
@@ -137,6 +412,48 @@ app.put('/api/users/:id', (req, res) => {
                 }
 
                 res.json({ success: true, changes: this.changes });
+            }
+        );
+    });
+});
+
+app.put('/api/users/profile/:id', (req, res) => {
+    const { name, currentPassword, newPassword } = req.body;
+    const userId = req.params.id;
+
+    db.get("SELECT * FROM users WHERE id = ?", [userId], (err, user) => {
+        if (err || !user) {
+            return res.status(404).json({ success: false, error: 'User not found' });
+        }
+
+        // If trying to update password, verify current password first
+        if (newPassword) {
+            if (user.password !== currentPassword) {
+                return res.status(400).json({ success: false, error: 'Password saat ini salah' });
+            }
+        }
+
+        const updatedName = name || user.name;
+        const updatedPassword = newPassword || user.password;
+
+        db.run("UPDATE users SET name = ?, password = ? WHERE id = ?",
+            [updatedName, updatedPassword, userId],
+            async function (err) {
+                if (err) return res.status(500).json({ success: false, error: err.message });
+
+                const oldValues = { name: user.name, password: '***' };
+                const newValues = { name: updatedName, password: newPassword ? '***' : '***' };
+
+                await systemLog(user.name, "Update Profile", `User ${user.username} updated their profile`, JSON.stringify(oldValues), JSON.stringify(newValues));
+
+                res.json({
+                    success: true,
+                    user: {
+                        ...user,
+                        name: updatedName,
+                        password: updatedPassword
+                    }
+                });
             }
         );
     });
@@ -249,14 +566,45 @@ app.delete('/api/roles/:id', (req, res) => {
     });
 });
 
+// --- OCR STATUS API ---
+app.get('/api/ocr/status', async (req, res) => {
+    try {
+        const counts = await ocrQueue.getJobCounts('active', 'waiting', 'completed', 'failed');
+        const activeJobs = await ocrQueue.getJobs(['active'], 0, 10, true); // Get first 10 active jobs
+
+        const activeDetails = activeJobs.map(job => ({
+            id: job.id,
+            filename: job.data.originalName || 'Unknown File',
+            progress: job.progress || 0,
+            type: job.data.context?.type === 'inventory' ? 'Inventory' : 'Document'
+        }));
+
+        res.json({
+            counts,
+            activeJobs: activeDetails
+        });
+    } catch (error) {
+        console.error("OCR Status Error:", error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// NEW: Reset OCR Queue Endpoint (Fix Stuck Jobs)
+app.post('/api/ocr/reset', (req, res) => {
+    db.run("UPDATE job_queue SET status = 'waiting' WHERE status = 'active'", [], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, message: "Queue reset successfully" });
+    });
+});
+
 // --- INVENTORY ---
 app.get('/api/inventory', (req, res) => {
     db.all("SELECT * FROM inventory", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows.map(r => {
-            // Robust Mapping for redundant columns
-            const rawBoxData = r.boxData || r.box_data || r.boxdata;
-            const rawHistory = r.history || r.history_data; // in case of future changes
+            // Robust Mapping for redundant columns - Prioritize LONGTEXT box_data
+            const rawBoxData = r.box_data || r.boxData || r.boxdata;
+            const historyStr = r.history || '[]';
             const rawLastUpdated = r.lastUpdated || r.last_updated || r.lastupdated;
 
             // FIX: Safe JSON Parse untuk menangani data yang terpotong/corrupt
@@ -271,9 +619,9 @@ app.get('/api/inventory', (req, res) => {
             }
 
             let parsedHistory = [];
-            if (rawHistory) {
+            if (historyStr) {
                 try {
-                    parsedHistory = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : rawHistory;
+                    parsedHistory = typeof historyStr === 'string' ? JSON.parse(historyStr) : historyStr;
                 } catch (e) {
                     parsedHistory = [];
                 }
@@ -294,67 +642,84 @@ app.put('/api/inventory/:id', (req, res) => {
     // FIX: Support box_data (LONGTEXT) dari frontend
     let { status, lastUpdated, boxData, history, box_data } = req.body;
     status = (status || 'EMPTY').toUpperCase();
-    
+
     // 1. Parse & Process Files to Disk
     let dataObj = null;
     try {
         const raw = box_data !== undefined ? box_data : boxData;
+        console.log("Processing Inventory Payload:", typeof raw, raw ? "Raw Length: " + raw.length : "Raw is null");
+        if (raw && typeof raw === 'string' && raw.includes('/uploads/')) {
+            console.log("Payload contains /uploads/ path, confirming URL preservation.");
+        }
         dataObj = typeof raw === 'string' ? JSON.parse(raw) : raw;
         dataObj = processInventoryFiles(dataObj, req.params.id);
+        console.log("Processed DataObj Invoices:", JSON.stringify(dataObj?.ordners?.[0]?.invoices || []));
     } catch (e) { console.error("Error processing inventory files:", e); }
 
     // 2. Prepare for DB
     const boxDataToSave = dataObj ? JSON.stringify(dataObj) : null;
-    const historyJson = JSON.stringify(history);
+    const historyJson = JSON.stringify(history || []);
 
     // Fetch OLD value
     db.get("SELECT * FROM inventory WHERE id = ?", [req.params.id], (err, oldItem) => {
-        if (err) console.error("Audit fetch failed", err);
+        if (err) return res.status(500).json({ error: err.message });
 
-        // FIX: Update ke kolom box_data (LONGTEXT) agar muat file besar
-        // Jika kolom box_data belum ada di DB, query ini mungkin error, jadi kita tambahkan fallback
-        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, history = ? WHERE id = ?",
+        // FIX: Primary Update - Save to box_data (LONGTEXT) and Clear boxData (legacy) to avoid confusion
+        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, boxData = NULL, history = ? WHERE id = ?",
             [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
             async (err) => {
-                if (err) {
-                    // Fallback: Jika kolom box_data tidak ada, coba simpan ke boxData (Legacy)
-                    if (err.message && err.message.includes("no such column")) {
-                        console.warn("Column 'box_data' missing, falling back to 'boxData'. Please update DB schema.");
-                        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
-                            [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
-                            (err2) => {
-                                if (err2) return res.status(500).json({ error: err2.message });
-                                res.json({ success: true });
-                            }
-                        );
-                        return;
+                try {
+                    if (err) {
+                        // Fallback: Jika kolom box_data tidak ada, coba simpan ke boxData (Legacy)
+                        if (err.message && err.message.includes("no such column")) {
+                            console.warn("Column 'box_data' missing, falling back to 'boxData'. Please update DB schema.");
+                            db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
+                                [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
+                                async (errFallback) => {
+                                    try {
+                                        if (errFallback) return res.status(500).json({ error: errFallback.message });
+                                        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id} (Legacy Fallback)`);
+                                        res.json({ success: true, id: req.params.id });
+                                    } catch (e2) { console.error(e2); if (!res.headersSent) res.status(500).json({ error: e2.message }); }
+                                }
+                            );
+                        } else {
+                            return res.status(500).json({ error: err.message });
+                        }
+                    } else {
+                        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id}`);
+                        res.json({ success: true, id: req.params.id });
                     }
-                    return res.status(500).json({ error: err.message });
+                } catch (e) {
+                    console.error("Critical Error in Update Callback:", e);
+                    if (!res.headersSent) res.status(500).json({ error: e.message });
                 }
-
-                // Audit Log
-                if (oldItem && oldItem.status !== status) {
-                    await systemLog(null, "Inventory Update", `Slot #${req.params.id} Status: ${oldItem.status} -> ${status}`, oldItem.status, status);
-                }
-
-                db.all("SELECT * FROM inventory", [], (err, rows) => {
-                    if (err) return res.status(500).json({ error: err.message });
-                    res.json(rows.map(r => ({
-                        ...r,
-                        boxData: (() => {
-                            try { return JSON.parse(r.boxData || r.box_data || '{}'); }
-                            catch { return null; }
-                        })(),
-                        history: JSON.parse(r.history || '[]')
-                    })));
-                });
             }
         );
     });
 });
+app.get('/api/inventory/external', (req, res) => {
+    db.all("SELECT * FROM external_items ORDER BY sentDate DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows.map(r => {
+            // Robust parsing
+            let boxData = null;
+            let history = [];
+            try { boxData = r.boxData ? JSON.parse(r.boxData) : null; } catch (e) { }
+            try { history = r.history ? JSON.parse(r.history) : []; } catch (e) { }
+            return {
+                ...r,
+                boxData,
+                box_data: boxData, // Add alias for consistency with new schema
+                history
+            };
+        }));
+    });
+});
+
 app.post('/api/inventory/external', (req, res) => {
     let { boxId, destination, sentDate, sender, boxData, history } = req.body;
-    
+
     // Process files in boxData before saving
     if (boxData) {
         boxData = processInventoryFiles(boxData, 'EXT-' + boxId);
@@ -467,7 +832,7 @@ app.delete('/api/folders/:id', (req, res) => {
 app.get('/api/documents', (req, res) => {
     const { auditId, stepIndex, folderId } = req.query;
     // OPTIMIZATION: Exclude fileData (LONGTEXT) from list view for performance
-    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex";
+    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, status";
     let sql = `SELECT ${columns} FROM documents`;
     let params = [];
     let whereClauses = [];
@@ -506,67 +871,248 @@ app.get('/api/documents/:id', (req, res) => {
     });
 });
 
-app.post('/api/documents', (req, res) => {
-    const { id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, file_data, filedata } = req.body;
+import { getEmbedding, cosineSimilarity } from './semantic.js';
+import Tesseract from 'tesseract.js';
+import { createRequire } from 'module';
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
+import mammoth from 'mammoth';
+import XLSX from 'xlsx';
+
+// --- OCR HELPER ---
+// --- OCR HELPER ---
+const extractTextFromFile = async (buffer, mimeType) => {
+    try {
+        if (!buffer) return '';
+
+        // 1. Image OCR (Tesseract)
+        if (mimeType.startsWith('image/')) {
+            console.log("Starting OCR for Image...");
+            const { data: { text } } = await Tesseract.recognize(buffer, 'eng+ind', {
+                logger: m => { if (m.status === 'recognizing text') console.log(`OCR Progress: ${(m.progress * 100).toFixed(0)}%`); }
+            });
+            return text;
+        }
+
+        // 2. PDF Text Extraction (pdf-parse)
+        if (mimeType === 'application/pdf') {
+            console.log("Starting PDF Text Extraction...");
+            let parse = pdfParse;
+            // Handle ESM/CommonJS default export mismatch
+            if (typeof parse !== 'function' && parse.default) {
+                parse = parse.default;
+            }
+            if (typeof parse !== 'function') {
+                console.error("pdf-parse is not a function", parse);
+                return "";
+            }
+            const data = await parse(buffer);
+            return data.text;
+        }
+
+        // 3. Word Document (.docx) (mammoth)
+        if (mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+            console.log("Starting DOCX Text Extraction...");
+            const result = await mammoth.extractRawText({ buffer: buffer });
+            return result.value; // The raw text
+        }
+
+        // 4. Excel Spreadsheet (.xlsx) (xlsx)
+        if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+            console.log("Starting XLSX Text Extraction...");
+            const workbook = XLSX.read(buffer, { type: 'buffer' });
+            let allText = "";
+            workbook.SheetNames.forEach(sheetName => {
+                const sheet = workbook.Sheets[sheetName];
+                // Convert sheet to text (CSV-like but simple connection)
+                const text = XLSX.utils.sheet_to_txt(sheet);
+                allText += `\n--- Sheet: ${sheetName} ---\n${text}`;
+            });
+            return allText;
+        }
+
+        return '';
+    } catch (e) {
+        console.error("OCR/Text Extraction Failed:", e);
+        return '';
+    }
+};
+
+// ... (existing code)
+
+app.post('/api/documents', async (req, res) => {
+    const { id, title, type, size, uploadDate, url, folderId, department, owner, auditId, stepIndex, fileData, file_data, filedata } = req.body;
     // Support multiple casing for fileData
     const content = fileData || file_data || filedata;
 
-    let fileUrl = url;
-    let savedPath = null;
-    let finalFileData = null; // Don't save base64 to DB
+    // --- AUTOMATIC REVISION CHECK ---
+    // Check if a document with same name exists in the same folder
+    const normalizedFolderId = (folderId === "null" || folderId === "") ? null : folderId;
+    const checkSql = "SELECT * FROM documents WHERE title = ? AND (" + (normalizedFolderId ? "folderId = ?" : "folderId IS NULL") + ")";
+    const checkParams = normalizedFolderId ? [title, normalizedFolderId] : [title];
 
-    if (content) {
-        // Determine extension
-        const ext = title.split('.').pop() || 'bin';
-        const savedUrl = saveBase64ToFile(content, id, ext);
-        if (savedUrl) {
-            fileUrl = savedUrl;
-            savedPath = savedUrl;
-            finalFileData = null; // Force NULL in DB to save space
+    db.get(checkSql, checkParams, async (err, existingDoc) => {
+        if (err) {
+            console.error("Duplicate check error:", err);
+            return res.status(500).json({ error: "Check duplicate failed" });
         }
-    }
 
-    db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, ocrContent, auditId, stepIndex, finalFileData],
-        async (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            await systemLog(owner, "Upload", `Mengunggah dokumen: "${title}" (Storage: ${savedPath ? 'Disk' : 'DB'})`);
-            res.json({ success: true, url: fileUrl });
+        if (existingDoc) {
+            console.log(`Duplicate found: ${title} in folder ${folderId || 'Root'}. Creating revision for ID: ${existingDoc.id}`);
+
+            // Re-use versioning logic similar to PUT /api/documents/:id
+            let versionsHistory = [];
+            try { versionsHistory = existingDoc.versionsHistory ? JSON.parse(existingDoc.versionsHistory) : []; } catch (e) { }
+
+            // Archive current version
+            let archivedUrl = existingDoc.url;
+            let archivedFileData = null;
+            if (existingDoc.fileData && existingDoc.fileData.startsWith('data:')) {
+                const ext = existingDoc.title.split('.').pop() || 'bin';
+                const archivedPath = saveBase64ToFile(existingDoc.fileData, `ARCHIVE-${existingDoc.id}-${Date.now()}`, ext);
+                if (archivedPath) archivedUrl = archivedPath;
+                else archivedFileData = existingDoc.fileData;
+            } else {
+                archivedFileData = existingDoc.fileData;
+            }
+
+            versionsHistory.push({
+                timestamp: existingDoc.uploadDate || new Date().toISOString(),
+                size: existingDoc.size,
+                type: existingDoc.type,
+                fileData: archivedFileData,
+                url: archivedUrl,
+                title: existingDoc.title,
+                user: existingDoc.owner || 'System'
+            });
+
+            // Save new file
+            let fileUrl = url;
+            let savedPath = null;
+            let absoluteFilePath = null;
+            let finalFileData = null;
+
+            if (content) {
+                const ext = title.split('.').pop() || 'bin';
+                const savedUrl = saveBase64ToFile(content, existingDoc.id, ext);
+                if (savedUrl) {
+                    fileUrl = savedUrl;
+                    savedPath = savedUrl;
+                    absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+                    finalFileData = null;
+                } else {
+                    finalFileData = content;
+                }
+            } else if (url && url.startsWith('/uploads/')) {
+                absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
+            }
+
+            const initialOcr = req.body.ocrContent || '';
+            const status = initialOcr ? 'done' : 'processing';
+
+            db.run("UPDATE documents SET type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [type, size, uploadDate, fileUrl, initialOcr, finalFileData, JSON.stringify(versionsHistory), status, existingDoc.id],
+                async (updateErr) => {
+                    if (updateErr) return res.status(500).json({ error: "Revision update failed: " + updateErr.message });
+
+                    if (absoluteFilePath) {
+                        try {
+                            await addOCRJob(existingDoc.id, absoluteFilePath, type || 'application/octet-stream', title);
+                        } catch (qErr) { console.error("Queue Error:", qErr); }
+                    }
+
+                    await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${title}" v${existingDoc.version + 1}`);
+                    res.json({ success: true, id: existingDoc.id, version: existingDoc.version + 1, isRevision: true });
+                }
+            );
+            return;
         }
-    );
+
+        // --- ORIGINAL INSERT LOGIC ---
+        let fileUrl = url;
+        let savedPath = null;
+        let absoluteFilePath = null;
+        let finalFileData = null;
+
+        // 1. Save File (Base64 -> Disk)
+        if (content) {
+            const ext = title.split('.').pop() || 'bin';
+            const savedUrl = saveBase64ToFile(content, id, ext);
+
+            if (savedUrl) {
+                fileUrl = savedUrl;
+                savedPath = savedUrl;
+                absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
+                finalFileData = null;
+            } else {
+                finalFileData = content;
+            }
+        } else if (url && url.startsWith('/uploads/')) {
+            absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
+        }
+
+        const initialOcr = req.body.ocrContent || '';
+        const status = initialOcr ? 'done' : 'processing';
+
+        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, finalFileData, status],
+            async (err) => {
+                if (err) {
+                    console.error("DB INSERT ERROR:", err.message);
+                    return res.status(500).json({ error: "Database Insert Failed: " + err.message });
+                }
+
+                if (absoluteFilePath) {
+                    try {
+                        await addOCRJob(id, absoluteFilePath, type || 'application/octet-stream', title);
+                    } catch (qErr) {
+                        console.error("Queue Error:", qErr);
+                    }
+                }
+
+                await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
+
+                res.json({
+                    id, title, type, size, uploadDate, url: fileUrl, folderId, department, owner,
+                    ocrContent: initialOcr, auditId, stepIndex, status: 'processing'
+                });
+            }
+        );
+    });
 });
 
 app.put('/api/documents/:id', (req, res) => {
     const { title, folderId, department, ocrContent, fileData, file_data, filedata } = req.body;
     const content = fileData || file_data || filedata;
 
+    // Generate Embedding (Async)
+    const textToEmbed = (title + " " + (ocrContent || "")).substring(0, 1000);
+    getEmbedding(textToEmbed).then(vector => {
+        if (vector) {
+            db.run("UPDATE documents SET vector = ? WHERE id = ?", [JSON.stringify(vector), req.params.id], (err) => {
+                if (err) console.error("Failed to save vector:", err);
+            });
+        }
+    });
+
     if (content) {
-        // Full update with file content -> SAVE VERSION
+        // ... (rest of the PUT logic remains similar, see context)
         db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, oldDoc) => {
             if (err) return res.status(500).json({ error: err.message });
 
             let versionsHistory = [];
-            try {
-                versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : [];
-            } catch (e) { }
+            try { versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : []; } catch (e) { }
 
-            // Save OLD version
             if (oldDoc) {
+                // ... (archiving logic)
                 let archivedUrl = oldDoc.url;
                 let archivedFileData = null;
-
-                // MIGRATION: If old doc has BLOB data, save it to disk now to free up DB space for history
                 if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
                     const ext = oldDoc.title.split('.').pop() || 'bin';
                     const archivedPath = saveBase64ToFile(oldDoc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
-                    if (archivedPath) {
-                        archivedUrl = archivedPath; // Point to new disk file
-                        console.log("Migrated old version to disk:", archivedPath);
-                    } else {
-                        archivedFileData = oldDoc.fileData; // Fallback: keep BLOB if save fails
-                    }
-                } else if (oldDoc.fileData) {
-                    // Non-base64 data? Keep it.
+                    if (archivedPath) archivedUrl = archivedPath;
+                    else archivedFileData = oldDoc.fileData;
+                } else {
                     archivedFileData = oldDoc.fileData;
                 }
 
@@ -574,24 +1120,30 @@ app.put('/api/documents/:id', (req, res) => {
                     timestamp: oldDoc.uploadDate || new Date().toISOString(),
                     size: oldDoc.size,
                     type: oldDoc.type,
-                    fileData: archivedFileData, // Should be null if migrated
-                    url: archivedUrl,           // Should point to disk if migrated or already there
+                    fileData: archivedFileData,
+                    url: archivedUrl,
                     title: oldDoc.title,
                     user: oldDoc.owner || 'System'
                 });
             }
 
-            // Save NEW version
             const ext = title.split('.').pop() || 'bin';
             const newSavedUrl = saveBase64ToFile(content, req.params.id, ext);
             const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
-            const finalFileData = newSavedUrl ? null : content; // Fallback to BLOB if save failed
+            const finalFileData = newSavedUrl ? null : content;
 
-            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
-                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), req.params.id],
+            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), ocrContent ? 'done' : 'processing', req.params.id],
                 async (err) => {
                     if (err) return res.status(500).json({ error: err.message });
-                    await systemLog(null, "Update/Version", `Update file & save version: "${title}" (Storage: ${newSavedUrl ? 'Disk' : 'DB'})`);
+
+                    // Add Job for revision
+                    if (newSavedUrl) {
+                        const absolutePath = path.join(UPLOADS_DIR, path.basename(newSavedUrl));
+                        addOCRJob(req.params.id, absolutePath, req.body.type || 'application/octet-stream', title);
+                    }
+
+                    await systemLog(null, "Update/Version", `Update file & save version: "${title}"`);
                     res.json({ success: true });
                 }
             );
@@ -607,6 +1159,42 @@ app.put('/api/documents/:id', (req, res) => {
             }
         );
     }
+});
+
+app.get('/api/search', async (req, res) => {
+    const { q } = req.query;
+    if (!q) return res.json([]);
+
+    console.log("Semantic Search Query:", q);
+
+    // 1. Generate Query Vector
+    const queryVector = await getEmbedding(q);
+    if (!queryVector) return res.status(500).json({ error: "Embedding generation failed" });
+
+    // 2. Fetch all document vectors
+    const sql = `
+        SELECT d.id, d.title, d.type, d.size, d.uploadDate, d.vector, d.folderId, f.name as folderName 
+        FROM documents d
+        LEFT JOIN folders f ON d.folderId = f.id
+    `;
+
+    db.all(sql, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const results = rows.map(doc => {
+            if (!doc.vector) return { ...doc, score: 0 };
+            try {
+                const docVector = JSON.parse(doc.vector);
+                const score = cosineSimilarity(queryVector, docVector);
+                return { ...doc, score };
+            } catch (e) { return { ...doc, score: 0 }; }
+        })
+            .filter(doc => doc.score > 0.2) // Threshold
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 5); // Top 5
+
+        res.json(results);
+    });
 });
 
 // --- MANAGEMENT OPS (COPY/MOVE) ---
@@ -765,7 +1353,7 @@ app.post('/api/documents/:id/restore', (req, res) => {
         const newUrl = versionToRestore.url || doc.url; // Use restored URL or keep current if undefined (legacy)
         const newFileData = versionToRestore.fileData || null;
 
-        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = version + 1 WHERE id = ?",
+        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = 'ready' WHERE id = ?",
             [newFileData, newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), req.params.id],
             async (err) => {
                 if (err) return res.status(500).json({ error: err.message });
@@ -819,19 +1407,15 @@ app.get('/api/tax-summaries', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows.map(r => ({
             ...r,
-            ppnIn: JSON.parse(r.ppnIn || '{}'),
-            ppnOut: JSON.parse(r.ppnOut || '{}'),
-            extraPph: JSON.parse(r.extraPph || '[]'),
-            extraPpnIn: JSON.parse(r.extraPpnIn || '[]'),
-            extraPpnOut: JSON.parse(r.extraPpnOut || '[]')
+            data: typeof r.data === 'string' ? JSON.parse(r.data || '{}') : (r.data || {})
         })));
     });
 });
 
 app.post('/api/tax-summaries', (req, res) => {
-    const { month, year, pph23, pph42, pph26, ppnIn, ppnOut, extraPph, extraPpnIn, extraPpnOut } = req.body;
-    db.run("INSERT INTO tax_summaries (month, year, pph23, pph42, pph26, ppnIn, ppnOut, extraPph, extraPpnIn, extraPpnOut) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        [month, year, pph23, pph42, pph26, JSON.stringify(ppnIn), JSON.stringify(ppnOut), JSON.stringify(extraPph), JSON.stringify(extraPpnIn), JSON.stringify(extraPpnOut)],
+    const { id, type, month, year, pembetulan, data } = req.body;
+    db.run("INSERT INTO tax_summaries (id, type, month, year, pembetulan, data) VALUES (?, ?, ?, ?, ?, ?)",
+        [id || Date.now().toString(), type, month, year, pembetulan || 0, JSON.stringify(data)],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ id: this.lastID });
@@ -840,9 +1424,9 @@ app.post('/api/tax-summaries', (req, res) => {
 });
 
 app.put('/api/tax-summaries/:id', (req, res) => {
-    const { month, year, pph23, pph42, pph26, ppnIn, ppnOut, extraPph, extraPpnIn, extraPpnOut } = req.body;
-    db.run("UPDATE tax_summaries SET month = ?, year = ?, pph23 = ?, pph42 = ?, pph26 = ?, ppnIn = ?, ppnOut = ?, extraPph = ?, extraPpnIn = ?, extraPpnOut = ? WHERE id = ?",
-        [month, year, pph23, pph42, pph26, JSON.stringify(ppnIn), JSON.stringify(ppnOut), JSON.stringify(extraPph), JSON.stringify(extraPpnIn), JSON.stringify(extraPpnOut), req.params.id],
+    const { type, month, year, pembetulan, data } = req.body;
+    db.run("UPDATE tax_summaries SET type = ?, month = ?, year = ?, pembetulan = ?, data = ? WHERE id = ?",
+        [type, month, year, pembetulan, JSON.stringify(data), req.params.id],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });
@@ -857,6 +1441,360 @@ app.delete('/api/tax-summaries/:id', (req, res) => {
     });
 });
 
-app.listen(PORT, () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
+// --- TAX OBJECTS (DATABASE WP) ---
+// Table is created in db.js initDb()
+
+app.get('/api/tax-objects', (req, res) => {
+    db.all("SELECT * FROM tax_objects ORDER BY created_at DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/tax-objects', (req, res) => {
+    const { idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet } = req.body;
+
+    // Logic: Check for exact match (NPWP + Type + Code) or empty match (NPWP with no Type/Code)
+    db.all("SELECT id, tax_type, tax_object_code FROM tax_objects WHERE identity_number = ?", [identityNumber], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        const exactMatch = rows.find(r => String(r.tax_type) === String(taxType) && String(r.tax_object_code) === String(taxObjectCode));
+        const emptyMatch = rows.find(r => !r.tax_type || r.tax_type === '' || !r.tax_object_code || r.tax_object_code === '');
+
+        if (exactMatch || emptyMatch) {
+            const targetId = exactMatch ? exactMatch.id : emptyMatch.id;
+            db.run(`UPDATE tax_objects SET 
+                id_type = ?, name = ?, email = ?, tax_type = ?, 
+                tax_object_code = ?, tax_object_name = ?, dpp = ?, rate = ?, pph = ?, ppn = ?, total_payable = ?, discount = ?, dpp_net = ?
+                WHERE id = ?`,
+                [idType, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet, targetId],
+                function (err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ success: true, id: targetId, updated: true });
+                }
+            );
+        } else {
+            db.run(`INSERT INTO tax_objects (
+                id_type, identity_number, name, email, tax_type, 
+                tax_object_code, tax_object_name, dpp, rate, pph, ppn, total_payable, discount, dpp_net
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet],
+                function (err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ success: true, id: this.lastID });
+                }
+            );
+        }
+    });
+});
+
+app.put('/api/tax-objects/:id', (req, res) => {
+    const { idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet } = req.body;
+
+    db.run(`UPDATE tax_objects SET 
+        id_type = ?, identity_number = ?, name = ?, email = ?, tax_type = ?, 
+        tax_object_code = ?, tax_object_name = ?, dpp = ?, rate = ?, pph = ?, ppn = ?, total_payable = ?, discount = ?, dpp_net = ?
+        WHERE id = ?`,
+        [idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet, req.params.id],
+        (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.delete('/api/tax-objects-all', (req, res) => {
+    db.run("DELETE FROM tax_objects", [], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, message: "Seluruh data database WP telah dihapus." });
+    });
+});
+
+app.delete('/api/tax-objects/:id', (req, res) => {
+    db.run("DELETE FROM tax_objects WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.get('/api/tax-objects/export', (req, res) => {
+    db.all("SELECT * FROM tax_objects ORDER BY created_at DESC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Map data to Excel friendly format
+        const exportData = rows.map(item => ({
+            'Nama Wajib Pajak': item.name,
+            'Jenis Pajak': `PPh ${item.tax_type}`,
+            'Tarif (%)': item.rate,
+            'NPWP/NIK': `${item.id_type}: ${item.identity_number}`,
+            'Kode Objek Pajak': item.tax_object_code,
+            'Email': item.email
+        }));
+
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(exportData);
+
+        // Adjust column widths
+        ws['!cols'] = [
+            { wch: 30 }, // Nama Wajib Pajak
+            { wch: 15 }, // Jenis Pajak
+            { wch: 10 }, // Tarif (%)
+            { wch: 25 }, // NPWP/NIK
+            { wch: 20 }, // Kode Objek Pajak
+            { wch: 30 }  // Email
+        ];
+
+        XLSX.utils.book_append_sheet(wb, ws, 'Database WP');
+        const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename=Database_WP.xlsx');
+        res.send(buffer);
+    });
+});
+
+// --- NEW: TAX OBJECTS TEMPLATE & IMPORT ---
+
+app.get('/api/tax-objects/template', (req, res) => {
+    const wb = XLSX.utils.book_new();
+    const wsData = [
+        ['Jenis ID', 'Nomor Identitas', 'Nama Wajib Pajak', 'Email', 'Jenis PPh', 'Kode Objek', 'Nama Objek', 'DPP', 'Tarif (%)', 'Total PPh'],
+        ['NPWP', '01.234.567.8-901.000', 'PT Contoh Sejahtera', 'admin@contoh.com', '23', '24-100-02', 'Jasa Teknik', 10000000, 2, 200000],
+        ['KTP', '3201234567890001', 'Budi Santoso', 'budi@email.com', '21', '21-100-01', 'Upah Pegawai', 5000000, 5, 250000]
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    
+    // Adjust column widths
+    ws['!cols'] = [
+        { wch: 10 }, { wch: 25 }, { wch: 30 }, { wch: 10 }, 
+        { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 15 }
+    ];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Template Database WP');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename="Template_Database_WP.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+});
+
+app.post('/api/tax-objects/import', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        if (!fs.existsSync(req.file.path)) {
+            throw new Error(`File not found at path: ${req.file.path}`);
+        }
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        db.all("SELECT id, identity_number, tax_type, tax_object_code FROM tax_objects", [], async (err, existingRows) => {
+            if (err) {
+                console.error("Import check error:", err);
+                return res.status(500).json({ error: 'Gagal mengecek duplikat: ' + err.message });
+            }
+
+            const groupedData = {};
+            data.forEach(row => {
+                const idNumber = String(row['Nomor Identitas'] || '').trim();
+                const taxType = String(row['Jenis PPh'] || '').trim();
+                const code = String(row['Kode Objek'] || '').trim();
+                if (!idNumber || !row['Nama Wajib Pajak']) return;
+
+                const key = `${idNumber}|${taxType}|${code}`;
+                if (!groupedData[key]) {
+                    groupedData[key] = {
+                        id_type: row['Jenis ID'] || 'NPWP',
+                        identity_number: idNumber,
+                        name: row['Nama Wajib Pajak'] || '',
+                        email: row['Email'] || '',
+                        tax_type: taxType,
+                        tax_object_code: code,
+                        tax_object_name: row['Nama Objek'] || '',
+                        dpp: Number(row['DPP']) || 0,
+                        rate: Number(row['Tarif (%)']) || 0,
+                        pph: Number(row['Total PPh']) || 0
+                    };
+                } else {
+                    groupedData[key].dpp += Number(row['DPP']) || 0;
+                    groupedData[key].pph += Number(row['Total PPh']) || 0;
+                }
+            });
+
+            const items = Object.values(groupedData);
+            let updatedCount = 0;
+            let insertedCount = 0;
+
+            const runQuery = (sql, params) => new Promise((resolve, reject) => {
+                db.run(sql, params, function(err) {
+                    if (err) reject(err);
+                    else resolve(this);
+                });
+            });
+
+            try {
+                for (const item of items) {
+                    const exactMatch = existingRows.find(r => 
+                        r.identity_number === item.identity_number && 
+                        String(r.tax_type) === String(item.tax_type) && 
+                        String(r.tax_object_code) === String(item.tax_object_code)
+                    );
+
+                    if (exactMatch) {
+                        await runQuery(`UPDATE tax_objects SET name=?, email=?, tax_object_name=?, dpp=?, rate=?, pph=? WHERE id=?`,
+                            [item.name, item.email, item.tax_object_name, item.dpp, item.rate, item.pph, exactMatch.id]);
+                        updatedCount++;
+                    } else {
+                        const emptyMatch = existingRows.find(r => 
+                            r.identity_number === item.identity_number && 
+                            (!r.tax_type || r.tax_type === '' || !r.tax_object_code || r.tax_object_code === '')
+                        );
+                        if (emptyMatch) {
+                            await runQuery(`UPDATE tax_objects SET tax_type=?, tax_object_code=?, tax_object_name=?, dpp=?, rate=?, pph=?, name=?, email=? WHERE id=?`,
+                                [item.tax_type, item.tax_object_code, item.tax_object_name, item.dpp, item.rate, item.pph, item.name, item.email, emptyMatch.id]);
+                            existingRows.splice(existingRows.indexOf(emptyMatch), 1);
+                            updatedCount++;
+                        } else {
+                            await runQuery(`INSERT INTO tax_objects (id_type, identity_number, name, email, tax_type, tax_object_code, tax_object_name, dpp, rate, pph) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                [item.id_type, item.identity_number, item.name, item.email, item.tax_type, item.tax_object_code, item.tax_object_name, item.dpp, item.rate, item.pph]);
+                            insertedCount++;
+                        }
+                    }
+                }
+                res.json({ success: true, message: `Berhasil memproses ${items.length} data! (${insertedCount} baru, ${updatedCount} diperbarui)` });
+            } catch (error) {
+                res.status(500).json({ error: 'Gagal memproses data: ' + error.message });
+            }
+        });
+    } catch (error) {
+        console.error("Error processing Excel:", error);
+        res.status(500).json({ error: 'Failed to process Excel file: ' + (error.stack || error.toString()) });
+    }
+});
+
+// --- MASTER TAX OBJECTS (IMPORT EXCEL) ---
+
+// Uses existing 'upload' configuration from earlier in file
+
+
+app.get('/api/master-tax-objects/template', (req, res) => {
+    // Create a new workbook and worksheet
+    const wb = XLSX.utils.book_new();
+    const wsData = [
+        ['Jenis PPh', 'Kode Objek Pajak', 'Nama Objek Pajak', 'Tarif (%)', 'Keterangan'], // Header
+        ['21', '21-100-01', 'Upah Pegawai Tidak Tetap', 5, 'Contoh pengisian'],
+        ['23', '23-100-02', 'Jasa Teknik', 2, 'Contoh pengisian'],
+        ['4(2)', '4(2)-100-03', 'Sewa Tanah dan Bangunan', 10, 'Contoh pengisian']
+    ];
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+
+    // Adjust column width
+    ws['!cols'] = [{ wch: 15 }, { wch: 20 }, { wch: 50 }, { wch: 10 }, { wch: 30 }];
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+
+    // Write to buffer
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+    res.setHeader('Content-Disposition', 'attachment; filename="Template_Master_Objek_Pajak.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+});
+
+app.post('/api/master-tax-objects/import', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    try {
+        console.log("Processing file:", req.file.path);
+
+        if (!fs.existsSync(req.file.path)) {
+            throw new Error(`File not found at path: ${req.file.path}`);
+        }
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const data = XLSX.utils.sheet_to_json(sheet);
+
+        db.all("SELECT id, tax_type, code FROM master_tax_objects", [], async (err, existingRows) => {
+            if (err) {
+                console.error("Master import check error:", err);
+                return res.status(500).json({ error: 'Gagal mengecek data master: ' + err.message });
+            }
+
+            // 1. Grouping & Deduplikasi data dari file Excel
+            const groupedData = {};
+            data.forEach(row => {
+                const taxType = String(row['Jenis PPh'] || '').trim();
+                const code = String(row['Kode Objek Pajak'] || '').trim();
+                const name = row['Nama Objek Pajak'];
+                
+                if (!taxType || !code || !name) return;
+
+                const key = `${taxType}|${code}`;
+                // Jika ada duplikat di file, baris terakhir yang akan diambil
+                groupedData[key] = {
+                    tax_type: taxType,
+                    code: code,
+                    name: name,
+                    rate: Number(row['Tarif (%)']) || 0,
+                    note: row['Keterangan'] || ''
+                };
+            });
+
+            const items = Object.values(groupedData);
+            let updatedCount = 0;
+            let insertedCount = 0;
+
+            const runQuery = (sql, params) => new Promise((resolve, reject) => {
+                db.run(sql, params, function(err) {
+                    if (err) reject(err);
+                    else resolve(this);
+                });
+            });
+
+            try {
+                for (const item of items) {
+                    // Cek apakah kombinasi Jenis PPh dan Kode Objek sudah ada di DB
+                    const match = existingRows.find(r => String(r.tax_type) === item.tax_type && String(r.code) === item.code);
+                    
+                    if (match) {
+                        // Update data yang sudah ada
+                        await runQuery("UPDATE master_tax_objects SET name=?, rate=?, note=? WHERE id=?", 
+                            [item.name, item.rate, item.note, match.id]);
+                        updatedCount++;
+                    } else {
+                        // Insert data baru
+                        await runQuery("INSERT INTO master_tax_objects (tax_type, code, name, rate, note) VALUES (?, ?, ?, ?, ?)", 
+                            [item.tax_type, item.code, item.name, item.rate, item.note]);
+                        insertedCount++;
+                    }
+                }
+                res.json({ success: true, message: `Berhasil memproses ${items.length} data master! (${insertedCount} baru, ${updatedCount} diperbarui)` });
+            } catch (error) {
+                res.status(500).json({ error: 'Gagal memproses data master: ' + error.message });
+            }
+        });
+    } catch (error) {
+        console.error("Error processing Excel:", error);
+        res.status(500).json({ error: 'Failed to process Excel file: ' + (error.stack || error.toString()) });
+    }
+});
+
+app.get('/api/master-tax-objects', (req, res) => {
+    db.all("SELECT * FROM master_tax_objects ORDER BY tax_type, code", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running on http://0.0.0.0:${PORT}`);
 });

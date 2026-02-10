@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, FileKey, AlertCircle } from 'lucide-react';
+import { User, FileKey, AlertCircle, ShieldCheck, Zap, ArrowRight } from 'lucide-react';
 
 export default function Login({ onLogin }) {
     const [loginForm, setLoginForm] = useState({ username: '', password: '', error: '' });
@@ -12,52 +12,118 @@ export default function Login({ onLogin }) {
     };
 
     return (
-        <div className="min-h-screen flex items-center justify-center bg-transparent transition-colors duration-300 p-4">
-            <div className="bg-white/40 dark:bg-slate-800/40 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-md border border-white/40 dark:border-white/10 animate-in fade-in zoom-in-95 duration-300 ring-1 ring-black/5 dark:ring-white/5 mx-auto">
-                <div className="flex justify-center mb-8">
-                    <img src="/vite.svg" alt="Logo" className="w-20 h-20 drop-shadow-2xl" />
+        <div className="min-h-screen w-full flex items-center justify-center bg-[#F4F7FE] dark:bg-[#0B1437] overflow-hidden relative p-4">
+            {/* Animated Background Elements */}
+            <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-indigo-500/10 rounded-full blur-[120px] animate-pulse"></div>
+            <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-500/10 rounded-full blur-[120px] animate-pulse" style={{ animationDelay: '2s' }}></div>
+            
+            <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 gap-0 bg-white/60 dark:bg-slate-900/60 backdrop-blur-2xl rounded-[2.5rem] shadow-2xl border border-white/40 dark:border-white/10 overflow-hidden z-10 animate-in fade-in zoom-in-95 duration-700">
+                
+                {/* Left Side: Branding & Illustration (Startup Style) */}
+                <div className="hidden lg:flex flex-col justify-between p-12 bg-gradient-to-br from-indigo-600 to-purple-700 relative overflow-hidden">
+                    <div className="absolute inset-0 opacity-10">
+                        <svg width="100%" height="100%" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            <path d="M0 0 L100 0 L100 100 Z" fill="white" />
+                        </svg>
+                    </div>
+                    
+                    <div className="relative z-10">
+                        <div className="flex items-center gap-3 mb-8">
+                            <div className="p-2 bg-white/20 backdrop-blur-md rounded-xl">
+                                <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
+                            </div>
+                            <span className="text-2xl font-black text-white tracking-tighter">TaxArchi</span>
+                        </div>
+                        
+                        <h1 className="text-5xl font-black text-white leading-tight mb-6">
+                            Solusi Terpadu<br /> 
+                            <span className="text-indigo-200">Pajak dan Arsip Digital</span>
+                        </h1>
+                        <p className="text-indigo-100 text-lg font-medium max-w-md">
+                            Integrasi cerdas antara sistem pajak dan arsip digital untuk mendukung operasional korporat yang efisien dan patuh regulasi..
+                        </p>
+                    </div>
+
+                    {/* Animated SVG Illustration */}
+                    <div className="relative z-10 flex justify-center py-10">
+                        <div className="relative w-64 h-64">
+                            {/* Floating Elements */}
+                            <div className="absolute top-0 left-0 w-full h-full animate-bounce-slow">
+                                <svg viewBox="0 0 200 200" className="w-full h-full text-white/20">
+                                    <rect x="40" y="40" width="120" height="120" rx="20" fill="currentColor" />
+                                    <rect x="60" y="70" width="80" height="10" rx="5" fill="white" fillOpacity="0.3" />
+                                    <rect x="60" y="95" width="50" height="10" rx="5" fill="white" fillOpacity="0.3" />
+                                    <circle cx="140" cy="140" r="20" fill="#4ade80" className="animate-pulse" />
+                                    <path d="M135 140 L138 145 L145 135" stroke="white" strokeWidth="3" fill="none" strokeLinecap="round" />
+                                </svg>
+                            </div>
+                            {/* Decorative Rings */}
+                            <div className="absolute inset-[-20px] border-2 border-dashed border-white/10 rounded-full animate-spin-slow"></div>
+                            <div className="absolute inset-[-40px] border border-white/5 rounded-full animate-reverse-spin-slow"></div>
+                        </div>
+                    </div>
+
+                    <div className="relative z-10 flex gap-6">
+                        <div className="flex items-center gap-2 text-white/70 text-sm font-bold">
+                            <ShieldCheck size={18} className="text-emerald-400" /> Enterprise Security
+                        </div>
+                        <div className="flex items-center gap-2 text-white/70 text-sm font-bold">
+                            <Zap size={18} className="text-amber-400" /> AI Powered OCR
+                        </div>
+                    </div>
                 </div>
-                <h2 className="text-3xl font-extrabold text-center text-gray-900 dark:text-white mb-2 tracking-tight">Archive Os</h2>
-                <p className="text-center text-gray-500 dark:text-slate-400 mb-8 font-medium">Sistem Manajemen Arsip Terpadu</p>
 
-                {loginForm.error && (
-                    <div className="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm rounded-lg flex items-center gap-2 animate-in slide-in-from-top-2">
-                        <AlertCircle size={16} /> {loginForm.error}
+                {/* Right Side: Login Form */}
+                <div className="p-8 md:p-16 flex flex-col justify-center">
+                    <div className="lg:hidden flex justify-center mb-8">
+                        <img src="/vite.svg" alt="Logo" className="w-16 h-16 drop-shadow-xl" />
                     </div>
-                )}
+                    
+                    <div className="mb-10">
+                        <h2 className="text-3xl font-black text-[#2B3674] dark:text-white mb-2 tracking-tight">Selamat Datang</h2>
+                        <p className="text-gray-500 dark:text-slate-400 font-bold">Masukkan kredensial Anda untuk akses sistem.</p>
+                    </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4">
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Username</label>
-                        <div className="relative">
-                            <User className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                            <input
-                                type="text"
-                                value={loginForm.username}
-                                onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
-                                className="w-full pl-10 pr-4 py-2 border rounded-lg bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:text-white transition-all"
-                                placeholder="Masukkan username"
-                            />
+                    {loginForm.error && (
+                        <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-100 dark:border-red-800/30 text-red-600 dark:text-red-400 text-sm font-bold rounded-2xl flex items-center gap-3 animate-in slide-in-from-top-2">
+                            <AlertCircle size={20} /> {loginForm.error}
                         </div>
-                    </div>
-                    <div>
-                        <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Password</label>
-                        <div className="relative">
-                            <FileKey className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={18} />
-                            <input
-                                type="password"
-                                value={loginForm.password}
-                                onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
-                                className="w-full pl-10 pr-4 py-2 border rounded-lg bg-gray-50 dark:bg-slate-900 border-gray-200 dark:border-slate-700 focus:ring-2 focus:ring-indigo-500 focus:border-transparent dark:text-white transition-all"
-                                placeholder="Masukkan password"
-                            />
+                    )}
+
+                    <form onSubmit={handleSubmit} className="space-y-6">
+                        <div className="group">
+                            <label className="block text-sm font-black text-[#2B3674] dark:text-slate-300 mb-2 uppercase tracking-widest ml-1">Username</label>
+                            <div className="relative group-focus-within:scale-[1.01] transition-all duration-300">
+                                <User className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+                                <input
+                                    type="text"
+                                    value={loginForm.username}
+                                    onChange={e => setLoginForm({ ...loginForm, username: e.target.value })}
+                                    className="w-full pl-12 pr-4 py-4 bg-gray-50 dark:bg-slate-950 border-2 border-gray-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 dark:text-white transition-all font-bold outline-none"
+                                    placeholder="admin / staff"
+                                />
+                            </div>
                         </div>
-                    </div>
-                    <button type="submit" className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-medium shadow-lg shadow-indigo-500/20 transition-all hover:scale-[1.02] active:scale-[0.98]">
-                        Masuk Sistem
-                    </button>
-                </form>
-                <p className="text-center text-xs text-gray-400 mt-8">© 2024 ArchiveOS Enterprise Edition</p>
+                        <div className="group">
+                            <label className="block text-sm font-black text-[#2B3674] dark:text-slate-300 mb-2 uppercase tracking-widest ml-1">Password</label>
+                            <div className="relative group-focus-within:scale-[1.01] transition-all duration-300">
+                                <FileKey className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 group-focus-within:text-indigo-500 transition-colors" size={20} />
+                                <input
+                                    type="password"
+                                    value={loginForm.password}
+                                    onChange={e => setLoginForm({ ...loginForm, password: e.target.value })}
+                                    className="w-full pl-12 pr-4 py-4 bg-gray-50 dark:bg-slate-950 border-2 border-gray-100 dark:border-slate-800 rounded-2xl focus:ring-4 focus:ring-indigo-500/10 focus:border-indigo-500 dark:text-white transition-all font-bold outline-none"
+                                    placeholder="••••••••"
+                                />
+                            </div>
+                        </div>
+                        <button type="submit" className="w-full py-4 bg-[#4318FF] hover:bg-indigo-700 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-3 group">
+                            Masuk Ke Dashboard
+                            <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                        </button>
+                    </form>
+                    <p className="text-center text-xs text-gray-400 mt-12 font-bold uppercase tracking-widest">© 2026 FinDoc Hub Enterprise • v2.4.0</p>
+                </div>
             </div>
         </div>
     );

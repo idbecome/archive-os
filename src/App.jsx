@@ -28,7 +28,6 @@ import {
   Trash2,
   GitCommit,
   User,
-  ScanLine,
   FileKey,
   FileStack,
   UploadCloud,
@@ -60,7 +59,8 @@ import {
   ArrowUpRight,
   Building2,
   Paperclip,
-  Menu
+  Menu,
+  RefreshCw
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import Login from './pages/Login';
@@ -69,7 +69,9 @@ import Inventory from './pages/Inventory';
 import Documents from './pages/Documents';
 import TaxMonitoring from './pages/TaxMonitoring';
 import TaxSummary from './pages/TaxSummary';
+import TaxCalculation from './pages/TaxCalculation';
 import MasterData from './pages/MasterData';
+import Profile from './pages/Profile';
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
 const API_URL = 'http://localhost:5000/api';
@@ -97,7 +99,39 @@ export default function App() {
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
-  const [activeTab, setActiveTab] = useState('inventory');
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const [copyNotification, setCopyNotification] = useState(null);
+
+  // Fungsi pembantu untuk menyalin teks ke clipboard dengan notifikasi
+  const handleCopyToClipboard = (text, label = "Data") => {
+    if (text === undefined || text === null) return;
+
+    const textToCopy = String(text);
+
+    const successAction = () => {
+      setCopyNotification(label);
+      setTimeout(() => setCopyNotification(null), 3000);
+    };
+
+    // Modern API with Fallback
+    if (navigator.clipboard && window.isSecureContext) {
+      navigator.clipboard.writeText(textToCopy)
+        .then(successAction)
+        .catch(() => fallbackCopy(textToCopy, successAction));
+    } else {
+      fallbackCopy(textToCopy, successAction);
+    }
+  };
+
+  const fallbackCopy = (text, callback) => {
+    const textArea = document.createElement("textarea");
+    textArea.value = text;
+    document.body.appendChild(textArea);
+    textArea.select();
+    try { document.execCommand('copy'); callback(); } catch (err) { console.error('Copy failed', err); }
+    document.body.removeChild(textArea);
+  };
+
   const [selectedSlotId, setSelectedSlotId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState('details');
@@ -186,6 +220,39 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(!!currentUser); // Start loading only if user is logged in
   const [stats, setStats] = useState({ stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 });
 
+  // --- OCR GLOBAL POLLING ---
+  const [ocrStats, setOcrStats] = useState({ counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
+  const lastOcrCompletedRef = useRef(0);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const fetchOcrStatus = async () => {
+      try {
+        const res = await fetch(`/api/ocr/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        // Check for new completions to trigger auto-refresh
+        const newCompleted = data?.counts?.completed || 0;
+        if (lastOcrCompletedRef.current > 0 && newCompleted > lastOcrCompletedRef.current) {
+          console.log("OCR Job Completed! Refreshing data...");
+          fetchInventory(); // Refresh Inventory
+          fetchDocs();      // Refresh Documents
+          fetchLogs();      // Refresh Logs
+        }
+        lastOcrCompletedRef.current = newCompleted;
+        setOcrStats(data || { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
+      } catch (err) {
+        console.error("Failed to fetch OCR status:", err);
+      }
+    };
+
+    const interval = setInterval(fetchOcrStatus, 2000); // Poll every 2s
+    fetchOcrStatus();
+
+    return () => clearInterval(interval);
+  }, [currentUser]); // Dependency on currentUser ensures it runs only when logged in
 
   // --- DATA INITIALIZATION FROM API ---
   const fetchDocs = async () => {
@@ -249,6 +316,13 @@ export default function App() {
         api.getRoles().then(setRoles),
         api.getDepartments().then(setDepartments)
       ]);
+      // Initialize OCR completion count
+      try {
+        const ocrRes = await fetch(`/api/ocr/status`);
+        const ocrData = await ocrRes.json();
+        lastOcrCompletedRef.current = ocrData?.counts?.completed || 0;
+      } catch (e) { console.warn("Initial OCR status fetch failed", e); }
+
       setIsLoading(false);
     };
     initData();
@@ -265,6 +339,7 @@ export default function App() {
   }, [isDarkMode]);
 
   const [searchQuery, setSearchQuery] = useState('');
+  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [userSearchQuery, setUserSearchQuery] = useState('');
 
   // Warehouse Form State
@@ -307,6 +382,51 @@ export default function App() {
   };
 
   // --- HANDLERS: WAREHOUSE ---
+
+  const syncBoxFolder = async (boxId, status, oldBoxId = null) => {
+    if (!boxId) return null;
+    try {
+      const allFolders = await api.getFolders();
+      // Cari folder di root yang namanya persis atau diawali dengan ID Box (untuk folder yang sudah di-rename)
+      let folder = allFolders.find(f => {
+        const isRoot = !f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0';
+        if (!isRoot) return false;
+        const targetId = oldBoxId || boxId;
+        return f.name === targetId || f.name.startsWith(`${targetId}_`);
+      });
+
+      // Jika folder belum ada dan status bukan penghapusan, buat folder baru
+      if (!folder && status !== 'EMPTY' && status !== 'REMOVED') {
+        const res = await api.createFolder({
+          name: boxId,
+          parentId: null,
+          privacy: 'public',
+          owner: currentUser?.name || 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        folder = updatedFolders.find(f => f.name === boxId && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      }
+
+      if (folder) {
+        let newName = boxId;
+        // Jika box pindah/dihapus/keluar, rename dengan format: no_box_uniq no_status box
+        if (status !== 'STORED' && status !== 'IMPORTED') {
+          newName = `${boxId}_${Date.now()} ${status} box`;
+        }
+
+        if (newName !== folder.name) {
+          await api.updateFolder(folder.id, { name: newName });
+          await fetchFolders();
+        }
+        return folder.id;
+      }
+      return null;
+    } catch (err) {
+      console.error("Folder sync failed:", err);
+      return null;
+    }
+  };
 
   // --- PERMISSIONS HELPERS ---
   const hasPermission = (moduleId, action = 'view') => {
@@ -365,14 +485,24 @@ export default function App() {
     addLog(currentUser?.name, 'Logout', 'User logged out');
   };
 
+  const handleUpdateProfile = (updatedUser) => {
+    setCurrentUser(updatedUser);
+    localStorage.setItem('archive_user', JSON.stringify(updatedUser));
+    // Update users list if needed
+    setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+  };
+
   // --- WAREHOUSE HANDLERS (API INTEGRATED) ---
 
   const handleSlotClick = (slot) => {
+    console.log("Slot Clicked:", slot.id, "Status:", slot.status);
+    console.log("Slot BoxData:", JSON.stringify(slot.boxData));
+
     setSelectedSlotId(slot.id);
     if (slot.status === 'EMPTY') {
       setBoxForm({ boxId: `BOX-${new Date().getFullYear()}-${String(slot.id).padStart(3, '0')}`, ordners: [] });
     } else {
-      setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners });
+      setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners || [] });
     }
     setNewOrdner({ noOrdner: '', period: '' });
     setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
@@ -380,12 +510,27 @@ export default function App() {
     setEditingItem(null);
     setShowMoveInput(false);
     setMoveTargetSlot('');
-    setMoveTargetSlot('');
+
     setShowExternalForm(false);
     setExternalDate('');
     setModalTab('details');
     setIsModalOpen(true);
   };
+
+  // --- SYNC BOX FORM WITH INVENTORY UPDATE (Auto-Refresh OCR) ---
+  useEffect(() => {
+    if (selectedSlotId && inventory.length > 0) {
+      const currentSlot = inventory.find(s => s.id === selectedSlotId);
+      if (currentSlot && currentSlot.boxData) {
+        // Only update if we are not currently editing to avoid overwriting user input
+        // But for OCR status, we mainly need to update the invoice list
+        setBoxForm(prev => ({
+          ...prev,
+          ordners: currentSlot.boxData.ordners || []
+        }));
+      }
+    }
+  }, [inventory, selectedSlotId]);
 
   const addOrdner = () => {
     if (!newOrdner.noOrdner || !newOrdner.period) return;
@@ -405,26 +550,27 @@ export default function App() {
 
   const addInvoice = (ordnerId) => {
     if (!newInvoice.invoiceNo || !newInvoice.vendor) return;
-    
+
     const invoicePayload = {
       invoiceNo: newInvoice.invoiceNo,
       vendor: newInvoice.vendor,
       paymentDate: newInvoice.paymentDate,
       file: newInvoice.file,
       fileName: newInvoice.fileName,
-      ocrContent: newInvoice.ocrContent
+      ocrContent: newInvoice.ocrContent,
+      rawFile: newInvoice.rawFile // Pass raw file
     };
 
     if (editingItem && editingItem.type === 'invoice') {
-      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, ...invoicePayload } : i) } : o) }));
+      setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.map(i => i.id === editingItem.id ? { ...i, ...invoicePayload, id: i.id } : i) } : o) }));
       setEditingItem(null);
     } else {
       setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: [...o.invoices, { ...invoicePayload, id: Date.now() }] } : o) }));
     }
-    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
+    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false, rawFile: null });
   };
 
-  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '', file: inv.file || null, fileName: inv.fileName || '', ocrContent: inv.ocrContent || '', isProcessing: false }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
+  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '', file: inv.file || null, fileName: inv.fileName || '', ocrContent: inv.ocrContent || '', isProcessing: false, rawFile: null }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
   const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
 
   const handleSaveBox = async () => {
@@ -447,8 +593,91 @@ export default function App() {
     const currentSlot = inventory.find(s => Number(s.id) === Number(selectedSlotId));
     if (!currentSlot) return;
 
-    const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
+    // --- SYNC FOLDER (Get or Create Box Folder) ---
     const oldBoxId = currentSlot.boxData?.id;
+    const boxFolderId = await syncBoxFolder(boxForm.boxId, 'STORED', oldBoxId);
+    // --- END SYNC FOLDER ---
+
+    // --- BATCH UPLOAD START ---
+    let updatedOrdners = [...boxForm.ordners];
+    let uploadCount = 0;
+
+    // We need to traverse and upload any invoice that has a rawFile
+    // Use for...of loop for async/await
+    try {
+      for (let oIdx = 0; oIdx < updatedOrdners.length; oIdx++) {
+        let ordner = updatedOrdners[oIdx];
+        if (ordner.invoices && ordner.invoices.length > 0) {
+          let updatedInvoices = [...ordner.invoices];
+
+          for (let iIdx = 0; iIdx < updatedInvoices.length; iIdx++) {
+            let inv = updatedInvoices[iIdx];
+            
+            // FIX: Better file type detection using fileName as fallback
+            let fileType = 'image/jpeg';
+            const nameCheck = (inv.fileName || inv.file || '').toLowerCase();
+            if (nameCheck.includes('.pdf') || nameCheck.includes('application/pdf')) {
+                fileType = 'application/pdf';
+            }
+            
+            let fileSize = '0 KB';
+
+            if (inv.rawFile) {
+              // Show loading state manually if needed, or use a toast
+              console.log(`Uploading invoice ${inv.invoiceNo}...`);
+              fileType = inv.rawFile.type;
+              fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
+              const uploadRes = await api.uploadFile(inv.rawFile);
+
+              if (uploadRes && uploadRes.success) {
+                // Update invoice with real URL
+                updatedInvoices[iIdx] = {
+                  ...inv,
+                  file: uploadRes.url,
+                  rawFile: undefined // Clear raw file
+                };
+                inv = updatedInvoices[iIdx]; // Update local reference for next step
+                uploadCount++;
+              } else {
+                throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
+              }
+            }
+
+            // Sinkronisasi lampiran invoice ke tabel documents agar muncul di Documents.jsx
+            if (inv.file && boxFolderId) {
+              const isUrl = typeof inv.file === 'string' && (inv.file.startsWith('http') || inv.file.startsWith('/uploads/'));
+              const docPayload = {
+                id: `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                title: inv.fileName || `Invoice ${inv.invoiceNo}`,
+                type: fileType,
+                size: fileSize,
+                uploadDate: new Date().toISOString(),
+                folderId: String(boxFolderId),
+                uploader: currentUser?.name || 'Admin',
+                ocrContent: inv.ocrContent || '',
+                url: isUrl ? inv.file : null,
+                fileData: isUrl ? null : inv.file
+              };
+              // Server handles duplicate check by title + folderId
+              await api.createDocument(docPayload);
+            }
+          }
+          updatedOrdners[oIdx] = { ...ordner, invoices: updatedInvoices };
+        }
+      }
+    } catch (err) {
+      console.error("Batch Upload Failed:", err);
+      alert("Gagal menyimpan: Error saat upload foto/dokumen. " + err.message);
+      return;
+    }
+
+    if (uploadCount > 0) {
+      console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
+      await fetchDocs();
+    }
+    // --- BATCH UPLOAD END ---
+
+    const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
 
     let newHistory = isNew
       ? [createHistoryItem('CREATED', `Kardus baru: ${boxForm.boxId}`), createHistoryItem('STORED', `Masuk Slot #${selectedSlotId}`)]
@@ -459,7 +688,7 @@ export default function App() {
       status: (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY' ? 'STORED' : currentSlot.status.toUpperCase(),
       lastUpdated: new Date().toISOString(),
       history: [...(currentSlot.history || []), ...newHistory],
-      boxData: { id: boxForm.boxId, ordners: boxForm.ordners }
+      boxData: { id: boxForm.boxId, ordners: updatedOrdners }
     };
 
     try {
@@ -476,6 +705,11 @@ export default function App() {
   const handleStatusChange = async (newStatus, label) => {
     const slotIndex = selectedSlotId - 1;
     const currentSlot = inventory[slotIndex];
+
+    // --- SYNC FOLDER (Rename jika status berubah) ---
+    if (currentSlot.boxData) {
+      await syncBoxFolder(currentSlot.boxData.id, newStatus);
+    }
 
     const updatedSlot = {
       ...currentSlot,
@@ -502,6 +736,11 @@ export default function App() {
     const sourceSlot = inventory[selectedSlotId - 1];
     const targetSlot = inventory[targetId - 1];
 
+    // --- SYNC FOLDER (Rename karena pindah slot) ---
+    if (sourceSlot.boxData) {
+      await syncBoxFolder(sourceSlot.boxData.id, 'MOVED');
+    }
+
     const updatedTarget = { ...targetSlot, status: sourceSlot.status, boxData: sourceSlot.boxData, lastUpdated: new Date().toISOString(), history: [...(targetSlot.history || []), createHistoryItem('MOVED', `Pindahan dr Slot #${selectedSlotId}`)] };
     const updatedSource = { ...sourceSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(sourceSlot.history || []), createHistoryItem('MOVED', `Pindah ke Slot #${targetId}`)] };
 
@@ -524,6 +763,7 @@ export default function App() {
     try {
       // 1. Save to External Items
       if (currentSlot.boxData) {
+        await syncBoxFolder(currentSlot.boxData.id, 'EXTERNAL');
         await api.createExternalItem({
           boxId: currentSlot.boxData.id,
           destination: destination,
@@ -558,6 +798,9 @@ export default function App() {
     if (!window.confirm(`Kembalikan Box ${selectedExternalItem.boxId} ke Slot #${targetId}?`)) return;
 
     try {
+      // Rename folder kembali ke nama asli (tanpa status/timestamp)
+      await syncBoxFolder(selectedExternalItem.boxId, 'STORED');
+
       // 1. Update Inventory Slot
       const updatedSlot = {
         ...targetSlot,
@@ -597,6 +840,10 @@ export default function App() {
   const handleEmptySlot = async () => {
     if (!window.confirm("Kosongkan slot? Data kardus akan dihapus.")) return;
     const currentSlot = inventory[selectedSlotId - 1];
+
+    if (currentSlot.boxData) {
+      await syncBoxFolder(currentSlot.boxData.id, 'REMOVED');
+    }
 
     const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem('REMOVED', `Dikosongkan manual`)] };
 
@@ -641,7 +888,7 @@ export default function App() {
     } catch (e) { alert(e.message); }
   };
 
-  const [inventorySearchQuery, setInventorySearchQuery] = useState('');
+
 
   const handleExcelImport = (e) => {
     const file = e.target.files[0];
@@ -725,6 +972,9 @@ export default function App() {
               };
             }
 
+            // Sync Folder untuk Box yang di-import
+            await syncBoxFolder(boxId, 'IMPORTED');
+
             const updatedSlot = {
               ...currentSlot,
               status: 'IMPORTED',
@@ -754,35 +1004,27 @@ export default function App() {
     const file = e.target.files[0];
     if (!file) return;
 
-    if (file.size > 10 * 1024 * 1024) {
-      alert("Ukuran file invoice maksimal 10MB.");
-      return;
-    }
+    // Remove 10MB limit check as server supports 50MB
+    // if (file.size > 10 * 1024 * 1024) { ... }
 
-    setNewInvoice(prev => ({ ...prev, isProcessing: true, fileName: file.name }));
-
-    const reader = new FileReader();
-    reader.onload = async (ev) => {
-      const base64 = ev.target.result;
-      try {
-        // Jalankan OCR otomatis
-        const text = await performAdvancedOCR(file, (msg) => console.log("Invoice OCR:", msg));
-        setNewInvoice(prev => ({ ...prev, file: base64, ocrContent: text, isProcessing: false }));
-      } catch (err) {
-        console.error("Invoice OCR Failed:", err);
-        alert("Gagal memproses OCR pada invoice: " + err.message);
-        setNewInvoice(prev => ({ ...prev, file: base64, isProcessing: false }));
-      }
-    };
-    reader.readAsDataURL(file);
+    // DEFER UPLOAD: Store raw file for upload on "Simpan Data"
+    setNewInvoice(prev => ({
+      ...prev,
+      isProcessing: false,
+      fileName: file.name,
+      file: null, // Clear old URL if any
+      rawFile: file // Store File object
+    }));
   };
 
   const handleViewInvoice = (inv) => {
     setSelectedInvoice(inv);
     setModalTab('invoice-detail');
+    setIsModalOpen(true);
   };
 
   const handleDownloadInvoice = (inv) => {
+    console.log("Downloading Invoice:", inv.fileName, "URL:", inv.file);
     if (!inv.file) return alert("Tidak ada file lampiran.");
     try {
       const link = document.createElement('a');
@@ -1010,14 +1252,14 @@ export default function App() {
     setUploadForm(prev => ({
       ...prev,
       title: file.name,
-      fileType: file.type || 'application/octet-stream', // Fallback untuk file tanpa tipe MIME jelas
+      fileType: file.type || 'application/octet-stream',
       fileSize,
-      fileData: file, // Simpan File Object untuk OCR Manual
-      fileBase64: fileBase64, // Simpan String Base64 untuk Database
-      isProcessing: false,
+      fileData: file,
+      fileBase64: fileBase64,
+      isProcessing: false, // Don't block yet
       processingMessage: '',
       previewUrl: file.type.includes('image') ? fileBase64 : null,
-      ocrContent: '' // Reset OCR saat file baru dipilih
+      ocrContent: ''
     }));
   };
 
@@ -1062,12 +1304,7 @@ export default function App() {
       return;
     }
 
-    // 3. Confirm if OCR has not been processed
-    if (!uploadForm.ocrContent && (fileContent || (uploadForm.editMode && uploadForm.originalDoc))) {
-      if (!window.confirm("OCR belum diproses. Konten dokumen tidak akan bisa dicari. Apakah Anda yakin ingin melanjutkan tanpa OCR?")) {
-        return;
-      }
-    }
+    // Simplified: Processing is now automatic on select
 
     const newDoc = {
       // Gunakan ID lama jika edit, atau buat ID baru jika upload baru
@@ -1084,7 +1321,7 @@ export default function App() {
       uploader: currentUser?.name || 'Admin',
       folderId: currentFolderId,
       version: 1,
-      versionsHistory: [],
+      versionsHistory: uploadForm.editMode ? (uploadForm.originalDoc?.versionsHistory || []) : [],
       locked: false
     };
 
@@ -1153,6 +1390,21 @@ export default function App() {
 
   // --- FIXED: HANDLE VIEW DOC ---
   const handleViewDoc = async (doc) => {
+    // 0. Handle Special Search Result Types
+    if (doc.matchType === 'invoice') {
+      handleViewInvoice({ ...(doc.data || doc), boxId: doc.boxId, folderName: doc.folderName, location: doc.folderName });
+      return;
+    }
+    if (doc.matchType === 'external_item') {
+      handleViewExternal(doc.data || doc);
+      return;
+    }
+    if (doc.matchType === 'tax_summary') {
+      setActiveTab('tax-summary');
+      // Potential improvement: pass filter to TaxSummary component
+      return;
+    }
+
     // 1. Set data awal (meta data) agar modal muncul cepat
     setViewDocData(doc);
     setModalTab('doc-view');
@@ -1174,6 +1426,14 @@ export default function App() {
         console.error("Gagal memuat detail dokumen:", error);
       }
     }
+  };
+
+  // --- HANDLE NAVIGATE TO FOLDER ---
+  const handleNavigateToFolder = (folderId) => {
+    setActiveTab('documents');
+    setCurrentFolderId(folderId);
+    // Optional: Add highlighting effect or scroll to folder
+    console.log("Navigating to folder:", folderId);
   };
 
   // --- FIXED: HANDLE DOWNLOAD ---
@@ -1278,6 +1538,22 @@ export default function App() {
     }
   };
 
+  const handleRestoreVersion = async (docId, versionTimestamp) => {
+    if (!window.confirm("Yakin ingin mengembalikan dokumen ke versi ini? Versi saat ini akan disimpan sebagai revisi baru.")) return;
+    try {
+      await api.restoreDocumentVersion(docId, versionTimestamp);
+      fetchDocs();
+      // If detail modal is open, we might need to refresh its data
+      if (viewDocData && viewDocData.id === docId) {
+        const updated = await api.getDocumentById(docId);
+        if (updated) setViewDocData(updated);
+      }
+      alert("Berhasil mengembalikan versi dokumen.");
+    } catch (e) {
+      alert("Gagal mengembalikan versi: " + e.message);
+    }
+  };
+
   const handleSaveTaxSummary = async () => {
     try {
       // 1. Uniqueness Check (Month + Year + Pembetulan + Type)
@@ -1299,6 +1575,7 @@ export default function App() {
       const payload = {
         ...taxForm,
         type: currentType,
+        pembetulan: taxForm.pembetulan || 0,
         // Fallback for legacy fields if needed by backend
         pph23: taxForm.data?.pph?.['PPh 23'] || 0,
         pph42: taxForm.data?.pph?.['PPh 4(2)'] || 0,
@@ -1316,40 +1593,48 @@ export default function App() {
         addLog(currentUser?.name, 'Create Pajak', `${taxForm.type} - ${taxForm.month} ${taxForm.year}`);
       }
 
-      setTaxSummaries(updatedList);
-      localStorage.setItem('tax_summaries', JSON.stringify(updatedList));
+      // 1. Simpan ke Database
+      await api.saveTaxSummary(payload);
+      
+      // 2. Ambil data terbaru untuk memastikan sinkronisasi
+      const freshData = await api.getTaxSummaries();
+      setTaxSummaries(freshData);
+      localStorage.setItem('tax_summaries', JSON.stringify(freshData));
+      
       setIsModalOpen(false);
     } catch (e) { alert(e.message); }
   };
 
-  const handleTaxImport = (importedData) => {
-    setTaxSummaries(prev => {
-      const newList = [...prev];
-      let addedCount = 0;
-      let updatedCount = 0;
+  const handleTaxImport = async (importedData) => {
+    let successCount = 0;
+    let failCount = 0;
 
-      importedData.forEach(newItem => {
-        const existingIndex = newList.findIndex(item =>
-          item.month === newItem.month &&
-          item.year === newItem.year &&
-          (item.pembetulan || 0) === (newItem.pembetulan || 0) &&
-          (item.type || 'PPH') === (newItem.type || 'PPH')
-        );
-
-        if (existingIndex >= 0) {
-          newList[existingIndex] = { ...newItem, id: newList[existingIndex].id };
-          updatedCount++;
-        } else {
-          newList.push({ ...newItem, id: String(Date.now() + Math.random()) });
-          addedCount++;
+    try {
+      // Proses satu per satu agar tidak membebani koneksi database
+      for (const item of importedData) {
+        try {
+          await api.saveTaxSummary(item);
+          successCount++;
+        } catch (err) {
+          console.error("Gagal simpan item import:", item, err);
+          failCount++;
         }
-      });
+      }
 
-      localStorage.setItem('tax_summaries', JSON.stringify(newList));
-      addLog(currentUser?.name, 'Import Pajak', `Import ${addedCount} baru, ${updatedCount} update`);
-      alert(`Berhasil mengimport ${addedCount + updatedCount} data.`);
-      return newList;
-    });
+      const freshData = await api.getTaxSummaries();
+      setTaxSummaries(freshData);
+      localStorage.setItem('tax_summaries', JSON.stringify(freshData));
+      
+      addLog(currentUser?.name, 'Import Pajak', `Import selesai: ${successCount} sukses, ${failCount} gagal`);
+      
+      if (failCount > 0) {
+        alert(`Import selesai. Berhasil: ${successCount}, Gagal: ${failCount}. Pastikan koneksi backend stabil.`);
+      } else {
+        alert(`Berhasil mengimport ${successCount} data ke database permanen.`);
+      }
+    } catch (error) {
+      alert("Terjadi kesalahan sistem saat sinkronisasi import.");
+    }
   };
 
   const handleCreateFolder = async (folderData) => {
@@ -1403,6 +1688,8 @@ export default function App() {
       addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
     }
   };
+
+
 
   // --- TAX CONFIGURATION STATE ---
   const [taxConfig, setTaxConfig] = useState(() => {
@@ -1475,11 +1762,14 @@ export default function App() {
   };
 
 
-  const handleDeleteTaxRecord = (id) => {
+  const handleDeleteTaxRecord = async (id) => {
     if (window.confirm("Apakah Anda yakin ingin menghapus data ini secara permanen?")) {
-      const updated = taxSummaries.filter(s => s.id !== id);
-      setTaxSummaries(updated);
-      localStorage.setItem('tax_summaries', JSON.stringify(updated));
+      try {
+        await api.deleteTaxSummary(id);
+        const updated = taxSummaries.filter(s => s.id !== id);
+        setTaxSummaries(updated);
+        localStorage.setItem('tax_summaries', JSON.stringify(updated));
+      } catch (e) { alert("Gagal menghapus data dari server: " + e.message); }
     }
   };
 
@@ -1633,7 +1923,7 @@ export default function App() {
       <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-white/10 flex items-center justify-between px-6 z-20">
         <div className="flex items-center gap-2">
           <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
-          <span className="font-bold text-lg dark:text-white tracking-tight">Archive OS</span>
+          <span className="font-bold text-lg dark:text-white tracking-tight">TaxArchi Suite</span>
         </div>
         <button onClick={() => setIsSidebarCollapsed(false)} className="p-2 text-gray-500 dark:text-white">
           <Menu size={24} />
@@ -1650,7 +1940,8 @@ export default function App() {
                     activeTab === 'documents' ? 'Dokumen Digital' :
                       activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
                         activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
-                          activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
+                          activeTab === 'tax-calculation' ? 'Kalkulasi Pajak' :
+                            activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
                 {activeTab === 'dashboard' ? 'Dashboard' :
@@ -1658,7 +1949,8 @@ export default function App() {
                     activeTab === 'documents' ? 'Secure Digital Storage' :
                       activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
                         activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
-                          activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
+                          activeTab === 'tax-calculation' ? 'Kalkulasi & Pelaporan Pajak' :
+                            activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
               </p>
             </div>
           </div>
@@ -1675,6 +1967,20 @@ export default function App() {
                 TOTAL_SLOTS={TOTAL_SLOTS}
                 isDarkMode={isDarkMode}
                 handleViewDoc={handleViewDoc}
+                handleNavigateToFolder={handleNavigateToFolder}
+                setActiveTab={setActiveTab}
+                setActiveInvTab={setActiveInvTab}
+                handleDownload={handleDownload}
+                handleDownloadInvoice={handleDownloadInvoice}
+                ocrStats={ocrStats}
+                taxSummaries={taxSummaries}
+                taxAudits={taxAudits}
+                users={users}
+                departments={departments}
+                externalItems={externalItems}
+                folders={folders}
+                currentUser={currentUser}
+                onCopy={handleCopyToClipboard}
               />
             )}
             {activeTab === 'inventory' && (
@@ -1756,8 +2062,10 @@ export default function App() {
                 handleDeleteRecord={handleDeleteTaxRecord}
                 handleRenameTaxType={handleRenameTaxType}
                 onImport={handleTaxImport}
+                onCopy={handleCopyToClipboard}
               />
             )}
+            {activeTab === 'tax-calculation' && <TaxCalculation onCopy={handleCopyToClipboard} hasPermission={hasPermission} />}
             {activeTab === 'master' && (
               <MasterData
                 masterTab={masterTab}
@@ -1783,9 +2091,28 @@ export default function App() {
                 hasPermission={hasPermission}
               />
             )}
+            {activeTab === 'profile' && (
+              <Profile
+                currentUser={currentUser}
+                onUpdateProfile={handleUpdateProfile}
+              />
+            )}
           </div>
 
         </div>
+
+        {/* NOTIFIKASI COPY GLOBAL (STARTUP STYLE) */}
+        {copyNotification && (
+          <div className="fixed bottom-10 right-10 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-emerald-500/50 p-4 rounded-[2rem] shadow-2xl z-[200] animate-in slide-in-from-bottom-8 flex items-center gap-4 ring-8 ring-emerald-500/5">
+            <div className="p-3 bg-emerald-500 rounded-2xl text-white shadow-lg shadow-emerald-500/30 animate-bounce">
+              <CheckCircle2 size={18} />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-black uppercase tracking-[0.2em] text-emerald-600 dark:text-emerald-400 mb-0.5">Copied to Clipboard</span>
+              <span className="font-bold text-slate-800 dark:text-white text-sm">Berhasil menyalin {copyNotification}</span>
+            </div>
+          </div>
+        )}
       </main>
 
 
@@ -1895,7 +2222,7 @@ export default function App() {
               <div className="text-center py-12">
                 <div className="relative mx-auto mb-4 w-16 h-16">
                   <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <ScanLine className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
+                  <FileText className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
                 </div>
                 <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
                 <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
@@ -1906,7 +2233,7 @@ export default function App() {
                   className={`group relative flex flex-col items-center justify-center border-dashed rounded-2xl p-10 text-center transition-all duration-300 cursor-pointer ${uploadForm.fileData ? 'border-2 border-indigo-500 bg-indigo-50/30 dark:bg-indigo-900/10' : 'border border-slate-200 dark:border-slate-700 hover:border-indigo-300 hover:bg-slate-50/50 dark:hover:bg-slate-800/30'}`}
                   onClick={() => fileInputRef.current.click()}
                 >
-                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} />
+                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
 
                   <div className="mb-4 p-4 rounded-full bg-slate-50 dark:bg-slate-800 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition-colors duration-300">
                     <UploadCloud className="text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors duration-300" size={32} />
@@ -1917,7 +2244,7 @@ export default function App() {
                   </p>
                   {!uploadForm.title && (
                     <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-medium uppercase tracking-wider">
-                      PDF atau Gambar (Max 30MB)
+                      Semua Jenis File (PDF, Gambar, Office) - Max 30MB
                     </p>
                   )}
                 </div>
@@ -1936,7 +2263,7 @@ export default function App() {
                     disabled={!uploadForm.fileData}
                     className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg flex items-center gap-2 disabled:opacity-50"
                   >
-                    <ScanLine size={16} /> Proses OCR
+                    <FileText size={16} /> Proses OCR
                   </button>
                   <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
                 </div>
@@ -1962,7 +2289,7 @@ export default function App() {
               </div>
             </div>
             <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><ScanLine size={16} /> Isi Dokumen (OCR & Analisis)</h4>
+              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><FileText size={16} /> Isi Dokumen (OCR & Analisis)</h4>
               <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent || 'Tidak ada konten OCR.'}</div>
             </div>
 
@@ -2082,13 +2409,13 @@ export default function App() {
                 )}
 
                 <div className="space-y-3 max-h-[450px] overflow-y-auto pr-3 custom-scrollbar">
-                  {boxForm.ordners.length === 0 && (
+                  {(boxForm.ordners || []).length === 0 && (
                     <div className="text-center py-16 text-slate-300">
                       <Package size={48} className="mx-auto mb-4 opacity-20" />
                       <p className="font-black text-sm tracking-widest uppercase opacity-40">Kardus Kosong</p>
                     </div>
                   )}
-                  {boxForm.ordners.map(ord => (
+                  {(boxForm.ordners || []).map(ord => (
                     <div key={ord.id} className={`group transition-all duration-300 rounded-3xl border ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-500/10 border-indigo-500/30 shadow-lg shadow-indigo-500/5' : 'bg-white/40 dark:bg-slate-800/40 border-white/50 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-800/60'}`}>
                       <div className="flex justify-between items-center p-4 cursor-pointer" onClick={() => setExpandedOrdnerIds(prev => prev.includes(ord.id) ? prev.filter(id => id !== ord.id) : [...prev, ord.id])}>
                         <div className="flex items-center gap-4">
@@ -2123,10 +2450,10 @@ export default function App() {
                               <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
                               <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
                               <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black focus:ring-0" />
-                              
+
                               {/* Attachment Button */}
                               <div className="relative">
-                                <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf" />
+                                <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
                                 <button onClick={() => invoiceFileInputRef.current.click()} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${newInvoice.file ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}`} title={newInvoice.fileName || "Lampirkan File (OCR Auto)"}>
                                   {newInvoice.isProcessing ? <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip size={14} />}
                                 </button>
@@ -2137,41 +2464,58 @@ export default function App() {
                               </button>
                             </div>
                           )}
+
+                          {/* Manual Refresh Button for OCR */}
+                          <div className="flex justify-end mb-2">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); fetchInventory(); }}
+                              className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors"
+                            >
+                              <RefreshCw size={12} /> Refresh Status OCR
+                            </button>
+                          </div>
+
                           <div className="space-y-1">
-                            {ord.invoices.map(inv => {
+                            {(ord.invoices || []).map(inv => {
                               const isMatch = inventorySearchQuery && (
-                                (inv.invoiceNo || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                (inv.vendor || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                (inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
+                                String(inv.invoiceNo || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+                                String(inv.vendor || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
+                                String(inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
                               );
                               return (
-                              <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
-                                <div className="flex items-center gap-3">
-                                  <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
-                                  <div className="flex flex-col">
-                                    <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo}</span>
-                                    <div className="flex items-center gap-2 mt-0.5">
-                                      <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor}</span>
-                                      {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{inv.paymentDate}</span>}
-                                    </div>
-                                    {inv.fileName && (
-                                      <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
-                                        <Paperclip size={10} /> {inv.fileName} {inv.ocrContent && <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR</span>}
+                                <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
+                                  <div className="flex items-center gap-3">
+                                    <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
+                                    <div className="flex flex-col">
+                                      <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo ? String(inv.invoiceNo) : '-'}</span>
+                                      <div className="flex items-center gap-2 mt-0.5">
+                                        <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor ? String(inv.vendor) : ''}</span>
+                                        {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{String(inv.paymentDate)}</span>}
                                       </div>
+                                      {inv.fileName && (
+                                        <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
+                                          <Paperclip size={10} /> {String(inv.fileName)}
+                                          {inv.ocrContent ? (
+                                            <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR READY</span>
+                                          ) : (
+                                            <span className="text-amber-500 font-bold text-[8px] border border-amber-200 dark:border-amber-800 px-1 rounded ml-1 animate-pulse">PROSES OCR...</span>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                  <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
+                                    <button onClick={() => handleViewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors" title="Lihat Detail"><Eye size={12} /></button>
+                                    {hasPermission('inventory', 'edit') && (
+                                      <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
+                                    )}
+                                    {hasPermission('inventory', 'delete') && (
+                                      <button onClick={() => removeInvoice(ord.id, inv.id)} className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"><X size={12} /></button>
                                     )}
                                   </div>
                                 </div>
-                                <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
-                                  <button onClick={() => handleViewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors" title="Lihat Detail"><Eye size={12} /></button>
-                                  {hasPermission('inventory', 'edit') && (
-                                    <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
-                                  )}
-                                  {hasPermission('inventory', 'delete') && (
-                                    <button onClick={() => removeInvoice(ord.id, inv.id)} className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"><X size={12} /></button>
-                                  )}
-                                </div>
-                              </div>
-                            )})}
+                              )
+                            })}
                           </div>
                         </div>
                       )}
@@ -2229,7 +2573,7 @@ export default function App() {
                   )}
 
                   {/* Row 3: Status & External Actions - Capsule Style */}
-                  {selectedSlotId && (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' && (
+                  {(selectedSlotId || selectedExternalItem) && (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' : true) && (
                     <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
                       <div className="grid grid-cols-2 gap-4">
                         {hasPermission('inventory', 'edit') && (
@@ -2279,12 +2623,12 @@ export default function App() {
                   <div className="flex justify-between items-start mb-6">
                     <div>
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Nomor Invoice</span>
-                      <h3 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{selectedInvoice.invoiceNo}</h3>
+                      <h3 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{selectedInvoice.invoiceNo || '-'}</h3>
                     </div>
                     {selectedInvoice.paymentDate && (
                       <div className="text-right">
                         <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Tanggal Bayar</span>
-                        <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-xs font-black">{selectedInvoice.paymentDate}</span>
+                        <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-xs font-black">{String(selectedInvoice.paymentDate)}</span>
                       </div>
                     )}
                   </div>
@@ -2292,11 +2636,20 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-6 mb-6">
                     <div>
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Vendor</span>
-                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{selectedInvoice.vendor}</p>
+                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{selectedInvoice.vendor || '-'}</p>
                     </div>
                     <div>
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lokasi File (Kardus / Ordner)</span>
+                      <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
+                        {selectedInvoice.location || selectedInvoice.folderName || 'Inventory'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-6 mb-6">
+                    <div>
                       <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lampiran File</span>
-                      {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {selectedInvoice.fileName}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
+                      {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {String(selectedInvoice.fileName)}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
                     </div>
                   </div>
 
@@ -2305,8 +2658,8 @@ export default function App() {
 
                 {selectedInvoice.ocrContent && (
                   <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center gap-2 mb-3"><ScanLine size={16} className="text-indigo-500" /><h4 className="text-xs font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Hasil Scan OCR</h4></div>
-                    <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{selectedInvoice.ocrContent}</div>
+                    <div className="flex items-center gap-2 mb-3"><FileText size={16} className="text-indigo-500" /><h4 className="text-xs font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Hasil Scan OCR</h4></div>
+                    <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{typeof selectedInvoice.ocrContent === 'object' ? JSON.stringify(selectedInvoice.ocrContent, null, 2) : selectedInvoice.ocrContent}</div>
                   </div>
                 )}
               </div>
@@ -2358,6 +2711,7 @@ export default function App() {
           </div>
         )
         }
+
 
         {/* MASTER DATA MODALS */}
         {

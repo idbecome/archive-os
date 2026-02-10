@@ -1,33 +1,58 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calculator, User, FileText, Building2, CreditCard, Database, Save, Trash2, Search, Upload, Download } from 'lucide-react';
+import { Calculator, User, FileText, Building2, CreditCard, Database, Save, Trash2, Search, Upload, Download, Sparkles, TrendingUp, AlertCircle, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
 
-export default function TaxCalculation() {
+export default function TaxCalculation({ onCopy, hasPermission }) {
     const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database'
     const [savedData, setSavedData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [calcData, setCalcData] = useState({ dpp: 0, rate: 0, pph: 0 });
+    const [calcData, setCalcData] = useState({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
+    const [currentPage, setCurrentPage] = useState(1);
+    const rowsPerPage = 15;
     const [editingId, setEditingId] = useState(null);
     const [showObjectDropdown, setShowObjectDropdown] = useState(false);
     const [masterData, setMasterData] = useState([]);
     const [isImporting, setIsImporting] = useState(false);
     const masterFileInputRef = useRef(null);
 
+    const canEdit = hasPermission ? hasPermission('tax-calculation', 'edit') : true;
+    const canCreate = hasPermission ? hasPermission('tax-calculation', 'create') : true;
+    const canDelete = hasPermission ? hasPermission('tax-calculation', 'delete') : true;
+    const isReadOnly = !canEdit && !canCreate;
+
     // Form State for "Objek Pajak"
     const [formData, setFormData] = useState({
         idType: 'NPWP',
         identityNumber: '',
         name: '',
+        email: '',
         taxType: '21',
         taxObjectCode: '',
-        taxObjectName: ''
+        taxObjectName: '',
+        markupMode: 'none',
+        isPph21BukanPegawai: false,
+        usePpn: true
     });
 
     const handleInputChange = (e) => {
         const { name, value } = e.target;
-        setFormData(prev => ({ ...prev, [name]: value }));
+        setFormData(prev => {
+            const newData = { ...prev, [name]: value };
+
+            // Automation for PPh 21
+            if (name === 'taxType') {
+                const isPph21 = value === '21';
+                newData.isPph21BukanPegawai = isPph21;
+                newData.usePpn = !isPph21;
+
+                // Also update calculation data to stay in sync
+                setCalcData(c => ({ ...c, isPph21BukanPegawai: isPph21, usePpn: !isPph21 }));
+            }
+
+            return newData;
+        });
     };
 
     const fetchDatabase = async () => {
@@ -71,6 +96,11 @@ export default function TaxCalculation() {
             if (masterData.length === 0) fetchMasterData();
         }
     }, [activeTab]);
+
+    // Reset ke halaman 1 saat mencari atau pindah tab
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchTerm, activeTab]);
 
     // --- DATABASE WP HANDLERS ---
     const handleDownloadDatabaseTemplate = () => {
@@ -145,18 +175,31 @@ export default function TaxCalculation() {
     };
 
     const handleSave = async () => {
+        if (!formData.identityNumber || !formData.name) {
+            alert('Nomor Identitas dan Nama Wajib Pajak wajib diisi!');
+            return;
+        }
+
         setIsLoading(true);
         try {
             const payload = {
                 ...formData,
                 dpp: calcData.dpp,
                 rate: calcData.rate,
-                pph: calcData.pph
+                pph: calcData.pph,
+                ppn: calcData.ppn,
+                totalPayable: calcData.totalPayable,
+                discount: calcData.discount,
+                dppNet: calcData.dppNet,
+                markup_mode: calcData.markupMode,
+                is_pph21_bukan_pegawai: calcData.isPph21BukanPegawai ? 1 : 0,
+                use_ppn: calcData.usePpn ? 1 : 0,
+                email: formData.email
             };
 
             const url = editingId
-            ? `http://${window.location.hostname}:5000/api/tax-objects/${editingId}`
-            : `http://${window.location.hostname}:5000/api/tax-objects`;
+                ? `http://${window.location.hostname}:5000/api/tax-objects/${editingId}`
+                : `http://${window.location.hostname}:5000/api/tax-objects`;
 
             const method = editingId ? 'PUT' : 'POST';
 
@@ -173,11 +216,12 @@ export default function TaxCalculation() {
                     idType: 'NPWP',
                     identityNumber: '',
                     name: '',
+                    email: '',
                     taxType: '21',
                     taxObjectCode: '',
                     taxObjectName: ''
                 });
-                setCalcData({ dpp: 0, rate: 0, pph: 0 });
+                setCalcData({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
                 setActiveTab('database');
             } else {
                 alert('Gagal menyimpan data.');
@@ -196,20 +240,58 @@ export default function TaxCalculation() {
             idType: item.id_type,
             identityNumber: item.identity_number,
             name: item.name,
+            email: item.email || '',
             taxType: item.tax_type,
             taxObjectCode: item.tax_object_code,
-            taxObjectName: item.tax_object_name
+            taxObjectName: item.tax_object_name,
+            markupMode: item.markup_mode || 'none',
+            isPph21BukanPegawai: !!item.is_pph21_bukan_pegawai,
+            usePpn: item.use_ppn !== undefined ? !!item.use_ppn : true
         });
         setCalcData({
             dpp: item.dpp,
             rate: item.rate,
-            pph: item.pph
+            pph: item.pph,
+            ppn: item.ppn || (!!item.use_ppn ? (((11 / 12) * (item.dpp - (item.discount || 0))) * 0.12) : 0),
+            discount: item.discount || 0,
+            dppNet: !!item.use_ppn ? ((11 / 12) * (item.dpp - (item.discount || 0))) : 0,
+            markupMode: item.markup_mode || 'none',
+            isPph21BukanPegawai: !!item.is_pph21_bukan_pegawai,
+            usePpn: item.use_ppn !== undefined ? !!item.use_ppn : true,
+            totalPayable: item.total_payable || item.totalPayable ||
+                Math.ceil((item.dpp - (item.discount || 0)) +
+                    (item.ppn || (!!item.use_ppn ? (((11 / 12) * (item.dpp - (item.discount || 0))) * 0.12) : 0)) -
+                    item.pph)
         });
         setActiveTab('object');
     };
 
+    const handleDeleteAll = async () => {
+        if (!window.confirm('PERINGATAN: Anda akan menghapus SELURUH data di Database WP. Tindakan ini tidak dapat dibatalkan. Lanjutkan?')) return;
+        if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
+
+        setIsLoading(true);
+        try {
+            const res = await fetch(`http://${window.location.hostname}:5000/api/tax-objects-all`, {
+                method: 'DELETE'
+            });
+            if (res.ok) {
+                alert('Seluruh data Database WP berhasil dihapus.');
+                fetchDatabase();
+            } else {
+                alert('Gagal menghapus data.');
+            }
+        } catch (error) {
+            console.error("Delete all error:", error);
+            alert('Terjadi kesalahan saat menghapus data.');
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
     const handleDelete = async (id) => {
         if (!window.confirm('Yakin ingin menghapus data ini?')) return;
+        if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
         try {
             await fetch(`http://${window.location.hostname}:5000/api/tax-objects/${id}`, { method: 'DELETE' });
             fetchDatabase();
@@ -233,8 +315,68 @@ export default function TaxCalculation() {
         (item.tax_object_name || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    // Logika Paginasi
+    const totalPages = Math.ceil(filteredData.length / rowsPerPage);
+    const paginatedData = filteredData.slice(
+        (currentPage - 1) * rowsPerPage,
+        currentPage * rowsPerPage
+    );
+
+    const getSmartInsight = () => {
+        // 1. Konteks Pencarian
+        if (searchTerm) {
+            return {
+                text: `Analisis Pencarian: Menampilkan ${filteredData.length} hasil untuk "${searchTerm}". AI memindai nama WP, nomor identitas, dan nama objek pajak.`,
+                icon: <Search className="text-indigo-500" size={20} />,
+                color: "border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-900/10 text-indigo-800 dark:text-indigo-200"
+            };
+        }
+
+        // 2. Analisis Master Data
+        if (masterData.length === 0) {
+            return {
+                text: `Data Master Kosong: Gunakan fitur 'Import Master' untuk memuat daftar kode objek pajak resmi agar pengisian data lebih cepat dan akurat.`,
+                icon: <AlertCircle className="text-amber-500" size={20} />,
+                color: "border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200"
+            };
+        }
+
+        // 3. Analisis Kalkulasi Aktif
+        if (calcData.pph > 0) {
+            return {
+                text: `Kalkulasi Terdeteksi: Anda memiliki perhitungan PPh senilai ${formatCurrency(calcData.pph)}. Gunakan tab 'Objek Pajak' untuk menyimpan data ini ke database.`,
+                icon: <TrendingUp className="text-emerald-500" size={20} />,
+                color: "border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-900/10 text-emerald-800 dark:text-emerald-200"
+            };
+        }
+
+        // 4. Analisis Kapasitas Database
+        if (savedData.length > 50) {
+            return {
+                text: `Optimasi Database: Terdapat ${savedData.length} record Wajib Pajak. Gunakan fitur 'Export Excel' secara berkala untuk backup data offline.`,
+                icon: <Database className="text-blue-500" size={20} />,
+                color: "border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-900/10 text-blue-800 dark:text-blue-200"
+            };
+        }
+
+        // 5. Default Tips
+        const tips = [
+            "Tips Efisiensi: Anda dapat mencari objek pajak berdasarkan kode (misal: 21-100-01) atau nama deskripsi.",
+            "Info AI: Sistem otomatis mendeteksi tarif pajak yang berlaku berdasarkan kode objek yang Anda pilih.",
+            "Saran: Pastikan nomor NPWP/NIK valid untuk menghindari kesalahan pelaporan pada sistem e-Bupot.",
+            "Sistem Optimal: Database WP tersinkronisasi secara real-time dengan modul pelaporan pajak."
+        ];
+        return {
+            text: tips[new Date().getHours() % tips.length],
+            icon: <Sparkles className="text-indigo-500" size={20} />,
+            color: "border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-900/10 text-indigo-800 dark:text-indigo-200"
+        };
+    };
+
+    const insight = getSmartInsight();
+
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
                     <Calculator className="text-indigo-600" />
@@ -264,25 +406,33 @@ export default function TaxCalculation() {
                 </div>
             </div>
 
+            {/* AI SMART INSIGHT BANNER */}
+            <div className={`p-4 rounded-2xl border backdrop-blur-md flex items-center gap-4 animate-in slide-in-from-top-4 duration-700 ${insight.color}`}>
+                <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl shadow-sm shrink-0">
+                    {insight.icon}
+                </div>
+                <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Smart Assistant</span>
+                        <div className="w-1 h-1 rounded-full bg-current opacity-40"></div>
+                        <span className="text-[10px] font-bold opacity-60">Tax Intelligence</span>
+                    </div>
+                    <p className="text-sm font-bold leading-relaxed">{insight.text}</p>
+                </div>
+            </div>
+
             {/* SIMULATION TAB */}
             {activeTab === 'simulation' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <TaxCalculator />
+                    <TaxCalculator onCalculate={setCalcData} onCopy={onCopy} />
 
                     {/* Information Card */}
-                    <Card className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white border-none h-fit">
+                    <Card className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white border-none h-full">
                         <h3 className="text-xl font-bold mb-4">Informasi Pajak</h3>
                         <p className="text-white/80 mb-6">
                             Gunakan kalkulator ini untuk melakukan estimasi perhitungan PPh berdasarkan DPP dan tarif yang berlaku.
                             Perhitungan ini hanya simulasi dan bukan merupakan bukti potong resmi.
                         </p>
-
-                        <div className="bg-white/10 rounded-xl p-4 backdrop-blur-sm">
-                            <h4 className="font-semibold mb-2 text-white">Rumus Perhitungan</h4>
-                            <code className="text-sm font-mono bg-black/20 px-2 py-1 rounded">
-                                PPh = (DPP x Tarif) / 100
-                            </code>
-                        </div>
                     </Card>
                 </div>
             )}
@@ -306,13 +456,13 @@ export default function TaxCalculation() {
                                     >
                                         <Download size={14} /> Template Master
                                     </button>
-                                    <button
+                                    {canCreate && <button
                                         onClick={() => masterFileInputRef.current.click()}
                                         className="text-xs flex items-center gap-1 text-gray-500 hover:text-indigo-600 transition-colors"
                                         title="Import Master Objek Pajak"
                                     >
                                         <Upload size={14} /> Import Master
-                                    </button>
+                                    </button>}
                                     <input type="file" ref={masterFileInputRef} onChange={handleImportMaster} accept=".xlsx, .xls" className="hidden" />
                                 </div>
                             </div>
@@ -327,7 +477,8 @@ export default function TaxCalculation() {
                                         name="idType"
                                         value={formData.idType}
                                         onChange={handleInputChange}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white"
+                                        disabled={isReadOnly}
+                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                     >
                                         <option value="NPWP">NPWP</option>
                                         <option value="KTP">KTP (NIK)</option>
@@ -344,7 +495,8 @@ export default function TaxCalculation() {
                                         name="identityNumber"
                                         value={formData.identityNumber}
                                         onChange={handleInputChange}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white"
+                                        disabled={isReadOnly}
+                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                         placeholder={formData.idType === 'NPWP' ? '00.000.000.0-000.000' : '320123...'}
                                     />
                                 </div>
@@ -359,8 +511,25 @@ export default function TaxCalculation() {
                                         name="name"
                                         value={formData.name}
                                         onChange={handleInputChange}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white"
+                                        disabled={isReadOnly}
+                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                         placeholder="Nama Lengkap / Badan Usaha"
+                                    />
+                                </div>
+
+                                {/* Email */}
+                                <div className="md:col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                        Email Wajib Pajak
+                                    </label>
+                                    <input
+                                        type="email"
+                                        name="email"
+                                        value={formData.email}
+                                        onChange={handleInputChange}
+                                        disabled={isReadOnly}
+                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
+                                        placeholder="contoh@email.com"
                                     />
                                 </div>
 
@@ -373,7 +542,8 @@ export default function TaxCalculation() {
                                         name="taxType"
                                         value={formData.taxType}
                                         onChange={handleInputChange}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white"
+                                        disabled={isReadOnly}
+                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                     >
                                         <option value="21">PPh 21</option>
                                         <option value="23">PPh 23</option>
@@ -408,12 +578,13 @@ export default function TaxCalculation() {
                                         name="taxObjectName"
                                         value={formData.taxObjectName}
                                         onChange={(e) => {
+                                            if (isReadOnly) return;
                                             handleInputChange(e);
                                             setShowObjectDropdown(true);
                                         }}
-                                        onFocus={() => setShowObjectDropdown(true)}
+                                        onFocus={() => !isReadOnly && setShowObjectDropdown(true)}
                                         onBlur={() => setTimeout(() => setShowObjectDropdown(false), 200)}
-                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white"
+                                        className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                         placeholder="Ketik untuk mencari objek pajak..."
                                         autoComplete="off"
                                     />
@@ -444,19 +615,22 @@ export default function TaxCalculation() {
                                                         key={item.id}
                                                         className="w-full text-left px-4 py-3 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors border-b border-gray-100 dark:border-slate-700 last:border-0"
                                                         onClick={() => {
+                                                            const isPph21 = String(item.tax_type) === '21';
                                                             setFormData(prev => ({
                                                                 ...prev,
                                                                 taxObjectName: item.name,
                                                                 taxObjectCode: item.code,
-                                                                taxType: item.tax_type
+                                                                taxType: item.tax_type,
+                                                                isPph21BukanPegawai: isPph21,
+                                                                usePpn: !isPph21
                                                             }));
-                                                            // Auto-fill rate in calcData
-                                                            if (item.rate !== undefined && item.rate !== null) {
-                                                                setCalcData(prev => ({
-                                                                    ...prev,
-                                                                    rate: item.rate
-                                                                }));
-                                                            }
+                                                            // Auto-fill rate in calcData and apply toggles
+                                                            setCalcData(prev => ({
+                                                                ...prev,
+                                                                rate: item.rate !== undefined && item.rate !== null ? item.rate : prev.rate,
+                                                                isPph21BukanPegawai: isPph21,
+                                                                usePpn: !isPph21
+                                                            }));
                                                             setShowObjectDropdown(false);
                                                         }}
                                                     >
@@ -487,10 +661,16 @@ export default function TaxCalculation() {
                             onCalculate={setCalcData}
                             initialDpp={calcData.dpp || ''}
                             initialRate={calcData.rate || ''}
+                            initialDiscount={calcData.discount || ''}
+                            initialMarkupMode={calcData.markupMode}
+                            initialIsPph21BukanPegawai={calcData.isPph21BukanPegawai}
+                            initialUsePpn={calcData.usePpn}
+                            onCopy={onCopy}
+                            isReadOnly={isReadOnly}
                         />
 
                         {/* Submit Button */}
-                        <div className="flex justify-end gap-3">
+                        {!isReadOnly && <div className="flex justify-end gap-3">
                             {editingId && (
                                 <button
                                     onClick={() => {
@@ -501,9 +681,12 @@ export default function TaxCalculation() {
                                             name: '',
                                             taxType: '21',
                                             taxObjectCode: '',
-                                            taxObjectName: ''
+                                            taxObjectName: '',
+                                            markupMode: 'none',
+                                            isPph21BukanPegawai: false,
+                                            usePpn: true
                                         });
-                                        setCalcData({ dpp: 0, rate: 0, pph: 0 });
+                                        setCalcData({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
                                     }}
                                     className="px-6 py-3 bg-gray-500 hover:bg-gray-600 text-white font-bold rounded-xl transition-all"
                                 >
@@ -512,13 +695,13 @@ export default function TaxCalculation() {
                             )}
                             <button
                                 onClick={handleSave}
-                                disabled={isLoading}
-                                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl flex items-center gap-2 shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={isLoading || !formData.identityNumber || !formData.name}
+                                className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl flex items-center gap-2 shadow-lg hover:shadow-xl transition-all disabled:opacity-50 disabled:grayscale disabled:cursor-not-allowed"
                             >
                                 <Save size={20} />
                                 {isLoading ? 'Menyimpan...' : editingId ? 'Update Data' : 'Simpan Data to Database WP'}
                             </button>
-                        </div>
+                        </div>}
                     </div>
 
                     {/* Summary / Info Sidebar */}
@@ -544,14 +727,37 @@ export default function TaxCalculation() {
                                         <span className="text-gray-500">Tarif:</span>
                                         <span className="font-medium">{calcData.rate}%</span>
                                     </div>
-                                    <div className="border-t pt-2 mt-2 flex justify-between">
-                                        <span className="text-gray-500">DPP:</span>
-                                        <span className="font-medium">{formatCurrency(calcData.dpp)}</span>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Gross Up:</span>
+                                        <span className={`font-bold uppercase ${calcData.markupMode !== 'none' ? 'text-indigo-600' : 'text-gray-500'}`}>
+                                            {calcData.markupMode}
+                                        </span>
                                     </div>
-                                    <div className="flex justify-between text-indigo-600 font-bold">
-                                        <span>Total PPh:</span>
-                                        <span>{formatCurrency(calcData.pph)}</span>
+                                    {calcData.isPph21BukanPegawai && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Kategori:</span>
+                                            <span className="font-black text-amber-600 text-[10px] uppercase">Bukan Pegawai</span>
+                                        </div>
+                                    )}
+                                    {calcData.markupMode !== 'none' && (
+                                        <div className="flex justify-between">
+                                            <span className="text-gray-500">Total Dibukukan:</span>
+                                            <span className="font-bold text-indigo-600">{new Intl.NumberFormat('id-ID').format(Math.round(calcData.totalDibukukan || 0))}</span>
+                                        </div>
+                                    )}
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Total Diterima:</span>
+                                        <span className="font-bold text-emerald-600">{formatCurrency(calcData.totalPayable)}</span>
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">Gunakan PPN:</span>
+                                        <span className={`font-bold ${calcData.usePpn ? 'text-green-600' : 'text-red-500'}`}>
+                                            {calcData.usePpn ? 'Ya (12%)' : 'Tidak'}
+                                        </span>
+                                    </div>
+                                    <p className="text-[10px] text-slate-400 italic mt-4">
+                                        Hasil perhitungan otomatis muncul di panel kalkulator di sebelah kiri.
+                                    </p>
                                 </div>
                             )}
                         </Card>
@@ -581,7 +787,7 @@ export default function TaxCalculation() {
                                 >
                                     <FileText size={14} /> Export Excel
                                 </button>
-                                <div className="relative">
+                                {canCreate && <div className="relative">
                                     <input
                                         type="file"
                                         accept=".xlsx, .xls"
@@ -595,7 +801,16 @@ export default function TaxCalculation() {
                                     >
                                         <Upload size={14} /> {isImporting ? 'Uploading...' : 'Import Excel'}
                                     </button>
-                                </div>
+                                </div>}
+                                {canDelete && <button
+                                    onClick={handleDeleteAll}
+                                    disabled={isLoading || savedData.length === 0}
+                                    className="px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 rounded-lg flex items-center gap-1 transition-colors border border-red-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Hapus Seluruh Database WP"
+                                >
+                                    <Trash2 size={14} /> Hapus Semua
+                                </button>
+                                }
                             </div>
                         </div>
                         <div className="relative w-full md:w-64">
@@ -614,11 +829,12 @@ export default function TaxCalculation() {
                         <table className="w-full text-sm text-left">
                             <thead className="bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-gray-300 font-medium border-b dark:border-slate-700">
                                 <tr>
-                                    <th className="px-4 py-3">Tanggal</th>
-                                    <th className="px-4 py-3">Wajib Pajak</th>
+                                    <th className="px-4 py-3">Nama Wajib Pajak</th>
                                     <th className="px-4 py-3 whitespace-nowrap">Jenis Pajak</th>
                                     <th className="px-4 py-3 text-right">Tarif</th>
-                                    <th className="px-4 py-3">Objek Pajak</th>
+                                    <th className="px-4 py-3">NPWP/NIK</th>
+                                    <th className="px-4 py-3">Kode Objek Pajak</th>
+                                    <th className="px-4 py-3">Email</th>
                                     <th className="px-4 py-3 text-center">Aksi</th>
                                 </tr>
                             </thead>
@@ -630,14 +846,13 @@ export default function TaxCalculation() {
                                         </td>
                                     </tr>
                                 ) : (
-                                    filteredData.map((item) => (
-                                        <tr key={item.id} className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors">
-                                            <td className="px-4 py-3 text-gray-500">
-                                                {new Date(item.created_at).toLocaleDateString('id-ID')}
-                                            </td>
-                                            <td className="px-4 py-3">
-                                                <div className="font-medium text-gray-900 dark:text-gray-200">{item.name || '-'}</div>
-                                                <div className="text-xs text-gray-500">{item.id_type}: {item.identity_number}</div>
+                                    paginatedData.map((item, idx) => (
+                                        <tr key={item.id}
+                                            style={{ animationDelay: `${idx * 50}ms` }}
+                                            className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors animate-in zoom-in-95 fade-in fill-mode-both duration-500"
+                                        >
+                                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-200">
+                                                {item.name || '-'}
                                             </td>
                                             <td className="px-4 py-3 whitespace-nowrap">
                                                 <span className="px-2 py-1 rounded bg-indigo-50 text-indigo-600 text-xs font-medium">
@@ -647,25 +862,65 @@ export default function TaxCalculation() {
                                             <td className="px-4 py-3 text-right font-medium text-gray-700 dark:text-gray-300">
                                                 {item.rate}%
                                             </td>
-                                            <td className="px-4 py-3">
-                                                <div className="text-gray-700 dark:text-gray-300">{item.tax_object_name || '-'}</div>
-                                                <div className="text-xs text-gray-500 font-mono">{item.tax_object_code}</div>
+                                            <td className="px-4 py-3 text-gray-500">
+                                                <div className="flex items-center gap-2">
+                                                    <span>{item.id_type}: {item.identity_number}</span>
+                                                    {item.identity_number && (
+                                                        <button
+                                                            onClick={() => onCopy(item.identity_number, "NPWP/NIK")}
+                                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all shrink-0"
+                                                            title="Salin NPWP/NIK"
+                                                        >
+                                                            <Copy size={12} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-xs text-gray-500 font-mono">
+                                                <div className="flex items-center gap-2">
+                                                    <span>{item.tax_object_code || '-'}</span>
+                                                    {item.tax_object_code && (
+                                                        <button
+                                                            onClick={() => onCopy(item.tax_object_code, "Kode Objek Pajak")}
+                                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all shrink-0"
+                                                            title="Salin Kode Objek"
+                                                        >
+                                                            <Copy size={12} />
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td className="px-4 py-3 text-xs text-indigo-500 font-medium">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="truncate max-w-[120px]" title={item.email}>
+                                                        {item.email || '-'}
+                                                    </span>
+                                                    {item.email && (
+                                                        <button
+                                                            onClick={() => onCopy(item.email, "Email")}
+                                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all shrink-0"
+                                                            title="Salin Email"
+                                                        >
+                                                            <Copy size={12} />
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-4 py-3 text-center">
                                                 <div className="flex items-center justify-center gap-2">
-                                                    <button
+                                                    {canEdit && <button
                                                         onClick={() => handleEdit(item)}
                                                         className="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
                                                     >
                                                         Edit
-                                                    </button>
-                                                    <button
+                                                    </button>}
+                                                    {canDelete && <button
                                                         onClick={() => handleDelete(item.id)}
                                                         className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                                                         title="Hapus Data"
                                                     >
                                                         <Trash2 size={16} />
-                                                    </button>
+                                                    </button>}
                                                 </div>
                                             </td>
                                         </tr>
@@ -674,6 +929,72 @@ export default function TaxCalculation() {
                             </tbody>
                         </table>
                     </div>
+
+                    {/* Modern Pagination UI */}
+                    {totalPages > 1 && (
+                        <div className="px-6 py-4 flex items-center justify-between border-t border-gray-100 dark:border-slate-800 bg-gray-50/30 dark:bg-slate-900/30 rounded-b-xl">
+                            <div className="flex-1 flex justify-between sm:hidden">
+                                <button
+                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    disabled={currentPage === 1}
+                                    className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                                >
+                                    Previous
+                                </button>
+                                <button
+                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                    disabled={currentPage === totalPages}
+                                    className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
+                                <div>
+                                    <p className="text-sm text-gray-500 dark:text-slate-400">
+                                        Showing <span className="font-bold text-indigo-600">{(currentPage - 1) * rowsPerPage + 1}</span> to <span className="font-bold text-indigo-600">{Math.min(currentPage * rowsPerPage, filteredData.length)}</span> of <span className="font-bold text-indigo-600">{filteredData.length}</span> entries
+                                    </p>
+                                </div>
+                                <div>
+                                    <nav className="relative z-0 inline-flex rounded-xl shadow-sm -space-x-px bg-white dark:bg-slate-800 p-1 border border-gray-200 dark:border-slate-700" aria-label="Pagination">
+                                        <button
+                                            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                            disabled={currentPage === 1}
+                                            className="relative inline-flex items-center px-2 py-2 rounded-lg text-gray-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-30 transition-colors"
+                                        >
+                                            <ChevronLeft size={20} />
+                                        </button>
+
+                                        {[...Array(totalPages)].map((_, i) => {
+                                            const page = i + 1;
+                                            // Tampilkan halaman pertama, terakhir, dan sekitar halaman aktif
+                                            if (totalPages > 7 && page !== 1 && page !== totalPages && (page < currentPage - 1 || page > currentPage + 1)) {
+                                                if (page === currentPage - 2 || page === currentPage + 2) return <span key={page} className="px-2 py-2 text-gray-400">...</span>;
+                                                return null;
+                                            }
+                                            return (
+                                                <button
+                                                    key={page}
+                                                    onClick={() => setCurrentPage(page)}
+                                                    className={`relative inline-flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${currentPage === page ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-gray-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'}`}
+                                                >
+                                                    {page}
+                                                </button>
+                                            );
+                                        })}
+
+                                        <button
+                                            onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                                            disabled={currentPage === totalPages}
+                                            className="relative inline-flex items-center px-2 py-2 rounded-lg text-gray-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-30 transition-colors"
+                                        >
+                                            <ChevronRight size={20} />
+                                        </button>
+                                    </nav>
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </Card>
             )}
         </div>

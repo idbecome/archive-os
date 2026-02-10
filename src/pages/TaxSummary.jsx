@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
     Percent, FileBarChart, Trash2, Plus, ArrowUpRight, ArrowDownRight,
     TrendingUp, TrendingDown, LayoutGrid, List, SlidersHorizontal, Settings,
-    ChevronDown, ArrowRight, Download, Calendar, Edit3, X, FileSpreadsheet, UploadCloud
+    ChevronDown, ArrowRight, Download, Calendar, Edit3, X, FileSpreadsheet, UploadCloud, Sparkles, AlertCircle, Search, Copy
 } from 'lucide-react';
 import {
     LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
@@ -12,7 +12,7 @@ import * as XLSX from 'xlsx';
 import { api } from '../api';
 import { Card, SummaryCard } from '../components/ui/Card';
 
-export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, handleDeleteRecord, handleRenameTaxType, onRefresh, onImport }) {
+export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, handleDeleteRecord, handleRenameTaxType, onRefresh, onImport, onCopy }) {
     const [activeTab, setActiveTab] = useState('pph'); // pph, ppn, comparison
     const [viewMode, setViewMode] = useState('chart'); // chart, table
     const [filters, setFilters] = useState({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
@@ -81,8 +81,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         // Construct form data from record
         const formData = {
             id: record.id,
+            type: record.type || (activeTab === 'pph' ? 'PPH' : 'PPN'),
             month: record.month,
             year: record.year,
+            pembetulan: record.pembetulan || 0,
             data: {
                 pph: {},
                 ppnIn: {},
@@ -105,6 +107,56 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         setIsModalOpen(true);
     };
 
+    const getSmartInsight = () => {
+        // 1. Konteks Filter
+        if (filters.month !== 'All' || filters.year !== 'All') {
+            return {
+                text: `Analisis Filter: Menampilkan data untuk periode ${filters.month !== 'All' ? filters.month : ''} ${filters.year !== 'All' ? filters.year : ''}. AI membandingkan tren kepatuhan pada periode ini.`,
+                icon: <Search className="text-indigo-500" size={20} />,
+                color: "border-indigo-200 dark:border-indigo-800/50 bg-indigo-50/50 dark:bg-indigo-900/10 text-indigo-800 dark:text-indigo-200"
+            };
+        }
+
+        // 2. Analisis Data Kosong (Bulan Berjalan)
+        const now = new Date();
+        const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+        const currentMonth = months[now.getMonth()];
+        const currentYear = now.getFullYear();
+        const hasCurrent = taxSummaries.some(s => s.month === currentMonth && s.year === currentYear);
+        if (!hasCurrent) {
+            return {
+                text: `Pengingat Laporan: Data untuk ${currentMonth} ${currentYear} belum tersedia. Segera lakukan input atau import data untuk menjaga validitas dashboard.`,
+                icon: <AlertCircle className="text-amber-500" size={20} />,
+                color: "border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200"
+            };
+        }
+
+        // 3. Analisis Kualitas (Banyak Pembetulan)
+        const highRev = taxSummaries.filter(s => (s.pembetulan || 0) > 1).length;
+        if (highRev > 0) {
+            return {
+                text: `Analisis Kualitas: Terdeteksi ${highRev} laporan dengan pembetulan > 1. Disarankan untuk melakukan review data master sebelum pelaporan final.`,
+                icon: <TrendingUp className="text-blue-500" size={20} />,
+                color: "border-blue-200 dark:border-blue-800/50 bg-blue-50/50 dark:bg-blue-900/10 text-blue-800 dark:text-blue-200"
+            };
+        }
+
+        // 4. Default Tips
+        const tips = [
+            "Tips AI: Gunakan fitur 'Perbandingan' untuk melihat anomali pembayaran antar periode secara mendalam.",
+            "Info: Template PPh dan PPN akan otomatis menyesuaikan jika Anda menambahkan kolom tipe pajak baru.",
+            "Saran: Lakukan ekspor laporan secara berkala sebagai backup data kepatuhan pajak perusahaan.",
+            "Sistem Optimal: Semua perhitungan PPN Masukan dan Keluaran telah disinkronkan dengan database WP."
+        ];
+        return {
+            text: tips[new Date().getHours() % tips.length],
+            icon: <Sparkles className="text-emerald-500" size={20} />,
+            color: "border-emerald-200 dark:border-emerald-800/50 bg-emerald-50/50 dark:bg-emerald-900/10 text-emerald-800 dark:text-emerald-200"
+        };
+    };
+
+    const insight = getSmartInsight();
+
     // --- COMPUTED DATA HELPERS ---
     const getSafeValue = (record, type, category) => {
         // Handle legacy vs new structure
@@ -124,7 +176,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         // Create headers based on dynamic config
         const isPPh = type === 'pph';
         const headers = [
-            "Month (1-12)", "Year", "Pembetulan",
+            "Template Type", "Month (1-12)", "Year", "Pembetulan",
             ...(isPPh 
                 ? config.pphTypes 
                 : [
@@ -135,7 +187,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         ];
 
         const exampleRow = [
-            1, new Date().getFullYear(), 0,
+            isPPh ? "PPH" : "PPN", 1, new Date().getFullYear(), 0,
             ...(isPPh ? config.pphTypes.map(() => 0) : [...config.ppnInTypes.map(() => 0), ...config.ppnOutTypes.map(() => 0)])
         ];
 
@@ -167,7 +219,24 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
             const allKeys = new Set();
             jsonData.forEach(row => Object.keys(row).forEach(k => allKeys.add(k)));
             const fileKeys = Array.from(allKeys);
-            const standardKeys = ["Month (1-12)", "Month", "Bulan", "Year", "Tahun", "Pembetulan", "Type", "No", "No."];
+            const standardKeys = ["Month (1-12)", "Month", "Bulan", "Year", "Tahun", "Pembetulan", "Type", "No", "No.", "Template Type"];
+
+            // --- VALIDASI PROTEKSI PPH vs PPN ---
+            const hasPpnMarkers = fileKeys.some(k => {
+                const uk = k.trim().toUpperCase();
+                return uk.startsWith('IN_') || uk.startsWith('OUT_');
+            });
+            const fileTypeMarker = String(jsonData[0]?.["Template Type"] || "").toUpperCase();
+
+            if (importMode === 'ppn' && (fileTypeMarker === 'PPH' || (!hasPpnMarkers && fileTypeMarker !== 'PPN'))) {
+                alert("⚠️ Gagal Import PPN: File ini terdeteksi sebagai template PPh. Harap gunakan tombol 'Import PPh' atau gunakan template PPN yang benar.");
+                return;
+            }
+
+            if (importMode === 'pph' && (fileTypeMarker === 'PPN' || hasPpnMarkers)) {
+                alert("⚠️ Gagal Import PPh: File ini terdeteksi sebagai template PPN. Harap gunakan tombol 'Import PPN' atau gunakan template PPh yang benar.");
+                return;
+            }
             
             // Gunakan copy dari config agar bisa langsung dipakai parsing di bawah
             let localConfig = JSON.parse(JSON.stringify(config)); 
@@ -391,14 +460,42 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
             return acc;
         }, {});
 
+        const grandTotalPPh = Object.values(totalPerType).reduce((a, b) => a + b, 0);
+
         return (
-            <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-500">
+            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
                 {/* 1. Summary Cards */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    {/* GRAND TOTAL CARD WITH COPY FUNCTION */}
+                    <div className="p-4 bg-indigo-600 rounded-2xl border border-indigo-500 shadow-lg relative overflow-hidden group">
+                        <div className="absolute right-0 top-0 w-16 h-16 bg-white/10 rounded-bl-3xl -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+                        <h4 className="text-[10px] text-indigo-100 font-black uppercase tracking-[0.2em] mb-1">Estimasi PPh Terutang</h4>
+                        <div className="flex items-center justify-between relative z-10">
+                            <p className="text-lg font-black text-white">
+                                Rp {grandTotalPPh.toLocaleString('id-ID')}
+                            </p>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); onCopy(grandTotalPPh, "Estimasi PPh Terutang"); }}
+                                className="p-2 bg-white/20 hover:bg-white/30 rounded-xl text-white transition-all active:scale-90"
+                                title="Salin Total"
+                            >
+                                <Copy size={16} />
+                            </button>
+                        </div>
+                    </div>
+
                     {config.pphTypes.map(type => (
                         <div key={type} className="p-4 bg-white dark:bg-slate-800 rounded-2xl border border-indigo-100 dark:border-slate-700 shadow-sm relative overflow-hidden group hover:shadow-md transition-all">
                             <div className="absolute right-0 top-0 w-16 h-16 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-bl-3xl -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
-                            <h4 className="text-xs text-gray-500 dark:text-slate-400 font-semibold uppercase tracking-wider mb-1">{type}</h4>
+                            <div className="flex justify-between items-start">
+                                <h4 className="text-xs text-gray-500 dark:text-slate-400 font-semibold uppercase tracking-wider mb-1">{type}</h4>
+                                <button 
+                                    onClick={(e) => { e.stopPropagation(); onCopy(totalPerType[type], type); }}
+                                    className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-all"
+                                >
+                                    <Copy size={12} />
+                                </button>
+                            </div>
                             <p className="text-lg font-bold text-gray-900 dark:text-white">
                                 Rp {(totalPerType[type] / 1000000).toLocaleString('id-ID', { maximumFractionDigits: 1 })} Jt
                             </p>
@@ -554,7 +651,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 {getFilteredData(sortedSummaries, 'pph').map((s, idx) => {
                                     let rowTotal = 0;
                                     return (
-                                        <tr key={idx} className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s)}>
+                                        <tr key={idx} 
+                                            style={{ animationDelay: `${idx * 50}ms` }}
+                                            className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group animate-in zoom-in-95 fade-in fill-mode-both duration-500 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} 
+                                            onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s)}>
                                             <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
                                             {config.pphTypes.map(t => {
                                                 const val = getSafeValue(s, t, 'pph');
@@ -613,7 +713,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
         const statusLB = latest.net < 0; // Lebih Bayar
 
         return (
-            <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-500">
+            <div className="space-y-6 animate-in fade-in zoom-in-95 duration-500">
                 {/* 1. Insight Card */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                     <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-900/10 border-emerald-200 dark:border-emerald-800">
@@ -697,12 +797,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                     <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: '#6b7280' }} tickFormatter={(val) => `${val / 1000000}M`} />
                                     <Tooltip
                                         contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.1)', padding: '12px' }}
-                                        formatter={(value, name) => [`Rp ${value.toLocaleString()}`, name === 'net' ? 'Net Balance' : name === 'inTotal' ? 'Pajak Masukan' : 'Pajak Keluaran']}
+                                        formatter={(value) => [`Rp ${value.toLocaleString()}`, 'Net Balance']}
                                         labelStyle={{ color: '#374151', fontWeight: 'bold', marginBottom: '8px' }}
                                     />
                                     <Legend wrapperStyle={{ paddingTop: '20px' }} />
-                                    <Bar dataKey="inTotal" name="Masukan (In)" fill="#10b981" radius={[6, 6, 0, 0]} barSize={32} />
-                                    <Bar dataKey="outTotal" name="Keluaran (Out)" fill="#f59e0b" radius={[6, 6, 0, 0]} barSize={32} />
                                     <Line type="monotone" dataKey="net" name="Net Balance" stroke="#6366f1" strokeWidth={4} dot={{ r: 6, strokeWidth: 2, fill: '#fff' }} activeDot={{ r: 8 }} />
                                 </ComposedChart>
                             </ResponsiveContainer>
@@ -838,7 +936,10 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                     const isLB = net < 0;
 
                                     return (
-                                        <tr key={idx} className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 group ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s, 'ppn')}>
+                                        <tr key={idx} 
+                                            style={{ animationDelay: `${idx * 50}ms` }}
+                                            className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 group animate-in zoom-in-95 fade-in fill-mode-both duration-500 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} 
+                                            onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s, 'ppn')}>
                                             <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
                                             {config.ppnInTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnIn').toLocaleString()}</td>)}
                                             {config.ppnOutTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnOut').toLocaleString()}</td>)}
@@ -870,7 +971,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
 
     // --- TAB: COMPARISON ---
     // Moved to separate component below to avoid Hook Rule violations
-    const ComparisonTab = ({ sortedSummaries, config }) => {
+    const ComparisonTab = ({ sortedSummaries, config, onCopy }) => {
         // Group data by Period (Month-Year-Pembetulan) to handle duplicates (PPh/PPN split)
         const uniquePeriods = useMemo(() => {
             const groups = {};
@@ -1150,7 +1251,18 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* PPh Comparison */}
                     <Card>
-                        <h3 className="font-bold text-gray-900 dark:text-white mb-4">Perbandingan PPh</h3>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="font-bold text-gray-900 dark:text-white">Perbandingan PPh</h3>
+                            {dataB.data?.pph && (
+                                <button 
+                                    onClick={() => onCopy(Object.values(dataB.data.pph).reduce((a, b) => a + b, 0), "Total PPh Periode B")}
+                                    className="p-1.5 text-slate-400 hover:text-indigo-600 transition-all"
+                                    title="Salin Total PPh Periode B"
+                                >
+                                    <Copy size={16} />
+                                </button>
+                            )}
+                        </div>
                         <div className="space-y-3">
                             {config.pphTypes.map(t => {
                                 const valA = getSafeValue(dataA, t, 'pph');
@@ -1212,7 +1324,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
             {/* Header & Tabs */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-xl w-fit">
@@ -1277,13 +1389,28 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                 </div>
             </div>
 
+            {/* AI SMART INSIGHT BANNER */}
+            <div className={`p-4 rounded-2xl border backdrop-blur-md flex items-center gap-4 animate-in slide-in-from-top-4 duration-700 ${insight.color}`}>
+                <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl shadow-sm shrink-0">
+                    {insight.icon}
+                </div>
+                <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-0.5">
+                        <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-60">Smart Assistant</span>
+                        <div className="w-1 h-1 rounded-full bg-current opacity-40"></div>
+                        <span className="text-[10px] font-bold opacity-60">Tax Reporting Analysis</span>
+                    </div>
+                    <p className="text-sm font-bold leading-relaxed">{insight.text}</p>
+                </div>
+            </div>
+
             {/* Global Update Button Removed - replaced by specific buttons in tabs */}
             {/* Global Update Button Removed - replaced by specific buttons in tabs */}
 
             {/* Content Renderers */}
             {activeTab === 'pph' && renderPPhTab()}
             {activeTab === 'ppn' && renderPPNTab()}
-            {activeTab === 'comparison' && <ComparisonTab sortedSummaries={sortedSummaries} config={config} />}
+            {activeTab === 'comparison' && <ComparisonTab sortedSummaries={sortedSummaries} config={config} onCopy={onCopy} />}
         </div >
     );
 }

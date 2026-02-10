@@ -1,4 +1,7 @@
-const API_URL = 'http://localhost:5000/api';
+// Gunakan URL absolut jika di lingkungan development (Vite port 3000)
+// Gunakan relative path jika di production (Docker/Nginx)
+const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_URL = isDev ? `http://${window.location.hostname}:5000/api` : '/api';
 
 export const db = {
     async getInventory() {
@@ -57,12 +60,35 @@ export const db = {
         try {
             const response = await fetch(`${API_URL}/documents`);
             const data = await response.json();
-            return data.map(doc => ({
-                ...doc,
-                fileData: doc.fileData || doc.file_data || doc.filedata,
-                versionsHistory: doc.versions_history || []
-            }));
+            return data.map(doc => {
+                const rawVersions = doc.versionsHistory || doc.versions_history;
+                return {
+                    ...doc,
+                    fileData: doc.fileData || doc.file_data || doc.filedata,
+                    versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
+                };
+            });
         } catch { return []; }
+    },
+
+    async getDocuments(params = {}) {
+        try {
+            const query = new URLSearchParams(params).toString();
+            const response = await fetch(`${API_URL}/documents?${query}`);
+            if (!response.ok) throw new Error('Gagal mengambil dokumen');
+            const data = await response.json();
+            return data.map(doc => {
+                const rawVersions = doc.versionsHistory || doc.versions_history;
+                return {
+                    ...doc,
+                    fileData: doc.fileData || doc.file_data || doc.filedata,
+                    versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
+                };
+            });
+        } catch (e) {
+            console.error("DB Error (Documents):", e);
+            return [];
+        }
     },
 
     // NEW: Ambil detail dokumen (termasuk fileData) jika di list kosong
@@ -71,9 +97,11 @@ export const db = {
             const response = await fetch(`${API_URL}/documents/${id}`);
             if (!response.ok) throw new Error('Gagal mengambil detail dokumen');
             const doc = await response.json();
+            const rawVersions = doc.versionsHistory || doc.versions_history;
             return {
                 ...doc,
-                fileData: doc.fileData || doc.file_data || doc.filedata
+                fileData: doc.fileData || doc.file_data || doc.filedata,
+                versionsHistory: typeof rawVersions === 'string' ? JSON.parse(rawVersions) : (rawVersions || [])
             };
         } catch (e) { console.error(e); return null; }
     },
@@ -128,8 +156,49 @@ export const db = {
             return await response.json();
         } catch { return []; }
     },
+
+    async createTaxAudit(data) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Gagal membuat audit');
+            return await response.json();
+        } catch (e) { console.error("Gagal membuat tax audit", e); throw e; }
+    },
+
+    async updateTaxAudit(id, data) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error('Gagal update audit');
+        } catch (e) { console.error("Gagal update tax audit", e); throw e; }
+    },
+
+    async deleteTaxAudit(id) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits/${id}`, { method: 'DELETE' });
+            if (!response.ok) throw new Error('Gagal hapus audit');
+        } catch (e) { console.error("Gagal hapus tax audit", e); throw e; }
+    },
+
     async getTaxSummaries() {
-        return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
+        try {
+            const response = await fetch(`${API_URL}/tax-summaries`);
+            if (!response.ok) throw new Error('Gagal mengambil data pajak');
+            const data = await response.json();
+            // Backend sudah melakukan parsing JSON di server/index.js, 
+            // tapi kita pastikan id tetap string untuk konsistensi frontend
+            return data.map(item => ({ ...item, id: String(item.id) }));
+        } catch (error) {
+            console.error("DB Error (TaxSummaries):", error);
+            return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
+        }
     },
     async getUsers() {
         try {
@@ -204,12 +273,25 @@ export const db = {
 
     async saveTaxSummary(data) {
         try {
-            await fetch(`${API_URL}/tax-summaries`, {
-                method: 'POST',
+            const isUpdate = !!data.id;
+            const url = isUpdate ? `${API_URL}/tax-summaries/${data.id}` : `${API_URL}/tax-summaries`;
+            const response = await fetch(url, {
+                method: isUpdate ? 'PUT' : 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
-        } catch (e) { console.error("Gagal menyimpan tax summary", e); }
+            if (!response.ok) throw new Error('Gagal menyimpan ke server');
+            return await response.json();
+        } catch (e) { console.error("Gagal menyimpan tax summary", e); throw e; }
+    },
+
+    async deleteTaxSummary(id) {
+        try {
+            const response = await fetch(`${API_URL}/tax-summaries/${id}`, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Gagal menghapus data di server');
+        } catch (e) { console.error("Gagal hapus tax summary", e); throw e; }
     },
 
     async createDepartment(name) {
@@ -241,12 +323,17 @@ export const db = {
 
     async createDocument(doc) {
         try {
-            await fetch(`${API_URL}/documents`, {
+            const response = await fetch(`${API_URL}/documents`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(doc)
             });
-        } catch (e) { console.error("Gagal buat dokumen", e); }
+            if (!response.ok) throw new Error('Gagal buat dokumen');
+            return await response.json();
+        } catch (e) {
+            console.error("createDocument Error:", e);
+            return null;
+        }
     },
 
     async updateDocument(id, doc) {
@@ -314,5 +401,21 @@ export const db = {
         try {
             await fetch(`${API_URL}/inventory/external/${id}`, { method: 'DELETE' });
         } catch (e) { console.error("Gagal hapus external item", e); }
+    },
+
+    async uploadFile(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const response = await fetch(`${API_URL}/upload`, {
+                method: 'POST',
+                body: formData
+            });
+            if (!response.ok) throw new Error('Upload failed');
+            return await response.json();
+        } catch (e) {
+            console.error("Upload error:", e);
+            throw e;
+        }
     }
 };
