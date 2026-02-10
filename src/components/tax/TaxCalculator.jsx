@@ -119,7 +119,7 @@ export default function TaxCalculator({
             let high = target * 2;
             let bestMid = target;
 
-            const effectiveUsePpn = usePpn || markupMode === 'ppn' || markupMode === 'both';
+            const effectiveUsePpn = usePpn || markupMode === 'ppn';
             for (let i = 0; i < 40; i++) {
                 let mid = (low + high) / 2;
                 let dppTax = 0.5 * (mid - discountValue);
@@ -134,7 +134,6 @@ export default function TaxCalculator({
                 let currentNet = 0;
                 if (markupMode === 'pph') currentNet = mid - midPph;
                 else if (markupMode === 'ppn') currentNet = mid + midPpn;
-                else if (markupMode === 'both') currentNet = mid + midPpn - midPph;
 
                 if (currentNet < target) {
                     low = mid;
@@ -146,7 +145,7 @@ export default function TaxCalculator({
             return bestMid;
         };
 
-        const effectiveUsePpn = usePpn || markupMode === 'ppn' || markupMode === 'both';
+        const effectiveUsePpn = usePpn || markupMode === 'ppn';
         const effectivePpnMultiplier = 1 + (11 / 12 * 0.12); // ~1.11 effective (mathematical consistency)
 
         if (isPph21BukanPegawai) {
@@ -158,8 +157,6 @@ export default function TaxCalculator({
                 calculationDpp = dppValue / (1 - pphRateFactor);
             } else if (markupMode === 'ppn') {
                 calculationDpp = dppValue / effectivePpnMultiplier;
-            } else if (markupMode === 'both' && pphRateFactor < effectivePpnMultiplier) {
-                calculationDpp = (dppValue + effectivePpnMultiplier * discountValue) / (effectivePpnMultiplier - pphRateFactor);
             }
         }
 
@@ -344,14 +341,13 @@ export default function TaxCalculator({
                             {[
                                 { id: 'none', label: 'Normal' },
                                 { id: 'pph', label: 'PPh' },
-                                { id: 'ppn', label: 'PPN' },
-                                { id: 'both', label: 'Both' }
+                                { id: 'ppn', label: 'PPN' }
                             ].map((mode) => (
                                 <button
                                     key={mode.id}
                                     onClick={() => {
                                         setMarkupMode(mode.id);
-                                        if (mode.id === 'ppn' || mode.id === 'both') {
+                                        if (mode.id === 'ppn') {
                                             setUsePpn(false);
                                         } else if (mode.id === 'none' || mode.id === 'pph') {
                                             setUsePpn(true);

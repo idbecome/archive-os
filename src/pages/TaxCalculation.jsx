@@ -28,7 +28,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         identityNumber: '',
         name: '',
         email: '',
-        taxType: '21',
+        taxType: '23',
         taxObjectCode: '',
         taxObjectName: '',
         markupMode: 'none',
@@ -39,11 +39,18 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const handleInputChange = (e) => {
         const { name, value } = e.target;
         setFormData(prev => {
-            const newData = { ...prev, [name]: value };
+            let sanitizedValue = value;
+            if (name === 'identityNumber') {
+                sanitizedValue = value.replace(/\D/g, '').slice(0, 16);
+            }
+            const newData = { ...prev, [name]: sanitizedValue };
 
             // Automation for PPh 21
-            if (name === 'taxType') {
-                const isPph21 = value === '21';
+            if (name === 'taxType' || (name === 'idType' && value === 'KTP' && newData.taxType === '23')) {
+                if (name === 'idType' && value === 'KTP' && newData.taxType === '23') {
+                    newData.taxType = '21';
+                }
+                const isPph21 = newData.taxType === '21';
                 newData.isPph21BukanPegawai = isPph21;
                 newData.usePpn = !isPph21;
 
@@ -180,6 +187,11 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             return;
         }
 
+        if (formData.identityNumber.length !== 16) {
+            alert('Nomor Identitas (NPWP/NIK) harus berjumlah 16 digit angka!');
+            return;
+        }
+
         setIsLoading(true);
         try {
             const payload = {
@@ -217,9 +229,11 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                     identityNumber: '',
                     name: '',
                     email: '',
-                    taxType: '21',
+                    taxType: '23',
                     taxObjectCode: '',
-                    taxObjectName: ''
+                    taxObjectName: '',
+                    isPph21BukanPegawai: false,
+                    usePpn: true
                 });
                 setCalcData({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
                 setActiveTab('database');
@@ -424,7 +438,14 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             {/* SIMULATION TAB */}
             {activeTab === 'simulation' && (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <TaxCalculator onCalculate={setCalcData} onCopy={onCopy} />
+                    <TaxCalculator
+                        onCalculate={setCalcData}
+                        onCopy={onCopy}
+                        initialRate={calcData.rate}
+                        initialIsPph21BukanPegawai={calcData.isPph21BukanPegawai}
+                        initialUsePpn={calcData.usePpn}
+                        initialMarkupMode={calcData.markupMode}
+                    />
 
                     {/* Information Card */}
                     <Card className="bg-gradient-to-br from-indigo-600 to-purple-700 text-white border-none h-full">
@@ -496,8 +517,10 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                         value={formData.identityNumber}
                                         onChange={handleInputChange}
                                         disabled={isReadOnly}
+                                        maxLength={16}
+                                        inputMode="numeric"
+                                        placeholder="16 digit angka"
                                         className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
-                                        placeholder={formData.idType === 'NPWP' ? '00.000.000.0-000.000' : '320123...'}
                                     />
                                 </div>
 
@@ -545,9 +568,9 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                         disabled={isReadOnly}
                                         className="w-full px-4 py-2.5 rounded-xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 focus:ring-2 focus:ring-indigo-500 outline-none transition-all dark:text-white disabled:bg-gray-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                                     >
-                                        <option value="21">PPh 21</option>
-                                        <option value="23">PPh 23</option>
+                                        <option value="23" disabled={formData.idType === 'KTP'}>PPh 23 {formData.idType === 'KTP' ? '(Hanya NPWP)' : ''}</option>
                                         <option value="4(2)">PPh 4(2)</option>
+                                        <option value="21">PPh 21</option>
                                         <option value="26">PPh 26</option>
                                     </select>
                                 </div>
@@ -596,7 +619,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                                 String(item.tax_type) === String(formData.taxType) && (
                                                     (item.name || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase()) ||
                                                     (item.code || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase())
-                                                )
+                                                ) && !(formData.idType === 'KTP' && String(item.tax_type) === '23')
                                             ).length === 0 ? (
                                                 <div className="px-4 py-3 text-sm text-gray-500 text-center">
                                                     Tidak ada data ditemukan. <br />
@@ -609,7 +632,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                                     String(item.tax_type) === String(formData.taxType) && (
                                                         (item.name || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase()) ||
                                                         (item.code || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase())
-                                                    )
+                                                    ) && !(formData.idType === 'KTP' && String(item.tax_type) === '23')
                                                 ).map((item) => (
                                                     <button
                                                         key={item.id}
@@ -679,7 +702,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                             idType: 'NPWP',
                                             identityNumber: '',
                                             name: '',
-                                            taxType: '21',
+                                            taxType: '23',
                                             taxObjectCode: '',
                                             taxObjectName: '',
                                             markupMode: 'none',
