@@ -17,42 +17,382 @@ if (!fs.existsSync(UPLOADS_DIR)) {
     fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-// Configure Multer
+const app = express();
+const PORT = 5000;
+
+app.use(cors());
+app.use(bodyParser.json({ limit: '50mb' }));
+app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+app.use('/uploads', cors(), express.static(UPLOADS_DIR));
+
 const storage = multer.diskStorage({
     destination: function (req, file, cb) {
         cb(null, UPLOADS_DIR);
     },
     filename: function (req, file, cb) {
-        // Safe filename: INV-timestamp-originalName
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
-        cb(null, `INV-${uniqueSuffix}-${safeName}`);
+        cb(null, Date.now() + '-' + file.originalname);
     }
 });
+const upload = multer({ storage: storage });
 
-const upload = multer({
-    storage: storage,
-    limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
-});
-
-const app = express();
-const PORT = 5000;
-
-console.log('--- ARCHIVE-OS BACKEND v2.1 (WATCHER ENABLED) STARTING ---');
-// Trigger restart for re-seeding
-
-app.use(cors());
-app.use(bodyParser.json({ limit: '50mb' }));
-// Dedicated Upload Endpoint
-app.use('/uploads', express.static(UPLOADS_DIR));
-
+// --- STANDALONE UPLOAD API ---
 app.post('/api/upload', upload.single('file'), (req, res) => {
-    if (!req.file) {
-        return res.status(400).json({ success: false, error: 'No file uploaded' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    res.json({
+        success: true,
+        url: `/uploads/${req.file.filename}`,
+        filename: req.file.originalname
+    });
+});
+
+// --- PUSTAKA (KNOWLEDGE BASE) API ---
+app.get('/api/pustaka/guides', (req, res) => {
+    db.all("SELECT * FROM pustaka_guides ORDER BY category, title ASC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const result = (rows || []).map(r => ({
+            ...r,
+            allowed_depts: r.allowed_depts ? JSON.parse(r.allowed_depts) : [],
+            allowed_users: r.allowed_users ? JSON.parse(r.allowed_users) : []
+        }));
+        res.json(result);
+    });
+});
+
+app.get('/api/pustaka/search', (req, res) => {
+    const q = req.query.q;
+    if (!q) return res.json([]);
+
+    const term = `%${q}%`;
+    const sql = `
+        SELECT DISTINCT g.* 
+        FROM pustaka_guides g
+        LEFT JOIN pustaka_slides s ON g.id = s.guide_id
+        WHERE g.title LIKE ? OR g.description LIKE ? OR g.category LIKE ? OR s.title LIKE ? OR s.content LIKE ?
+        ORDER BY g.title ASC
+    `;
+
+    db.all(sql, [term, term, term, term, term], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+app.get('/api/pustaka/categories', (req, res) => {
+    db.all("SELECT * FROM pustaka_categories ORDER BY name ASC", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+app.post('/api/pustaka/categories', (req, res) => {
+    const { name } = req.body;
+    db.run("INSERT INTO pustaka_categories (name) VALUES (?)", [name], function (err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, id: this.lastID });
+    });
+});
+
+app.delete('/api/pustaka/categories/:id', (req, res) => {
+    db.run("DELETE FROM pustaka_categories WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.get('/api/pustaka/guides/:id/slides', (req, res) => {
+    db.all("SELECT * FROM pustaka_slides WHERE guide_id = ? ORDER BY step_order ASC", [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+app.post('/api/pustaka/guides', (req, res) => {
+    const { title, description, category, icon, privacy, allowed_depts, allowed_users, owner } = req.body;
+    db.run("INSERT INTO pustaka_guides (title, description, category, icon, privacy, allowed_depts, allowed_users, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [title, description, category, icon, privacy || 'public', JSON.stringify(allowed_depts || []), JSON.stringify(allowed_users || []), owner],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.put('/api/pustaka/guides/:id', (req, res) => {
+    const { title, description, category, icon, privacy, allowed_depts, allowed_users } = req.body;
+    db.run("UPDATE pustaka_guides SET title = ?, description = ?, category = ?, icon = ?, privacy = ?, allowed_depts = ?, allowed_users = ? WHERE id = ?",
+        [title, description, category, icon, privacy, JSON.stringify(allowed_depts || []), JSON.stringify(allowed_users || []), req.params.id],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.delete('/api/pustaka/guides/:id', (req, res) => {
+    const guideId = req.params.id;
+    db.run("DELETE FROM pustaka_guides WHERE id = ?", [guideId], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        db.run("DELETE FROM pustaka_slides WHERE guide_id = ?", [guideId], (err2) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            res.json({ success: true });
+        });
+    });
+});
+
+app.delete('/api/pustaka/slides/by-guide/:id', (req, res) => {
+    db.run("DELETE FROM pustaka_slides WHERE guide_id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+app.post('/api/pustaka/slides', (req, res) => {
+    const { guide_id, title, content, image, step_order } = req.body;
+    db.run("INSERT INTO pustaka_slides (guide_id, title, content, image, step_order) VALUES (?, ?, ?, ?, ?)",
+        [guide_id, title, content, image, step_order],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+// --- DOCUMENT APPROVAL API ---
+app.get('/api/approvals', (req, res) => {
+    db.all("SELECT * FROM document_approvals ORDER BY created_at DESC", [], (err, approvals) => {
+        if (err) return res.status(500).json({ error: err.message });
+        const safeApprovals = approvals || [];
+        db.all("SELECT * FROM approval_steps ORDER BY approval_id, step_index ASC", [], (err2, steps) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            const safeSteps = steps || [];
+            const result = safeApprovals.map(item => ({
+                ...item,
+                steps: safeSteps.filter(s => s.approval_id === item.id)
+            }));
+            res.json(result);
+        });
+    });
+});
+
+app.post('/api/approvals', (req, res) => {
+    const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, steps } = req.body;
+    const now = new Date().toISOString();
+
+    db.run(`INSERT INTO document_approvals (title, description, division, requester_name, requester_username, attachment_url, attachment_name, status, created_at, current_step_index) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 0)`,
+        [title, description, division, requester_name, requester_username, attachment_url, attachment_name, now],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            const approvalId = this.lastID;
+
+            // Insert steps
+            const stepPromises = steps.map((step, index) => {
+                return new Promise((resolve, reject) => {
+                    db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name) VALUES (?, ?, ?, ?)`,
+                        [approvalId, index, step.username, step.name],
+                        (sErr) => sErr ? reject(sErr) : resolve()
+                    );
+                });
+            });
+
+            Promise.all(stepPromises)
+                .then(() => res.json({ success: true, id: approvalId }))
+                .catch(pErr => res.status(500).json({ error: pErr.message }));
+        }
+    );
+});
+
+app.post('/api/approvals/:id/action', upload.single('file'), (req, res) => {
+    const { action, note, username } = req.body; // action: 'Approve' | 'Reject'
+    const approvalId = req.params.id;
+    const now = new Date().toISOString();
+
+    let attachment_url = null;
+    let attachment_name = null;
+    if (req.file) {
+        attachment_url = `/uploads/${req.file.filename}`;
+        attachment_name = req.file.originalname;
     }
-    const fileUrl = `/uploads/${req.file.filename}`;
-    console.log(`File uploaded via Multer: ${fileUrl}`);
-    res.json({ success: true, url: fileUrl });
+
+    db.get("SELECT * FROM document_approvals WHERE id = ?", [approvalId], (err, approval) => {
+        if (err || !approval) return res.status(404).json({ error: "Not found" });
+
+        const currentIndex = approval.current_step_index;
+
+        // Update current step
+        db.run(`UPDATE approval_steps SET status = ?, action_date = ?, note = ?, attachment_url = ?, attachment_name = ? 
+                WHERE approval_id = ? AND step_index = ? AND approver_username = ?`,
+            [action === 'Approve' ? 'Approved' : 'Rejected', now, note, attachment_url, attachment_name, approvalId, currentIndex, username],
+            function (stepErr) {
+                if (stepErr) return res.status(500).json({ error: stepErr.message });
+
+                if (action === 'Reject') {
+                    // If rejected, the whole document is rejected
+                    db.run("UPDATE document_approvals SET status = 'Rejected' WHERE id = ?", [approvalId], () => {
+                        res.json({ success: true, status: 'Rejected' });
+                    });
+                } else {
+                    // Check if there are more steps
+                    db.get("SELECT COUNT(*) as count FROM approval_steps WHERE approval_id = ?", [approvalId], (cErr, row) => {
+                        const nextIndex = currentIndex + 1;
+                        if (nextIndex < row.count) {
+                            db.run("UPDATE document_approvals SET current_step_index = ? WHERE id = ?", [nextIndex, approvalId], () => {
+                                res.json({ success: true, status: 'Pending', nextStep: nextIndex });
+                            });
+                        } else {
+                            db.run("UPDATE document_approvals SET status = 'Approved' WHERE id = ?", [approvalId], () => {
+                                // Sinkronisasi ke folder Documents dan jalankan OCR hanya setelah Approved
+                                db.get("SELECT title, attachment_url, attachment_name, requester_name, division FROM document_approvals WHERE id = ?", [approvalId], (err, app) => {
+                                    if (app && app.attachment_url) {
+                                        // Cari folder tujuan (ApprovalDoc -> Judul)
+                                        db.get("SELECT id FROM folders WHERE name = 'ApprovalDoc' AND (parentId IS NULL OR parentId = 0 OR parentId = 'null')", [], (err, parent) => {
+                                            if (parent) {
+                                                db.get("SELECT id FROM folders WHERE name = ? AND parentId = ?", [app.title, parent.id], (err, folder) => {
+                                                    if (folder) {
+                                                        const docId = `DOC-APP-${Date.now()}`;
+                                                        const ext = path.extname(app.attachment_name || '').toLowerCase();
+                                                        let type = 'application/pdf';
+                                                        if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) type = 'image/jpeg';
+
+                                                        // Masukkan ke tabel documents agar muncul di file explorer
+                                                        db.run(`INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, status, ocrContent) 
+                                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', '')`,
+                                                            [docId, app.attachment_name, type, '0 KB', now, app.attachment_url, folder.id, app.division, app.requester_name],
+                                                            (docErr) => {
+                                                                if (!docErr) {
+                                                                    const filename = path.basename(app.attachment_url);
+                                                                    const absolutePath = path.join(UPLOADS_DIR, filename);
+                                                                    // Jalankan OCR untuk dokumen baru ini
+                                                                    addOCRJob(docId, absolutePath, type, app.attachment_name, {
+                                                                        type: 'document',
+                                                                        documentId: docId,
+                                                                        approvalId: approvalId // Berikan info approvalId agar worker bisa update ocr_content di tabel approval juga
+                                                                    }).catch(e => console.error("Final Approval OCR Error:", e));
+                                                                }
+                                                            }
+                                                        );
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    }
+                                    res.json({ success: true, status: 'Approved' });
+                                });
+                            });
+                        }
+                    });
+                }
+            }
+        );
+    });
+});
+
+app.post('/api/approvals/:id/reset-step', (req, res) => {
+    const { stepIndex } = req.body;
+    const approvalId = req.params.id;
+
+    // 1. Kembalikan index dokumen ke langkah yang dipilih dan set status ke Pending
+    db.run(`UPDATE document_approvals SET current_step_index = ?, status = 'Pending' WHERE id = ?`,
+        [stepIndex, approvalId], (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+
+            // 2. Bersihkan status dan catatan pada langkah tersebut dan semua langkah setelahnya
+            db.run(`UPDATE approval_steps SET status = 'Pending', action_date = NULL, note = NULL, attachment_url = NULL, attachment_name = NULL 
+                WHERE approval_id = ? AND step_index >= ?`, [approvalId, stepIndex], (err2) => {
+                if (err2) return res.status(500).json({ error: err2.message });
+                res.json({ success: true });
+            });
+        });
+});
+
+app.put('/api/approvals/:id', (req, res) => {
+    const { title, description, division, attachment_url, attachment_name, steps } = req.body;
+    const approvalId = req.params.id;
+
+    // 1. Ambil data lama untuk cek perubahan lampiran
+    db.get("SELECT attachment_url FROM document_approvals WHERE id = ?", [approvalId], (err, oldRow) => {
+        const attachmentChanged = oldRow && oldRow.attachment_url !== attachment_url;
+        const ocrUpdateSql = attachmentChanged ? ", ocr_content = NULL" : "";
+
+        // 2. Reset status ke Pending dan index ke 0 (Alur kereset ke awal)
+        db.run(`UPDATE document_approvals SET title = ?, description = ?, division = ?, attachment_url = ?, attachment_name = ?, status = 'Pending', current_step_index = 0 ${ocrUpdateSql}
+                WHERE id = ?`,
+            [title, description, division, attachment_url, attachment_name, approvalId],
+            function (err) {
+                if (err) return res.status(500).json({ error: err.message });
+
+                // 3. Hapus langkah lama dan masukkan langkah baru (reset flow steps)
+                db.run("DELETE FROM approval_steps WHERE approval_id = ?", [approvalId], (delErr) => {
+                    if (delErr) return res.status(500).json({ error: delErr.message });
+
+                    const stepPromises = steps.map((step, index) => {
+                        return new Promise((resolve, reject) => {
+                            db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name) VALUES (?, ?, ?, ?)`,
+                                [approvalId, index, step.username, step.name],
+                                (sErr) => sErr ? reject(sErr) : resolve()
+                            );
+                        });
+                    });
+
+                    Promise.all(stepPromises)
+                        .then(() => res.json({ success: true }))
+                        .catch(pErr => res.status(500).json({ error: pErr.message }));
+                });
+            }
+        );
+    });
+});
+
+app.delete('/api/approvals/:id', (req, res) => {
+    db.run("DELETE FROM document_approvals WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// --- APPROVAL FLOWS (MASTER) API ---
+app.get('/api/approval-flows', (req, res) => {
+    db.all("SELECT * FROM approval_flows ORDER BY name ASC", [], (err, rows) => {
+        if (err) {
+            console.error("Database Error (approval-flows):", err.message);
+            return res.status(500).json({ error: "Gagal mengambil data alur. Pastikan tabel approval_flows sudah dibuat." });
+        }
+        const safeRows = rows || [];
+        const result = safeRows.map(r => {
+            try { return { ...r, steps: JSON.parse(r.steps || '[]') }; }
+            catch (e) { return { ...r, steps: [] }; }
+        });
+        res.json(result);
+    });
+});
+
+app.post('/api/approval-flows', (req, res) => {
+    const { name, description, steps } = req.body;
+    db.run("INSERT INTO approval_flows (name, description, steps) VALUES (?, ?, ?)",
+        [name, description, JSON.stringify(steps || [])],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.put('/api/approval-flows/:id', (req, res) => {
+    const { name, description, steps } = req.body;
+    db.run("UPDATE approval_flows SET name = ?, description = ?, steps = ? WHERE id = ?",
+        [name, description, JSON.stringify(steps || []), req.params.id],
+        (err) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true });
+        }
+    );
+});
+
+app.delete('/api/approval-flows/:id', (req, res) => {
+    db.run("DELETE FROM approval_flows WHERE id = ?", [req.params.id], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
 });
 
 // Helper: Save Base64 to File
@@ -81,8 +421,6 @@ app.get('/api/search', (req, res) => {
     const query = (req.query.q || '').toLowerCase();
     if (!query) return res.json([]);
 
-    const results = [];
-
     // 1. Search Documents
     const docPromise = new Promise((resolve) => {
         const sql = `SELECT * FROM documents`;
@@ -96,10 +434,11 @@ app.get('/api/search', (req, res) => {
             }).map(doc => {
                 // Calculate Relevance Score
                 let score = 0;
-                if (doc.title.toLowerCase().includes(query)) score += 0.5;
+                const title = (doc.title || '').toLowerCase();
+                if (title.includes(query)) score += 0.5;
                 if (doc.ocrContent && doc.ocrContent.toLowerCase().includes(query)) score += 0.3;
                 // Exact match bonus
-                if (doc.title.toLowerCase() === query) score += 0.5;
+                if (title === query) score += 0.5;
 
                 return {
                     id: doc.id,
@@ -275,9 +614,116 @@ app.get('/api/search', (req, res) => {
         });
     });
 
-    Promise.all([docPromise, invPromise, extPromise, taxSumPromise]).then(([docs, invs, exts, taxSums]) => {
+    // 5. Search Tax Objects (Database WP)
+    const taxObjPromise = new Promise((resolve) => {
+        const sql = `SELECT * FROM tax_objects`;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+            const matches = rows.filter(item => {
+                const name = (item.name || '').toLowerCase();
+                const idNum = (item.identity_number || '').toLowerCase();
+                const objName = (item.tax_object_name || '').toLowerCase();
+                const objCode = (item.tax_object_code || '').toLowerCase();
+                return name.includes(query) || idNum.includes(query) || objName.includes(query) || objCode.includes(query);
+            }).map(item => ({
+                id: `TAXOBJ-${item.id}`,
+                title: `Wajib Pajak: ${item.name}`,
+                type: 'tax_object',
+                size: `${item.id_type}: ${item.identity_number}`,
+                uploadDate: item.created_at,
+                folderId: 'TAX_OBJECT',
+                folderName: 'Database WP',
+                score: 0.6,
+                matchType: 'tax_object',
+                data: item
+            }));
+            resolve(matches);
+        });
+    });
+
+    // 6. Search Pustaka (Guides & Slides)
+    const pustakaPromise = new Promise((resolve) => {
+        const sql = `
+            SELECT g.*, s.title as slideTitle, s.content as slideContent 
+            FROM pustaka_guides g 
+            LEFT JOIN pustaka_slides s ON g.id = s.guide_id
+        `;
+        db.all(sql, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+            const groups = {};
+            rows.forEach(row => {
+                if (!groups[row.id]) groups[row.id] = { ...row, searchableContent: (row.title + " " + (row.description || "")).toLowerCase() };
+                if (row.slideTitle) groups[row.id].searchableContent += ` ${row.slideTitle.toLowerCase()} ${row.slideContent.toLowerCase()}`;
+            });
+            const matches = Object.values(groups).filter(g => g.searchableContent.includes(query)).map(g => ({
+                id: `PUSTAKA-${g.id}`,
+                title: `Pustaka: ${g.title}`,
+                type: 'pustaka',
+                size: g.category,
+                uploadDate: g.created_at,
+                folderId: 'PUSTAKA',
+                folderName: 'Pustaka Pengetahuan',
+                score: 0.5,
+                matchType: 'pustaka',
+                ocrContent: g.description,
+                data: g
+            }));
+            resolve(matches);
+        });
+    });
+
+    // 7. Search Approvals
+    const approvalPromise = new Promise((resolve) => {
+        db.all(`SELECT * FROM document_approvals`, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+            const matches = rows.filter(a => (a.title || '').toLowerCase().includes(query) || (a.description || '').toLowerCase().includes(query))
+                .map(a => ({
+                    id: `APP-${a.id}`,
+                    title: `Approval: ${a.title}`,
+                    type: 'approval',
+                    size: a.division,
+                    uploadDate: a.created_at,
+                    folderId: 'APPROVAL',
+                    folderName: 'Document Approval',
+                    score: 0.5,
+                    matchType: 'approval',
+                    data: a
+                }));
+            resolve(matches);
+        });
+    });
+
+    // 8. Search Chat History / Notes
+    const notePromise = new Promise((resolve) => {
+        db.all(`
+            SELECT n.*, a.title as auditTitle 
+            FROM tax_audit_notes n 
+            LEFT JOIN tax_audits a ON n.auditId = a.id
+        `, [], (err, rows) => {
+            if (err || !rows) return resolve([]);
+            const matches = rows.filter(n => (n.text || '').toLowerCase().includes(query))
+                .map(n => ({
+                    id: `NOTE-${n.id}`,
+                    title: `Catatan: ${n.user}`,
+                    type: 'note',
+                    size: 'Chat History',
+                    uploadDate: n.timestamp,
+                    folderId: 'NOTE',
+                    folderName: n.auditTitle || 'Diskusi',
+                    score: 0.4,
+                    matchType: 'note',
+                    ocrContent: n.text,
+                    parentId: n.auditId,
+                    parentType: 'audit',
+                    data: n
+                }));
+            resolve(matches);
+        });
+    });
+
+    Promise.all([docPromise, invPromise, extPromise, taxSumPromise, taxObjPromise, pustakaPromise, approvalPromise, notePromise]).then(([docs, invs, exts, taxSums, taxObjs, pustakas, apps, notes]) => {
         // Merge and Sort by Score
-        const allResults = [...docs, ...invs, ...exts, ...taxSums].sort((a, b) => b.score - a.score);
+        const allResults = [...docs, ...invs, ...exts, ...taxSums, ...taxObjs, ...pustakas, ...apps, ...notes].sort((a, b) => b.score - a.score);
         res.json(allResults.slice(0, 50)); // Limit to top 50
     }).catch(err => {
         console.error("Search Error:", err);
@@ -599,42 +1045,98 @@ app.post('/api/ocr/reset', (req, res) => {
 
 // --- INVENTORY ---
 app.get('/api/inventory', (req, res) => {
-    db.all("SELECT * FROM inventory", [], (err, rows) => {
+    db.all("SELECT * FROM inventory ORDER BY id ASC", [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => {
-            // Robust Mapping for redundant columns - Prioritize LONGTEXT box_data
-            const rawBoxData = r.box_data || r.boxData || r.boxdata;
-            const historyStr = r.history || '[]';
-            const rawLastUpdated = r.lastUpdated || r.last_updated || r.lastupdated;
 
-            // FIX: Safe JSON Parse untuk menangani data yang terpotong/corrupt
-            let parsedBoxData = null;
-            if (rawBoxData) {
-                try {
-                    parsedBoxData = typeof rawBoxData === 'string' ? JSON.parse(rawBoxData) : rawBoxData;
-                } catch (e) {
-                    console.warn(`Warning: Corrupt JSON in slot ${r.id} (likely truncated). Data reset to null.`);
-                    parsedBoxData = null;
+        // Map data yang ada berdasarkan ID
+        const rowMap = {};
+        rows.forEach(r => { rowMap[r.id] = r; });
+
+        const fullInventory = [];
+        // Pastikan selalu ada 100 slot (Self-Healing jika ada baris yang hilang di DB)
+        for (let i = 1; i <= 100; i++) {
+            if (rowMap[i]) {
+                const r = rowMap[i];
+                const rawBoxData = r.box_data || r.boxData || r.boxdata;
+                const historyStr = r.history || '[]';
+                const rawLastUpdated = r.lastUpdated || r.last_updated || r.lastupdated;
+
+                let parsedBoxData = null;
+                if (rawBoxData) {
+                    try {
+                        parsedBoxData = typeof rawBoxData === 'string' ? JSON.parse(rawBoxData) : rawBoxData;
+                    } catch (e) { parsedBoxData = null; }
                 }
-            }
 
-            let parsedHistory = [];
-            if (historyStr) {
+                let parsedHistory = [];
                 try {
                     parsedHistory = typeof historyStr === 'string' ? JSON.parse(historyStr) : historyStr;
-                } catch (e) {
-                    parsedHistory = [];
-                }
-            }
+                    if (!Array.isArray(parsedHistory)) parsedHistory = [];
+                } catch (e) { parsedHistory = []; }
 
-            return {
-                ...r,
-                status: (r.status || 'EMPTY').toUpperCase(),
-                lastUpdated: rawLastUpdated,
-                boxData: parsedBoxData,
-                history: parsedHistory
-            };
-        }));
+                fullInventory.push({
+                    ...r,
+                    id: i,
+                    status: (r.status || 'EMPTY').toUpperCase(),
+                    lastUpdated: rawLastUpdated,
+                    boxData: parsedBoxData,
+                    history: parsedHistory
+                });
+            } else {
+                // Jika baris ID i tidak ada di DB (seperti kasus slot 2 hilang), buat data dummy EMPTY
+                fullInventory.push({ id: i, status: 'EMPTY', boxData: null, history: [], lastUpdated: null });
+            }
+        }
+        res.json(fullInventory);
+    });
+});
+
+app.post('/api/inventory/move', (req, res) => {
+    const { sourceId, targetId, user } = req.body;
+
+    db.get("SELECT * FROM inventory WHERE id = ?", [sourceId], (err, source) => {
+        if (err || !source) return res.status(500).json({ error: "Source slot not found" });
+        if (source.status === 'EMPTY') return res.status(400).json({ error: "Source slot is empty" });
+
+        db.get("SELECT * FROM inventory WHERE id = ?", [targetId], (err, target) => {
+            if (err || !target) return res.status(500).json({ error: "Target slot not found" });
+            if (target.status !== 'EMPTY') return res.status(400).json({ error: "Target slot is not empty" });
+
+            const now = new Date().toISOString();
+            let sourceHistory = [];
+            let targetHistory = [];
+            try { sourceHistory = JSON.parse(source.history || '[]'); } catch (e) { }
+            try { targetHistory = JSON.parse(target.history || '[]'); } catch (e) { }
+
+            sourceHistory.push({
+                id: Date.now(),
+                timestamp: now,
+                action: 'MOVED',
+                note: `Pindah ke Slot #${targetId}`,
+                user: user || 'System'
+            });
+
+            targetHistory.push({
+                id: Date.now() + 1,
+                timestamp: now,
+                action: 'MOVED',
+                note: `Pindahan dr Slot #${sourceId}`,
+                user: user || 'System'
+            });
+
+            const boxData = source.box_data || source.boxData;
+
+            db.run("UPDATE inventory SET status = ?, box_data = ?, boxData = NULL, history = ?, lastUpdated = ? WHERE id = ?",
+                [source.status, boxData, JSON.stringify(targetHistory), now, targetId], (err) => {
+                    if (err) return res.status(500).json({ error: err.message });
+
+                    db.run("UPDATE inventory SET status = 'EMPTY', box_data = NULL, boxData = NULL, history = ?, lastUpdated = ? WHERE id = ?",
+                        [JSON.stringify(sourceHistory), now, sourceId], (err2) => {
+                            if (err2) return res.status(500).json({ error: err2.message });
+                            res.json({ success: true });
+                        });
+                });
+        });
     });
 });
 
@@ -832,7 +1334,7 @@ app.delete('/api/folders/:id', (req, res) => {
 app.get('/api/documents', (req, res) => {
     const { auditId, stepIndex, folderId } = req.query;
     // OPTIMIZATION: Exclude fileData (LONGTEXT) from list view for performance
-    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, status";
+    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, status, version, versionsHistory";
     let sql = `SELECT ${columns} FROM documents`;
     let params = [];
     let whereClauses = [];
@@ -1161,41 +1663,6 @@ app.put('/api/documents/:id', (req, res) => {
     }
 });
 
-app.get('/api/search', async (req, res) => {
-    const { q } = req.query;
-    if (!q) return res.json([]);
-
-    console.log("Semantic Search Query:", q);
-
-    // 1. Generate Query Vector
-    const queryVector = await getEmbedding(q);
-    if (!queryVector) return res.status(500).json({ error: "Embedding generation failed" });
-
-    // 2. Fetch all document vectors
-    const sql = `
-        SELECT d.id, d.title, d.type, d.size, d.uploadDate, d.vector, d.folderId, f.name as folderName 
-        FROM documents d
-        LEFT JOIN folders f ON d.folderId = f.id
-    `;
-
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        const results = rows.map(doc => {
-            if (!doc.vector) return { ...doc, score: 0 };
-            try {
-                const docVector = JSON.parse(doc.vector);
-                const score = cosineSimilarity(queryVector, docVector);
-                return { ...doc, score };
-            } catch (e) { return { ...doc, score: 0 }; }
-        })
-            .filter(doc => doc.score > 0.2) // Threshold
-            .sort((a, b) => b.score - a.score)
-            .slice(0, 5); // Top 5
-
-        res.json(results);
-    });
-});
 
 // --- MANAGEMENT OPS (COPY/MOVE) ---
 app.post('/api/documents/copy', (req, res) => {
@@ -1353,10 +1820,21 @@ app.post('/api/documents/:id/restore', (req, res) => {
         const newUrl = versionToRestore.url || doc.url; // Use restored URL or keep current if undefined (legacy)
         const newFileData = versionToRestore.fileData || null;
 
-        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = 'ready' WHERE id = ?",
-            [newFileData, newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), req.params.id],
+        const absoluteFilePath = newUrl && newUrl.startsWith('/uploads/')
+            ? path.join(UPLOADS_DIR, path.basename(newUrl))
+            : null;
+
+        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ?, ocrContent = '' WHERE id = ?",
+            [newFileData, newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), absoluteFilePath ? 'processing' : 'ready', req.params.id],
             async (err) => {
                 if (err) return res.status(500).json({ error: err.message });
+
+                if (absoluteFilePath) {
+                    try {
+                        await addOCRJob(req.params.id, absoluteFilePath, versionToRestore.type || 'application/octet-stream', doc.title);
+                    } catch (qErr) { console.error("Queue Error:", qErr); }
+                }
+
                 await systemLog(null, "Restore Version", `Restore file "${doc.title}" ke versi ${new Date(versionTimestamp).toLocaleString()}`);
                 res.json({ success: true });
             }
@@ -1563,10 +2041,10 @@ app.get('/api/tax-objects/template', (req, res) => {
         ['KTP', '3201234567890001', 'Budi Santoso', 'budi@email.com', '21', '21-100-01', 'Upah Pegawai', 5000000, 5, 250000]
     ];
     const ws = XLSX.utils.aoa_to_sheet(wsData);
-    
+
     // Adjust column widths
     ws['!cols'] = [
-        { wch: 10 }, { wch: 25 }, { wch: 30 }, { wch: 10 }, 
+        { wch: 10 }, { wch: 25 }, { wch: 30 }, { wch: 10 },
         { wch: 15 }, { wch: 30 }, { wch: 15 }, { wch: 10 }, { wch: 15 }
     ];
 
@@ -1631,7 +2109,7 @@ app.post('/api/tax-objects/import', upload.single('file'), (req, res) => {
             let insertedCount = 0;
 
             const runQuery = (sql, params) => new Promise((resolve, reject) => {
-                db.run(sql, params, function(err) {
+                db.run(sql, params, function (err) {
                     if (err) reject(err);
                     else resolve(this);
                 });
@@ -1639,9 +2117,9 @@ app.post('/api/tax-objects/import', upload.single('file'), (req, res) => {
 
             try {
                 for (const item of items) {
-                    const exactMatch = existingRows.find(r => 
-                        r.identity_number === item.identity_number && 
-                        String(r.tax_type) === String(item.tax_type) && 
+                    const exactMatch = existingRows.find(r =>
+                        r.identity_number === item.identity_number &&
+                        String(r.tax_type) === String(item.tax_type) &&
                         String(r.tax_object_code) === String(item.tax_object_code)
                     );
 
@@ -1650,8 +2128,8 @@ app.post('/api/tax-objects/import', upload.single('file'), (req, res) => {
                             [item.name, item.email, item.tax_object_name, item.dpp, item.rate, item.pph, exactMatch.id]);
                         updatedCount++;
                     } else {
-                        const emptyMatch = existingRows.find(r => 
-                            r.identity_number === item.identity_number && 
+                        const emptyMatch = existingRows.find(r =>
+                            r.identity_number === item.identity_number &&
                             (!r.tax_type || r.tax_type === '' || !r.tax_object_code || r.tax_object_code === '')
                         );
                         if (emptyMatch) {
@@ -1735,7 +2213,7 @@ app.post('/api/master-tax-objects/import', upload.single('file'), (req, res) => 
                 const taxType = String(row['Jenis PPh'] || '').trim();
                 const code = String(row['Kode Objek Pajak'] || '').trim();
                 const name = row['Nama Objek Pajak'];
-                
+
                 if (!taxType || !code || !name) return;
 
                 const key = `${taxType}|${code}`;
@@ -1754,7 +2232,7 @@ app.post('/api/master-tax-objects/import', upload.single('file'), (req, res) => 
             let insertedCount = 0;
 
             const runQuery = (sql, params) => new Promise((resolve, reject) => {
-                db.run(sql, params, function(err) {
+                db.run(sql, params, function (err) {
                     if (err) reject(err);
                     else resolve(this);
                 });
@@ -1764,15 +2242,15 @@ app.post('/api/master-tax-objects/import', upload.single('file'), (req, res) => 
                 for (const item of items) {
                     // Cek apakah kombinasi Jenis PPh dan Kode Objek sudah ada di DB
                     const match = existingRows.find(r => String(r.tax_type) === item.tax_type && String(r.code) === item.code);
-                    
+
                     if (match) {
                         // Update data yang sudah ada
-                        await runQuery("UPDATE master_tax_objects SET name=?, rate=?, note=? WHERE id=?", 
+                        await runQuery("UPDATE master_tax_objects SET name=?, rate=?, note=? WHERE id=?",
                             [item.name, item.rate, item.note, match.id]);
                         updatedCount++;
                     } else {
                         // Insert data baru
-                        await runQuery("INSERT INTO master_tax_objects (tax_type, code, name, rate, note) VALUES (?, ?, ?, ?, ?)", 
+                        await runQuery("INSERT INTO master_tax_objects (tax_type, code, name, rate, note) VALUES (?, ?, ?, ?, ?)",
                             [item.tax_type, item.code, item.name, item.rate, item.note]);
                         insertedCount++;
                     }
@@ -1793,6 +2271,112 @@ app.get('/api/master-tax-objects', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
+});
+
+// --- COMMENTS API ---
+app.get('/api/documents/:id/comments', (req, res) => {
+    db.all("SELECT * FROM comments WHERE documentId = ? ORDER BY timestamp ASC", [req.params.id], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/documents/:id/comments', upload.single('attachment'), (req, res) => {
+    const { user, text } = req.body;
+    const documentId = req.params.id;
+    const timestamp = new Date().toISOString();
+    let attachmentUrl = null;
+    let attachmentName = null;
+    let attachmentType = null;
+    let attachmentSize = null;
+
+    if (req.file) {
+        attachmentUrl = `/uploads/${req.file.filename}`;
+        attachmentName = req.file.originalname;
+        attachmentType = req.file.mimetype;
+        attachmentSize = (req.file.size / 1024).toFixed(2) + ' KB';
+    }
+
+    db.run("INSERT INTO comments (documentId, user, text, timestamp, attachmentUrl, attachmentName, attachmentType, attachmentSize) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        [documentId, user, text, timestamp, attachmentUrl, attachmentName, attachmentType, attachmentSize],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
+});
+
+app.post('/api/documents/:id/promote-comment-attachment', (req, res) => {
+    const { commentId } = req.body;
+    const docId = req.params.id;
+
+    db.get("SELECT * FROM comments WHERE id = ?", [commentId], (err, comment) => {
+        if (err || !comment || !comment.attachmentUrl) return res.status(404).json({ error: "Attachment not found" });
+
+        db.get("SELECT * FROM documents WHERE id = ?", [docId], (err, doc) => {
+            if (err || !doc) return res.status(404).json({ error: "Document not found" });
+
+            let versionsHistory = [];
+            try { versionsHistory = JSON.parse(doc.versionsHistory || '[]'); } catch (e) { }
+
+            versionsHistory.push({
+                timestamp: doc.uploadDate || new Date().toISOString(),
+                size: doc.size,
+                type: doc.type,
+                fileData: doc.fileData,
+                url: doc.url,
+                title: doc.title,
+                user: doc.owner || 'System'
+            });
+
+            const absoluteFilePath = path.join(UPLOADS_DIR, path.basename(comment.attachmentUrl));
+
+            db.run("UPDATE documents SET url = ?, type = ?, size = ?, title = ?, uploadDate = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = 'processing', fileData = NULL, ocrContent = '' WHERE id = ?",
+                [comment.attachmentUrl, comment.attachmentType, comment.attachmentSize, comment.attachmentName, new Date().toISOString(), JSON.stringify(versionsHistory), docId],
+                async (updateErr) => {
+                    if (updateErr) return res.status(500).json({ error: updateErr.message });
+                    try {
+                        await addOCRJob(docId, absoluteFilePath, comment.attachmentType, comment.attachmentName);
+                    } catch (qErr) { console.error("Queue Error:", qErr); }
+                    res.json({ success: true });
+                }
+            );
+        });
+    });
+});
+
+// --- TAX AUDIT NOTES API ---
+app.get('/api/tax-audits/:auditId/steps/:stepIndex/notes', (req, res) => {
+    const { auditId, stepIndex } = req.params;
+    db.all("SELECT * FROM tax_audit_notes WHERE auditId = ? AND stepIndex = ? ORDER BY timestamp ASC", [auditId, stepIndex], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/tax-audits/:auditId/steps/:stepIndex/notes', upload.single('attachment'), (req, res) => {
+    const { auditId, stepIndex } = req.params;
+    const { user, text } = req.body;
+    const timestamp = new Date().toISOString();
+    let attachmentUrl = null;
+    let attachmentName = null;
+    let attachmentType = null;
+    let attachmentSize = null;
+
+    if (req.file) {
+        attachmentUrl = `/uploads/${req.file.filename}`;
+        attachmentName = req.file.originalname;
+        attachmentType = req.file.mimetype;
+        attachmentSize = (req.file.size / 1024).toFixed(2) + ' KB';
+    }
+
+    db.run("INSERT INTO tax_audit_notes (auditId, stepIndex, user, text, timestamp, attachmentUrl, attachmentName, attachmentType, attachmentSize) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        [auditId, stepIndex, user, text, timestamp, attachmentUrl, attachmentName, attachmentType, attachmentSize],
+        function (err) {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, id: this.lastID });
+        }
+    );
 });
 
 app.listen(PORT, '0.0.0.0', () => {

@@ -145,6 +145,29 @@ export default function TaxCalculator({
             return bestMid;
         };
 
+        // Breakdown logic for formula components (addends)
+        let breakdown = [];
+        if (isCalcMode && dpp.toString().includes('+')) {
+            const raw = dpp.toString().replace(/\./g, '');
+            if (/^[0-9+\s]+$/.test(raw)) {
+                const parts = raw.split('+').map(p => p.trim()).filter(p => p !== '');
+                parts.forEach(part => {
+                    const val = parseFloat(part);
+                    if (!isNaN(val) && val > 0) {
+                        const partPph = isPph21BukanPegawai ? calculateProgressivePph(0.5 * val) : Math.ceil(val * pphRateFactor);
+                        const partPpn = usePpn ? Math.ceil((11 / 12) * val * 0.12) : 0;
+                        breakdown.push({ label: part, value: val, pph: partPph, ppn: partPpn });
+                    }
+                });
+            }
+        }
+
+        const totalBreakdown = breakdown.reduce((acc, item) => ({
+            value: acc.value + item.value,
+            pph: acc.pph + item.pph,
+            ppn: acc.ppn + item.ppn
+        }), { value: 0, pph: 0, ppn: 0 });
+
         const effectiveUsePpn = usePpn || markupMode === 'ppn';
         const effectivePpnMultiplier = 1 + (11 / 12 * 0.12); // ~1.11 effective (mathematical consistency)
 
@@ -202,7 +225,9 @@ export default function TaxCalculator({
                 markupMode: markupMode,
                 isPph21BukanPegawai,
                 usePpn,
-                calculationDpp: calculationDpp
+                calculationDpp: calculationDpp,
+                breakdown: breakdown,
+                totalBreakdown: totalBreakdown
             });
         }
     }, [dpp, rate, discount, markupMode, isPph21BukanPegawai, usePpn, isCalcMode, onCalculate]);

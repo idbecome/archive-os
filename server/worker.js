@@ -340,6 +340,20 @@ async function processOCRJob(job) {
                 });
             });
 
+        } else if (context && context.type === 'approval') {
+            const approvalId = context.approvalId;
+            await new Promise((resolve, reject) => {
+                db.run("UPDATE document_approvals SET ocr_content = ? WHERE id = ?",
+                    [extractedText, approvalId],
+                    (err) => {
+                        if (err) reject(new Error(`[Worker] Failed to update approval ${approvalId} with OCR: ${err.message}`));
+                        else {
+                            console.log(`[Worker] Approval OCR Completed: ${approvalId}`);
+                            resolve();
+                        }
+                    }
+                );
+            });
         } else {
             // Standard Document Update
             const currentDoc = await db.getDocumentById(docId);

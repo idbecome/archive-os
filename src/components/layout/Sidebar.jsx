@@ -12,7 +12,12 @@ import {
     Sun,
     Moon,
     LogOut,
-    Calculator
+    Calculator,
+    ScanLine,
+    CheckCircle2,
+    X,
+    FileCheck,
+    BookOpen
 } from 'lucide-react';
 
 const Sidebar = ({
@@ -24,7 +29,8 @@ const Sidebar = ({
     currentUser,
     isDarkMode,
     setIsDarkMode,
-    handleLogout
+    handleLogout,
+    ocrStats
 }) => {
     return (
         <aside
@@ -42,12 +48,24 @@ const Sidebar = ({
                 <div className={`flex items-center gap-3 transition-all duration-300 ${isSidebarCollapsed ? 'scale-90' : ''}`}>
                     <div className="relative group cursor-pointer" onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}>
                         <div className="absolute inset-0 bg-indigo-500 blur-2xl opacity-30 rounded-full group-hover:opacity-50 transition-opacity duration-300 animate-pulse-slow"></div>
-                        <img src="/vite.svg" alt="Logo" className="w-10 h-10 relative z-10 drop-shadow-lg transform group-hover:rotate-12 transition-transform duration-300" />
+                        <div className="w-10 h-10 relative z-10 flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg transform group-hover:rotate-12 transition-transform duration-300">
+                            <BookOpen className="text-white" size={24} />
+                        </div>
+                        
+                        {/* Collapsed OCR Badge */}
+                        {isSidebarCollapsed && (ocrStats?.counts?.active > 0 || ocrStats?.counts?.waiting > 0) && (
+                            <div 
+                                title={`Antrian OCR: ${ocrStats?.counts?.active || 0} Aktif, ${ocrStats?.counts?.waiting || 0} Menunggu`}
+                                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-blue-600 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white dark:border-[#111C44] z-20 animate-bounce shadow-lg shadow-blue-500/40"
+                            >
+                                {(ocrStats?.counts?.active || 0) + (ocrStats?.counts?.waiting || 0)}
+                            </div>
+                        )}
                     </div>
                     {!isSidebarCollapsed && (
                         <div className="animate-in fade-in slide-in-from-left-4 duration-500">
                             <h1 className="text-2xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-[#2B3674] to-[#A3AED0] dark:from-white dark:to-slate-400 font-display">
-                                TaxArchi<span className="text-indigo-500">System</span>
+                                Pus<span className="text-indigo-500">Taka</span>
                             </h1>
                         </div>
                     )}
@@ -66,13 +84,15 @@ const Sidebar = ({
                         category: 'GENERAL',
                         items: [
                             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+                            { id: 'pustaka', icon: BookOpen, label: 'Pustaka' },
                         ]
                     },
                     {
-                        category: 'WAREHOUSE & ASSETS',
+                        category: 'Document',
                         items: [
-                            { id: 'inventory', icon: Grid3X3, label: 'Inventory' },
+                            { id: 'inventory', icon: Grid3X3, label: 'Filling' },
                             { id: 'documents', icon: FileStack, label: 'Documents' },
+                            { id: 'approvals', icon: FileCheck, label: 'Approvals' },
                         ]
                     },
                     {
@@ -150,6 +170,91 @@ const Sidebar = ({
                         </div>
                     </div>
                 ))}
+
+                {/* OCR STATUS WIDGET - CROSS-MENU MONITORING */}
+                {!isSidebarCollapsed && (
+                    <div className="mt-8 px-2">
+                        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-4 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden transition-all duration-500 border border-white/10">
+                            <div className="absolute top-0 right-0 p-2 opacity-10">
+                                <ScanLine size={60} />
+                            </div>
+
+                            <div className="relative z-10">
+                                {((ocrStats?.counts?.active || 0) === 0 && (ocrStats?.counts?.waiting || 0) === 0) ? (
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm shrink-0">
+                                            <CheckCircle2 size={16} className="text-white" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-xs font-bold">OCR Siap</h3>
+                                            <p className="text-blue-100 text-[10px]">Antrian kosong</p>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <div className="flex justify-between items-start mb-4">
+                                            <h3 className="text-xs font-bold flex items-center gap-2">
+                                                <div className="w-2 h-2 bg-white rounded-full animate-ping"></div>
+                                                Proses OCR...
+                                            </h3>
+                                            <button 
+                                                onClick={async (e) => {
+                                                    e.stopPropagation();
+                                                    if(window.confirm("Yakin ingin mereset antrian yang macet?")) {
+                                                        try {
+                                                            await fetch(`http://${window.location.hostname}:5000/api/ocr/reset`, { method: 'POST' });
+                                                            window.location.reload();
+                                                        } catch(err) {
+                                                            alert("Gagal reset: " + err.message);
+                                                        }
+                                                    }
+                                                }}
+                                                className="text-[8px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded-md border border-white/20 transition-colors font-bold text-white uppercase"
+                                            >
+                                                Reset
+                                            </button>
+                                        </div>
+
+                                        {(ocrStats?.activeJobs || []).length > 0 && (
+                                            <div className="mb-4 bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/10">
+                                                <div className="flex justify-between items-end mb-1.5">
+                                                    <div className="min-w-0">
+                                                        <p className="text-[8px] text-blue-100 font-black uppercase tracking-wider mb-0.5">Aktif</p>
+                                                        <p className="text-[10px] font-bold truncate">{ocrStats.activeJobs[0].filename}</p>
+                                                    </div>
+                                                    <div className="text-right shrink-0">
+                                                        <p className="text-sm font-black">{ocrStats.activeJobs[0].progress || 0}%</p>
+                                                    </div>
+                                                </div>
+                                                <div className="w-full bg-black/20 rounded-full h-1.5 overflow-hidden">
+                                                    <div
+                                                        className="bg-white h-full rounded-full transition-all duration-500 ease-out"
+                                                        style={{ width: `${ocrStats.activeJobs[0].progress || 0}%` }}
+                                                    ></div>
+                                                </div>
+                                            </div>
+                                        )}
+
+                                        <div className="grid grid-cols-3 gap-2">
+                                            <div className="bg-white/10 backdrop-blur-md rounded-lg p-2 border border-white/10 text-center">
+                                                <p className="text-[8px] text-blue-100 uppercase font-black mb-0.5">Antri</p>
+                                                <p className="text-xs font-bold">{ocrStats?.counts?.waiting || 0}</p>
+                                            </div>
+                                            <div className="bg-white/10 backdrop-blur-md rounded-lg p-2 border border-white/10 text-center">
+                                                <p className="text-[8px] text-blue-100 uppercase font-black mb-0.5">OK</p>
+                                                <p className="text-xs font-bold">{ocrStats?.counts?.completed || 0}</p>
+                                            </div>
+                                            <div className="bg-white/10 backdrop-blur-md rounded-lg p-2 border border-white/10 text-center">
+                                                <p className="text-[8px] text-blue-100 uppercase font-black mb-0.5">Fail</p>
+                                                <p className="text-xs font-bold">{ocrStats?.counts?.failed || 0}</p>
+                                            </div>
+                                        </div>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
             </nav>
 
             {/* User Profile Footer */}

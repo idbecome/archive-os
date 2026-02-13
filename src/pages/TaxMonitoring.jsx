@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp, FileDigit, Image as ImageIcon, Edit3, Eye } from 'lucide-react';
 import { db as api } from '../services/database';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
@@ -18,11 +18,17 @@ const AUDIT_STEPS = [
     { id: 7, title: 'LHP & SKP', description: 'Laporan Hasil Pemeriksaan dan Penerbitan Surat Ketetapan Pajak.' }
 ];
 
-export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, onRefresh }) {
+export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, onRefresh, syncAuditFolder }) {
     const [selectedAudit, setSelectedAudit] = useState(null);
     const [activeStep, setActiveStep] = useState(1);
     const [auditFiles, setAuditFiles] = useState([]);
     const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+
+    // Notes with Attachments State
+    const [stepNotes, setStepNotes] = useState([]);
+    const [newNoteText, setNewNoteText] = useState('');
+    const [noteAttachment, setNoteAttachment] = useState(null);
+    const [isPostingNote, setIsPostingNote] = useState(false);
 
     // File Detail State
     const [selectedFileDetail, setSelectedFileDetail] = useState(null);
@@ -60,6 +66,14 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const [searchQuery, setSearchQuery] = useState('');
     const [generalAttachments, setGeneralAttachments] = useState({});
 
+    // Auto-scroll chat history - Moved here to avoid ReferenceError
+    const chatEndRef = useRef(null);
+    useEffect(() => {
+        if (selectedAudit && Array.isArray(stepNotes) && stepNotes.length > 0) {
+            setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: "smooth" }), 100);
+        }
+    }, [stepNotes, selectedAudit]);
+
     // --- EFFECT: LOAD GENERAL ATTACHMENTS ---
     useEffect(() => {
         const loadGeneralAttachments = async () => {
@@ -80,12 +94,13 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     useEffect(() => {
         if (selectedAudit && activeStep) {
             loadFiles(selectedAudit);
+            loadStepNotes();
         }
     }, [activeStep, selectedAudit]);
 
     // POLL STATUS for processing files
     useEffect(() => {
-        const hasProcessing = auditFiles.some(f => f.status === 'processing' || (f.ocrContent === '' && !f.type.includes('image') && !f.type.includes('pdf')));
+        const hasProcessing = Array.isArray(auditFiles) && auditFiles.some(f => f.status === 'processing' || (f.ocrContent === '' && !f.type?.includes('image') && !f.type?.includes('pdf')));
         // Note: Simple check. Better to rely on explicit 'status' field from DB.
 
         // We'll trust availability of 'status' field from backend now.
@@ -103,13 +118,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const loadFiles = async (audit) => {
         setIsLoadingFiles(true);
         try {
-            let folderId = null;
-            try {
-                const folders = await api.getFolders();
-                const folderName = `Pemeriksaan - ${audit.title}`;
-                const target = folders.find(f => f.name.toLowerCase() === folderName.toLowerCase());
-                if (target) folderId = target.id;
-            } catch (e) { console.error("Folder lookup error", e); }
+            const folderId = await syncAuditFolder(audit.title, 'ACTIVE');
 
             const params = { stepIndex: activeStep, auditId: audit.id };
             if (folderId) params.folderId = folderId;
@@ -126,6 +135,55 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             setAuditFiles([]);
         } finally {
             setIsLoadingFiles(false);
+        }
+    };
+
+    const loadStepNotes = async () => {
+        if (!selectedAudit) return;
+        const notes = await api.getAuditNotes(selectedAudit.id, activeStep);
+        setStepNotes(notes);
+    };
+
+    const handlePostNote = async () => {
+        if (!newNoteText.trim() && !noteAttachment) return;
+        setIsPostingNote(true);
+        
+        const formData = new FormData();
+        formData.append('user', currentUser?.name || 'Anonymous');
+        formData.append('text', newNoteText);
+        if (noteAttachment) formData.append('attachment', noteAttachment);
+
+        const res = await api.addAuditNote(selectedAudit.id, activeStep, formData);
+        if (res.success) {
+            setNewNoteText('');
+            setNoteAttachment(null);
+            loadStepNotes();
+        } else {
+            alert("Gagal mengirim catatan.");
+        }
+        setIsPostingNote(false);
+    };
+
+    const calculateStepProgress = () => {
+        if (!selectedAudit || !selectedAudit.steps[activeStep - 1]) return 0;
+        const notes = selectedAudit.steps[activeStep - 1].notes || [];
+        if (notes.length === 0) return 0;
+        const done = notes.filter(n => n.isChecked).length;
+        return Math.round((done / notes.length) * 100);
+    };
+
+    const handleViewFileDetail = async (file) => {
+        setSelectedFileDetail(file);
+        // Jangan panggil API jika ini adalah lampiran catatan (ID diawali 'note-')
+        if (file.id && String(file.id).startsWith('note-')) return;
+
+        try {
+            const fullDoc = await api.getDocumentById(file.id);
+            if (fullDoc) {
+                setSelectedFileDetail(fullDoc);
+            }
+        } catch (error) {
+            console.error("Failed to fetch full document details:", error);
         }
     };
 
@@ -151,6 +209,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         }
     };
 
+    const getFullUrl = (url) => {
+        if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
+        const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
+        return isDev ? `http://${window.location.hostname}:5000${url}` : url;
+    };
+
     const handleSecureDownload = async (file) => {
         try {
             const link = document.createElement('a');
@@ -173,8 +237,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 }
             }
 
-            if (base64Content && typeof base64Content === 'string' && base64Content.length > 50) {
-                try {
+            if (typeof base64Content === 'string' && base64Content.length > 50) {
+                if (base64Content.includes('base64,') || !base64Content.startsWith('/')) {
+                    try {
                     let mime = file.type || 'application/pdf';
 
                     // Deteksi dan bersihkan prefix Data URI
@@ -204,11 +269,12 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 } catch (err) {
                     console.error("Gagal decode file tax monitoring", err);
                 }
+                }
             }
 
             // 2. Coba URL
             if (!downloadUrl && file.url) {
-                downloadUrl = file.url;
+                downloadUrl = getFullUrl(file.url);
                 link.target = '_blank';
             }
 
@@ -291,7 +357,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 currentAuditId = auditId;
 
                 if (newAuditFile) {
-                    const folderId = await getOrCreateAuditFolder(newAuditTitle);
+                    const folderId = await syncAuditFolder(newAuditTitle, 'ACTIVE');
 
                     let ocrText = ''; // OCR will be handled by background worker
 
@@ -339,6 +405,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         e.stopPropagation();
         if (!confirm("Hapus pemeriksaan ini beserta seluruh datanya?")) return;
         try {
+            const audit = taxAudits.find(a => a.id === id);
+            if (audit) {
+                await syncAuditFolder(audit.title, 'REMOVED');
+            }
             await api.deleteTaxAudit(id);
             if (onRefresh) onRefresh();
         } catch (e) {
@@ -436,20 +506,11 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const handleConfirmUpload = async () => {
         if (!selectedAudit || !uploadForm.fileData) return;
 
-        setUploadForm(prev => ({ ...prev, isProcessing: true, processingMessage: 'Mengunggah & Mengantrikan OCR...' }));
+        // TUTUP MODAL SEGERA: Agar user bisa lanjut memantau audit lainnya
+        setUploadModalOpen(false);
 
         try {
-            const folderId = await getOrCreateAuditFolder(selectedAudit.title);
-
-            // Perform OCR Client-Side for immediate availability
-            let ocrText = '';
-            try {
-                if (uploadForm.file) {
-                    ocrText = await performAdvancedOCR(uploadForm.file, (msg) => setUploadForm(prev => ({ ...prev, processingMessage: msg })));
-                }
-            } catch (ocrErr) {
-                console.warn("Client-side OCR failed, continuing upload...", ocrErr);
-            }
+            const folderId = await syncAuditFolder(selectedAudit.title, 'ACTIVE');
 
             // Backend will handle OCR via Queue
             const newDoc = {
@@ -466,20 +527,16 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 folderId: folderId,
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team',
-                ocrContent: ocrText // Sent to server immediately
+                ocrContent: '' // Biarkan server memproses OCR di antrean latar belakang
             };
 
             await api.createDocument(newDoc);
 
             loadFiles(selectedAudit); // Reload list (will show 'processing')
             if (onRefresh) onRefresh();
-            setUploadModalOpen(false); // Close Modal
-
         } catch (err) {
-            console.error("Failed to upload file:", err);
-            alert('Gagal mengunggah file: ' + err.message);
-        } finally {
-            setUploadForm(prev => ({ ...prev, isProcessing: false }));
+            console.error("Background upload failed:", err);
+            alert('Gagal mengunggah dokumen di latar belakang: ' + err.message);
         }
     };
 
@@ -639,7 +696,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                 onChange={e => setSearchQuery(e.target.value)}
                             />
                         </div>
-                        <SummaryCard title="Total Pemeriksaan" value={taxAudits.length} icon={ClipboardCheck} colorClass="bg-indigo-100 text-indigo-600" />
+                        <SummaryCard title="Total Pemeriksaan" value={taxAudits?.length || 0} icon={ClipboardCheck} colorClass="bg-indigo-100 text-indigo-600" />
                         <Card>
                             <div className="flex justify-between items-center mb-6">
                                 <h3 className="font-bold text-lg dark:text-white">Daftar Pemeriksaan</h3>
@@ -712,7 +769,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                                 className="p-1.5 hover:bg-indigo-50 text-indigo-600 rounded-lg transition-colors"
                                                                 title="Detail"
                                                             >
-                                                                <FileText size={16} />
+                                                                <Eye size={16} />
                                                             </button>
                                                             <button
                                                                 onClick={(e) => {
@@ -916,75 +973,176 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         )}
                                     </div>
                                 </div>
-                                {/* Checklists & Inputs ... same as before */}
-                                <div className="space-y-3 mb-6">
-                                    {(selectedAudit.steps && selectedAudit.steps[activeStep - 1]?.notes || []).map((note) => (
-                                        <div key={note.id} className="flex items-start gap-3 p-3 rounded-lg border border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-slate-800/50 group">
-                                            <button onClick={() => handleToggleCheck(note.id)} className={`mt-0.5 ${note.isChecked ? 'text-green-500' : 'text-gray-300 hover:text-gray-400'}`}>
-                                                {note.isChecked ? <CheckSquare size={20} /> : <Square size={20} />}
+                                
+                                {/* MODERN CHECKLIST SECTION (REQUEST TRACKER) */}
+                                <div className="mb-10">
+                                    <div className="flex justify-between items-center mb-4 px-1">
+                                        <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
+                                            <ClipboardCheck size={12} className="text-indigo-500" /> Daftar Permintaan Data & PIC
+                                        </h4>
+                                        <div className="flex items-center gap-3">
+                                            <div className="h-1.5 w-24 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden shadow-inner">
+                                                <div 
+                                                    className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ease-out" 
+                                                    style={{ width: `${calculateStepProgress()}%` }}
+                                                />
+                                            </div>
+                                            <span className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-0.5 rounded-lg border border-emerald-100 dark:border-emerald-800">{calculateStepProgress()}%</span>
+                                        </div>
+                                    </div>
+
+                                    <div className="grid grid-cols-1 gap-3 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
+                                        {(selectedAudit.steps[activeStep - 1]?.notes || []).length === 0 && (
+                                            <div className="text-center py-8 bg-slate-50/50 dark:bg-slate-900/50 rounded-3xl border-2 border-dashed border-slate-100 dark:border-slate-800">
+                                                <p className="text-xs text-slate-400 font-medium">Belum ada daftar permintaan data.</p>
+                                            </div>
+                                        )}
+                                        {(selectedAudit.steps[activeStep - 1]?.notes || []).map((note) => (
+                                            <div key={note.id} className={`group flex items-center gap-4 p-4 rounded-3xl border transition-all duration-300 ${note.isChecked ? 'bg-emerald-50/30 border-emerald-100 dark:bg-emerald-900/10 dark:border-emerald-800/50' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 shadow-sm hover:shadow-md'}`}>
+                                                <button 
+                                                    onClick={() => handleToggleCheck(note.id)}
+                                                    className={`shrink-0 w-7 h-7 rounded-xl border-2 flex items-center justify-center transition-all ${note.isChecked ? 'bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'border-slate-200 dark:border-slate-700 hover:border-indigo-500 bg-white dark:bg-slate-800'}`}
+                                                >
+                                                    {note.isChecked && <CheckSquare size={16} />}
+                                                </button>
+                                                
+                                                <div className="flex-1 min-w-0">
+                                                    <p className={`text-sm font-bold transition-all ${note.isChecked ? 'text-slate-400 line-through opacity-60' : 'text-slate-700 dark:text-slate-200'}`}>
+                                                        {note.text}
+                                                    </p>
+                                                </div>
+
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-inner">
+                                                        <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-[8px] font-black text-white shadow-sm">
+                                                            {note.pic?.substring(0, 2).toUpperCase() || '??'}
+                                                        </div>
+                                                        <span className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-tight">{note.pic || 'N/A'}</span>
+                                                    </div>
+                                                    
+                                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                                                        <button onClick={() => { setEditingNoteId(note.id); setEditingNoteText(note.text); setEditingNotePic(note.pic); }} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl transition-all"><Edit3 size={14} /></button>
+                                                        <button onClick={() => handleDeleteNote(note.id)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-all"><Trash2 size={14} /></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    
+                                    {/* Add Item Input - Startup Style */}
+                                    {hasPermission('tax-monitoring', 'edit') && (
+                                        <div className="mt-4 flex gap-3 p-2 bg-slate-50 dark:bg-slate-950 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-inner group/input focus-within:border-indigo-300 transition-all">
+                                            <input 
+                                                id={`note-input-${activeStep}`}
+                                                className="flex-1 bg-transparent border-0 focus:ring-0 text-sm font-bold px-4 dark:text-white placeholder:text-slate-300"
+                                                placeholder="Tambah permintaan data baru..."
+                                                onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; pic.value = ''; } }}
+                                            />
+                                            <div className="h-8 w-px bg-slate-200 dark:bg-slate-800 my-auto"></div>
+                                            <input 
+                                                id={`pic-input-${activeStep}`}
+                                                className="w-24 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 text-[10px] font-black uppercase focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                                                placeholder="PIC"
+                                            />
+                                            <button 
+                                                onClick={() => {
+                                                    const val = document.getElementById(`note-input-${activeStep}`);
+                                                    const pic = document.getElementById(`pic-input-${activeStep}`);
+                                                    handleAddNote(val.value, pic.value);
+                                                    val.value = '';
+                                                    pic.value = '';
+                                                }}
+                                                className="p-3 bg-indigo-600 text-white rounded-[1.5rem] shadow-lg shadow-indigo-500/30 hover:bg-indigo-500 hover:scale-105 active:scale-95 transition-all"
+                                            >
+                                                <Plus size={20} />
                                             </button>
-                                            <div className="flex-1">
-                                                {editingNoteId === note.id ? (
-                                                    <div className="space-y-2">
-                                                        <input
-                                                            className="w-full p-2 text-sm bg-white dark:bg-slate-900 border border-indigo-300 dark:border-indigo-800 rounded-lg focus:ring-1 focus:ring-indigo-500 outline-none dark:text-white"
-                                                            value={editingNoteText}
-                                                            onChange={e => setEditingNoteText(e.target.value)}
-                                                            autoFocus
-                                                        />
-                                                        <div className="flex items-center gap-2">
-                                                            <input
-                                                                className="w-24 p-2 text-xs bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-800 rounded-lg dark:text-white"
-                                                                value={editingNotePic}
-                                                                onChange={e => setEditingNotePic(e.target.value)}
-                                                                placeholder="PIC"
-                                                            />
-                                                            <button onClick={() => handleUpdateNote(note.id)} className="p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors">
-                                                                <Save size={14} />
-                                                            </button>
-                                                            <button onClick={() => setEditingNoteId(null)} className="p-1.5 bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300 rounded-lg hover:bg-gray-300 transition-colors">
-                                                                <X size={14} />
-                                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* DISCUSSION HUB (CHAT NOTES) */}
+                                <div className="border-t border-slate-100 dark:border-slate-800 pt-8">
+                                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2 px-1">
+                                        <MoreVertical size={12} className="text-indigo-500" /> Koordinasi & Catatan Pending
+                                    </h4>
+                                    
+                                    <div className="flex-1 min-h-0 max-h-[400px] overflow-y-auto custom-scrollbar mb-8 px-1">
+                                        <div className="space-y-4 flex flex-col">
+                                            {stepNotes.length === 0 && (
+                                                <div className="text-center py-10 text-slate-300 italic text-[10px] uppercase tracking-widest">
+                                                    Belum ada diskusi di tahap ini.
+                                                </div>
+                                            )}
+                                            {Array.isArray(stepNotes) && stepNotes.map(note => {
+                                                const isMe = note.user === currentUser?.name || note.user === currentUser?.username;
+                                                const timestamp = note.timestamp ? new Date(note.timestamp) : null;
+                                                const isValidDate = timestamp && !isNaN(timestamp.getTime());
+
+                                                return (
+                                                    <div key={note.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} w-full animate-in slide-in-from-bottom-2`}>
+                                                        <div className={`max-w-[85%] p-4 rounded-[2rem] shadow-sm ${isMe ? 'bg-indigo-600 text-white rounded-tr-none shadow-indigo-500/10' : 'bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-tl-none shadow-slate-200/50'}`}>
+                                                            <div className="flex justify-between items-center gap-4 text-[9px] mb-1.5 opacity-80 font-black uppercase tracking-wider">
+                                                                {!isMe && <span className="text-indigo-600 dark:text-indigo-400">{note.user}</span>}
+                                                                <span className={isMe ? 'text-indigo-100 ml-auto' : 'text-slate-400'}>
+                                                                    {isValidDate ? timestamp.toLocaleString([], { hour: '2-digit', minute: '2-digit', day: 'numeric', month: 'short' }) : '-'}
+                                                                </span>
+                                                            </div>
+                                                            <p className="text-xs leading-relaxed break-words font-medium">{note.text}</p>
+                                                            {note.attachmentUrl && (
+                                                                <div className={`mt-3 flex items-center justify-between p-2.5 rounded-2xl border border-dashed ${isMe ? 'bg-white/10 border-white/20' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
+                                                                    <div className="flex items-center gap-2 overflow-hidden">
+                                                                        <Paperclip size={12} className={isMe ? 'text-indigo-200' : 'text-indigo-500'} />
+                                                                        <span className="text-[9px] font-bold truncate max-w-[120px]">{note.attachmentName}</span>
+                                                                    </div>
+                                                                    <button 
+                                                                        onClick={() => handleViewFileDetail({ id: `note-${note.id}`, title: note.attachmentName, type: note.attachmentType, url: note.attachmentUrl, fileData: null })}
+                                                                        className={`text-[9px] font-black uppercase hover:underline ml-3 ${isMe ? 'text-white' : 'text-indigo-600'}`}
+                                                                    >
+                                                                        Preview
+                                                                    </button>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     </div>
-                                                ) : (
-                                                    <>
-                                                        <p className={`text-sm ${note.isChecked ? 'line-through text-gray-400' : 'text-gray-800 dark:text-gray-200'}`}>{note.text}</p>
-                                                        <div className="flex items-center gap-2 mt-1.5">
-                                                            <span className="text-[10px] px-1.5 py-0.5 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 rounded flex items-center gap-1"><User size={10} /> {note.pic}</span>
-                                                        </div>
-                                                    </>
-                                                )}
-                                            </div>
-                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                {editingNoteId !== note.id && hasPermission('tax-monitoring', 'edit') && (
-                                                    <button
-                                                        onClick={() => {
-                                                            setEditingNoteId(note.id);
-                                                            setEditingNoteText(note.text);
-                                                            setEditingNotePic(note.pic);
-                                                        }}
-                                                        className="p-1 text-gray-400 hover:text-indigo-600 transition-colors"
-                                                    >
-                                                        <Edit size={14} />
-                                                    </button>
-                                                )}
-                                                {hasPermission('tax-monitoring', 'delete') && (
-                                                    <button onClick={() => handleDeleteNote(note.id)} className="p-1 text-gray-400 hover:text-red-500 transition-colors">
-                                                        <Trash2 size={16} />
-                                                    </button>
-                                                )}
+                                                );
+                                            })}
+                                            <div ref={chatEndRef} />
+                                        </div>
+                                    </div>
+
+                                    {hasPermission('tax-monitoring', 'edit') && (
+                                        <div className="space-y-3 bg-white dark:bg-slate-900 p-4 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-indigo-500/5">
+                                            <textarea 
+                                                value={newNoteText} onChange={e => setNewNoteText(e.target.value)}
+                                                className="w-full p-4 text-sm bg-slate-50 dark:bg-slate-950 border-0 rounded-3xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white resize-none shadow-inner"
+                                                placeholder="Tulis koordinasi atau alasan pending..."
+                                                rows="2"
+                                            />
+                                            <div className="flex justify-between items-center px-2">
+                                                <label className="flex items-center gap-2 cursor-pointer group">
+                                                    <div className={`p-2.5 rounded-2xl transition-all ${noteAttachment ? 'bg-emerald-100 text-emerald-600 shadow-lg shadow-emerald-500/20' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 group-hover:bg-indigo-50 group-hover:text-indigo-500'}`}>
+                                                        <Paperclip size={18} />
+                                                    </div>
+                                                    <div className="flex flex-col">
+                                                        <span className="text-[10px] font-black text-slate-500 uppercase tracking-tight">{noteAttachment ? 'File Terpilih' : 'Lampiran'}</span>
+                                                        <span className="text-[9px] font-bold text-indigo-500 truncate max-w-[120px]">{noteAttachment ? noteAttachment.name : 'PDF/Gambar'}</span>
+                                                    </div>
+                                                    <input type="file" className="hidden" onChange={e => setNoteAttachment(e.target.files[0])} />
+                                                </label>
+                                                <button 
+                                                    onClick={handlePostNote} 
+                                                    disabled={isPostingNote || (!newNoteText.trim() && !noteAttachment)}
+                                                    className="px-8 py-3 bg-indigo-600 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-500 hover:-translate-y-0.5 active:scale-95 disabled:opacity-50 disabled:translate-y-0 transition-all flex items-center gap-2"
+                                                >
+                                                    {isPostingNote ? (
+                                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                                    ) : <CloudUpload size={16} />}
+                                                    Kirim
+                                                </button>
                                             </div>
                                         </div>
-                                    ))}
+                                    )}
                                 </div>
-                                {hasPermission('tax-monitoring', 'edit') && (
-                                    <div className="flex gap-2 items-start pt-4 border-t border-gray-100 dark:border-slate-800">
-                                        <input id={`note-input-${activeStep}`} className="flex-1 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="Tambah item pekerjaan..." onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; } }} />
-                                        <input id={`pic-input-${activeStep}`} className="w-24 p-2 bg-white dark:bg-slate-900 border border-gray-300 dark:border-slate-700 rounded-lg text-sm" placeholder="PIC" />
-                                        <button onClick={() => { const val = document.getElementById(`note-input-${activeStep}`); const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(val.value, pic.value); val.value = ''; }} className="p-2 bg-indigo-600 text-white rounded-lg"><Plus size={20} /></button>
-                                    </div>
-                                )}
                             </Card>
                             <div className="space-y-4">
                                 <Card>
@@ -993,8 +1151,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         {isLoadingFiles ? <div className="text-center py-4 text-xs text-gray-400">Loading...</div> : auditFiles.length === 0 ? <div className="text-center py-4 text-xs text-gray-400 border-2 border-dashed border-gray-200 rounded-lg">Tidak ada dokumen</div> :
                                             auditFiles.map(file => (
                                                 <div key={file.id} className="flex items-center gap-3 p-2 bg-white dark:bg-slate-800 rounded-lg border border-gray-100 dark:border-slate-700 shadow-sm text-xs group">
-                                                    <div className="p-1.5 bg-red-100 text-red-600 rounded"><File size={14} /></div>
-                                                    <div className="flex-1 truncate cursor-pointer" onClick={() => setSelectedFileDetail(file)}>
+                                                    <div className={`p-1.5 rounded ${file.type?.includes('pdf') ? 'bg-red-100 text-red-600' : file.type?.includes('image') ? 'bg-purple-100 text-purple-600' : 'bg-blue-100 text-blue-600'}`}>
+                                                        {file.type?.includes('pdf') ? <FileDigit size={14} /> : file.type?.includes('image') ? <ImageIcon size={14} /> : <File size={14} />}
+                                                    </div>
+                                                    <div className="flex-1 truncate cursor-pointer" onClick={() => handleViewFileDetail(file)}>
                                                         <span className="font-medium text-slate-700 dark:text-slate-200 hover:text-indigo-600 truncate block text-left transition-colors">{file.title}</span>
                                                         <span className="text-gray-400 flex items-center gap-1">
                                                             {file.size}
@@ -1040,7 +1200,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 title={editingAudit ? 'Edit Pemeriksaan' : 'Pemeriksaan Baru'}
                 size="max-w-xl"
             >
-                <div className="space-y-6">
+                <div className="space-y-6 pt-24 max-h-[85vh] overflow-y-auto custom-scrollbar px-1">
                     <div className="flex justify-between items-center mb-6">
                         <div className="w-14 h-14 rounded-2xl bg-indigo-500/10 text-indigo-600 flex items-center justify-center shadow-inner">
                             <ClipboardCheck size={28} />
@@ -1134,13 +1294,13 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 title="Detail Dokumen & OCR"
                 size="max-w-4xl"
             >
-                <div className="flex flex-col md:flex-row gap-6 h-[70vh]">
+                <div className="flex flex-col md:flex-row gap-6 h-[70vh] pt-24">
                     {/* LEFT: PREVIEW */}
                     <div className="flex-1 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 relative">
-                        {selectedFileDetail?.type?.startsWith('image/') ? (
-                            <img src={selectedFileDetail.fileData || selectedFileDetail.url} alt="Preview" className="max-w-full max-h-full object-contain" />
-                        ) : selectedFileDetail?.type === 'application/pdf' ? (
-                            <iframe src={selectedFileDetail.fileData || selectedFileDetail.url} className="w-full h-full" title="PDF Preview"></iframe>
+                        {String(selectedFileDetail?.type || '').toLowerCase().startsWith('image/') ? (
+                            <img src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display='none'; }} />
+                        ) : String(selectedFileDetail?.type || '').toLowerCase().includes('pdf') ? (
+                            <iframe src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} className="w-full h-full" title="PDF Preview"></iframe>
                         ) : (
                             <div className="text-center p-6 text-slate-500">
                                 <FileText size={48} className="mx-auto mb-2 opacity-50" />
@@ -1170,7 +1330,6 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                             className="flex-1 w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm font-mono text-slate-700 dark:text-slate-300 focus:border-indigo-500 focus:ring-0 resize-none outline-none leading-relaxed"
                             value={selectedFileDetail?.ocrContent || ''}
                             onChange={(e) => setSelectedFileDetail({ ...selectedFileDetail, ocrContent: e.target.value })}
-
                             placeholder={selectedFileDetail?.ocrContent ? "Teks hasil scan..." : "Teks belum tersedia. Mohon tunggu proses OCR selesai atau klik tombol 'Regenerate/Refresh' di bawah."}
                         />
                         <div className="mt-4 flex justify-end gap-3">
@@ -1195,18 +1354,6 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                             >
                                 Refresh / Cek OCR
                             </button>
-                            <button
-                                onClick={async () => {
-                                    /* Logic to save updated OCR content could be added here in future */
-                                    /* For now we just close, assuming it's view only or we implement a save endpoint later */
-                                    // Implementation reserved for future optimization path
-                                    setSelectedFileDetail(null);
-                                    alert("Perubahan teks OCR disimpan di sesi lokal (Simpan ke server segera hadir).");
-                                }}
-                                className="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all hover:scale-105 active:scale-95"
-                            >
-                                Simpan Koreksi
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -1219,7 +1366,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 title="Upload Dokumen Pemeriksaan"
                 size="max-w-2xl"
             >
-                <div className="space-y-6">
+                <div className="space-y-6 pt-24 max-h-[85vh] overflow-y-auto custom-scrollbar px-1">
                     {/* Preview Section */}
                     <div className="flex flex-col md:flex-row gap-6">
                         <div className="w-full md:w-1/3 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 flex items-center justify-center h-48 relative group">

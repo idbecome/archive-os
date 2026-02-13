@@ -326,7 +326,8 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const filteredData = savedData.filter(item =>
         (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (item.identity_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.tax_object_name || '').toLowerCase().includes(searchTerm.toLowerCase())
+        (item.tax_object_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+        (item.tax_object_code || '').toLowerCase().includes(searchTerm.toLowerCase())
     );
 
     // Logika Paginasi
@@ -628,12 +629,14 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                                     </button>
                                                 </div>
                                             ) : (
-                                                masterData.filter(item =>
-                                                    String(item.tax_type) === String(formData.taxType) && (
-                                                        (item.name || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase()) ||
-                                                        (item.code || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase())
-                                                    ) && !(formData.idType === 'KTP' && String(item.tax_type) === '23')
-                                                ).map((item) => (
+                                                masterData.filter(item => {
+                                                    const search = (formData.taxObjectName || '').toLowerCase();
+                                                    const matchesSearch = (item.name || '').toLowerCase().includes(search) || 
+                                                                        (item.code || '').toLowerCase().includes(search);
+                                                    const matchesType = String(item.tax_type) === String(formData.taxType);
+                                                    const ktpRestriction = !(formData.idType === 'KTP' && String(item.tax_type) === '23');
+                                                    return matchesSearch && matchesType && ktpRestriction;
+                                                }).map((item) => (
                                                     <button
                                                         key={item.id}
                                                         className="w-full text-left px-4 py-3 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors border-b border-gray-100 dark:border-slate-700 last:border-0"
@@ -772,6 +775,14 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                         <span className="text-gray-500">Total Diterima:</span>
                                         <span className="font-bold text-emerald-600">{formatCurrency(calcData.totalPayable)}</span>
                                     </div>
+                                    <div className="flex justify-between border-t border-gray-100 dark:border-slate-700 pt-2 mt-1">
+                                        <span className="text-gray-500">DPP + PPN:</span>
+                                        <span className="font-bold text-indigo-600">{formatCurrency((calcData.calculationDpp || 0) + (calcData.ppn || 0))}</span>
+                                    </div>
+                                    <div className="flex justify-between">
+                                        <span className="text-gray-500">DPP - PPh:</span>
+                                        <span className="font-bold text-rose-600">{formatCurrency((calcData.calculationDpp || 0) - (calcData.pph || 0))}</span>
+                                    </div>
                                     <div className="flex justify-between">
                                         <span className="text-gray-500">Gunakan PPN:</span>
                                         <span className={`font-bold ${calcData.usePpn ? 'text-green-600' : 'text-red-500'}`}>
@@ -781,6 +792,51 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                     <p className="text-[10px] text-slate-400 italic mt-4">
                                         Hasil perhitungan otomatis muncul di panel kalkulator di sebelah kiri.
                                     </p>
+
+                                    {/* Breakdown Section for Formula */}
+                                    {calcData.breakdown && calcData.breakdown.length > 0 && (
+                                        <div className="mt-4 pt-3 border-t border-dashed border-gray-200 dark:border-slate-700">
+                                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-3">Detail Penjumlah:</p>
+                                            <div className="space-y-2.5">
+                                                {calcData.breakdown.map((item, i) => (
+                                                    <div key={i} className="bg-slate-50 dark:bg-slate-900/50 p-3 rounded-xl border border-slate-100 dark:border-slate-800 text-[11px] animate-in slide-in-from-left-2" style={{ animationDelay: `${i * 50}ms` }}>
+                                                        <div className="flex justify-between font-black text-slate-700 dark:text-slate-200 mb-1.5">
+                                                            <span className="opacity-60">Item {i + 1}: {item.label}</span>
+                                                            <span>{formatCurrency(item.value)}</span>
+                                                        </div>
+                                                        <div className="grid grid-cols-2 gap-2">
+                                                            <div className="flex justify-between text-indigo-600 dark:text-indigo-400 font-bold">
+                                                                <span>PPN:</span>
+                                                                <span>+{formatCurrency(item.ppn)}</span>
+                                                            </div>
+                                                            <div className="flex justify-between text-rose-600 dark:text-rose-400 font-bold">
+                                                                <span>PPh:</span>
+                                                                <span>-{formatCurrency(item.pph)}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+
+                                                {/* Total Breakdown Row */}
+                                                <div className="bg-indigo-600 dark:bg-indigo-500 p-3 rounded-xl border border-indigo-400 text-[11px] text-white shadow-lg mt-2 animate-in slide-in-from-bottom-2">
+                                                    <div className="flex justify-between font-black mb-1.5">
+                                                        <span className="uppercase tracking-wider">Total Penjumlahan</span>
+                                                        <span>{formatCurrency(calcData.totalBreakdown?.value || 0)}</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2 border-t border-white/20 pt-1.5">
+                                                        <div className="flex justify-between font-bold text-indigo-100">
+                                                            <span>Total PPN:</span>
+                                                            <span>+{formatCurrency(calcData.totalBreakdown?.ppn || 0)}</span>
+                                                        </div>
+                                                        <div className="flex justify-between font-bold text-rose-100">
+                                                            <span>Total PPh:</span>
+                                                            <span>-{formatCurrency(calcData.totalBreakdown?.pph || 0)}</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
                         </Card>

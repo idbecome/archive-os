@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { User, FileKey, AlertCircle, ShieldCheck, Zap, ArrowRight } from 'lucide-react';
+import { User, FileKey, AlertCircle, ShieldCheck, Zap, ArrowRight, BookOpen } from 'lucide-react';
 
 export default function Login({ onLogin }) {
     const [loginForm, setLoginForm] = useState({ username: '', password: '', error: '' });
@@ -7,6 +7,12 @@ export default function Login({ onLogin }) {
     const handleSubmit = (e) => {
         e.preventDefault();
         onLogin(loginForm.username, loginForm.password, (errorMsg) => {
+            setLoginForm(prev => ({ ...prev, error: errorMsg }));
+        });
+    };
+
+    const handleGuestLogin = () => {
+        onLogin('viewer', '123', (errorMsg) => {
             setLoginForm(prev => ({ ...prev, error: errorMsg }));
         });
     };
@@ -30,17 +36,17 @@ export default function Login({ onLogin }) {
                     <div className="relative z-10">
                         <div className="flex items-center gap-3 mb-8">
                             <div className="p-2 bg-white/20 backdrop-blur-md rounded-xl">
-                                <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
+                                <BookOpen className="text-white" size={24} />
                             </div>
-                            <span className="text-2xl font-black text-white tracking-tighter">TaxArchi</span>
+                            <span className="text-2xl font-black text-white tracking-tighter">Pustaka</span>
                         </div>
                         
                         <h1 className="text-5xl font-black text-white leading-tight mb-6">
-                            Solusi Terpadu<br /> 
-                            <span className="text-indigo-200">Pajak dan Arsip Digital</span>
+                            Solusi Satu<br /> 
+                            <span className="text-indigo-200">Manajemen Sistem Terpadu</span>
                         </h1>
                         <p className="text-indigo-100 text-lg font-medium max-w-md">
-                            Integrasi cerdas antara sistem pajak dan arsip digital untuk mendukung operasional korporat yang efisien dan patuh regulasi..
+                            Integrasi cerdas antara sistem digital untuk mendukung operasional korporat yang efisien dan patuh regulasi.
                         </p>
                     </div>
 
@@ -76,7 +82,9 @@ export default function Login({ onLogin }) {
                 {/* Right Side: Login Form */}
                 <div className="p-8 md:p-16 flex flex-col justify-center">
                     <div className="lg:hidden flex justify-center mb-8">
-                        <img src="/vite.svg" alt="Logo" className="w-16 h-16 drop-shadow-xl" />
+                        <div className="w-16 h-16 bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl flex items-center justify-center shadow-2xl">
+                            <BookOpen className="text-white" size={32} />
+                        </div>
                     </div>
                     
                     <div className="mb-10">
@@ -121,8 +129,23 @@ export default function Login({ onLogin }) {
                             Masuk Ke Dashboard
                             <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                         </button>
+
+                        <div className="relative flex items-center py-2">
+                            <div className="flex-grow border-t border-gray-100 dark:border-slate-800"></div>
+                            <span className="flex-shrink mx-4 text-gray-400 text-[10px] font-black uppercase tracking-[0.2em]">Atau</span>
+                            <div className="flex-grow border-t border-gray-100 dark:border-slate-800"></div>
+                        </div>
+
+                        <button 
+                            type="button" 
+                            onClick={handleGuestLogin}
+                            className="w-full py-4 bg-white dark:bg-slate-900/40 border-2 border-indigo-50 dark:border-indigo-900/20 text-indigo-600 dark:text-indigo-400 rounded-2xl font-black shadow-sm hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-all hover:scale-[1.01] active:scale-[0.99] flex items-center justify-center gap-3 group border-dashed"
+                        >
+                            <User size={20} className="group-hover:scale-110 transition-transform" />
+                            Masuk Sebagai Tamu (Read-Only)
+                        </button>
                     </form>
-                    <p className="text-center text-xs text-gray-400 mt-12 font-bold uppercase tracking-widest">© 2026 FinDoc Hub Enterprise • v2.4.0</p>
+                    <p className="text-center text-xs text-gray-400 mt-12 font-bold uppercase tracking-widest">©2026 Pustaka Enterprise • v1.0.0 (Beta)</p>
                 </div>
             </div>
         </div>

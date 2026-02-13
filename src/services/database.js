@@ -1,7 +1,14 @@
 // Gunakan URL absolut jika di lingkungan development (Vite port 3000)
 // Gunakan relative path jika di production (Docker/Nginx)
-const isDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-const API_URL = isDev ? `http://${window.location.hostname}:5000/api` : '/api';
+const getApiUrl = () => {
+    const { hostname, port, protocol } = window.location;
+    // Jika port adalah port Vite (5173/3000), arahkan ke backend port 5000
+    if (port === '5173' || port === '3000' || hostname === 'localhost') {
+        return `${protocol}//${hostname}:5000/api`;
+    }
+    return '/api';
+};
+const API_URL = getApiUrl();
 
 export const db = {
     async getInventory() {
@@ -13,13 +20,15 @@ export const db = {
             return data.map(slot => {
                 const rawBoxData = slot.boxData || slot.box_data || slot.boxdata;
                 const rawHistory = slot.history || slot.history_data; // Defensive
+                
+                const parsedHistory = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : (rawHistory || []);
 
                 return {
                     ...slot,
                     id: Number(slot.id),
                     status: (slot.status || 'EMPTY').toUpperCase(),
                     boxData: typeof rawBoxData === 'string' ? JSON.parse(rawBoxData) : (rawBoxData || null),
-                    history: typeof rawHistory === 'string' ? JSON.parse(rawHistory) : (rawHistory || [])
+                    history: Array.isArray(parsedHistory) ? parsedHistory : []
                 };
             });
         } catch (error) {
@@ -380,6 +389,30 @@ export const db = {
         } catch (e) { console.error("Gagal update inventory", e); }
     },
 
+    async moveInventory(sourceId, targetId, user) {
+        try {
+            const response = await fetch(`${API_URL}/inventory/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sourceId, targetId, user })
+            });
+
+            const text = await response.text();
+            let data = null;
+            try {
+                data = text ? JSON.parse(text) : null;
+            } catch (e) {
+                console.error("Gagal parse JSON respons:", text);
+            }
+
+            if (!response.ok) {
+                const errorMsg = data?.error || (text && text.length < 100 ? text : `Server Error ${response.status}`);
+                throw new Error(errorMsg);
+            }
+            return data;
+        } catch (e) { throw e; }
+    },
+
     async createExternalItem(item) {
         try {
             await fetch(`${API_URL}/inventory/external`, {
@@ -417,5 +450,316 @@ export const db = {
             console.error("Upload error:", e);
             throw e;
         }
+    },
+
+    async restoreDocumentVersion(id, versionTimestamp) {
+        try {
+            const response = await fetch(`${API_URL}/documents/${id}/restore`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ versionTimestamp })
+            });
+            if (!response.ok) throw new Error('Gagal restore versi');
+            return await response.json();
+        } catch (e) {
+            console.error("restoreDocumentVersion Error:", e);
+            throw e;
+        }
+    },
+
+    async copyDocument(id, targetFolderId) {
+        try {
+            const response = await fetch(`${API_URL}/documents/copy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, targetFolderId })
+            });
+            if (!response.ok) throw new Error('Gagal menyalin dokumen');
+            return await response.json();
+        } catch (e) {
+            console.error("copyDocument Error:", e);
+            throw e;
+        }
+    },
+
+    async moveDocument(id, targetFolderId) {
+        try {
+            const response = await fetch(`${API_URL}/documents/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, targetFolderId })
+            });
+            if (!response.ok) throw new Error('Gagal memindahkan dokumen');
+            return await response.json();
+        } catch (e) {
+            console.error("moveDocument Error:", e);
+            throw e;
+        }
+    },
+
+    async copyFolder(id, targetParentId) {
+        try {
+            const response = await fetch(`${API_URL}/folders/copy`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, targetParentId })
+            });
+            if (!response.ok) throw new Error('Gagal menyalin folder');
+            return await response.json();
+        } catch (e) {
+            console.error("copyFolder Error:", e);
+            throw e;
+        }
+    },
+
+    async moveFolder(id, targetParentId) {
+        try {
+            const response = await fetch(`${API_URL}/folders/move`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, targetParentId })
+            });
+            if (!response.ok) throw new Error('Gagal memindahkan folder');
+            return await response.json();
+        } catch (e) {
+            console.error("moveFolder Error:", e);
+            throw e;
+        }
+    },
+
+    async getComments(docId) {
+        try {
+            const response = await fetch(`${API_URL}/documents/${docId}/comments`);
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch { return []; }
+    },
+
+    async addComment(docId, formData) {
+        try {
+            const response = await fetch(`${API_URL}/documents/${docId}/comments`, {
+                method: 'POST',
+                body: formData
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async promoteCommentAttachment(docId, commentId) {
+        try {
+            const response = await fetch(`${API_URL}/documents/${docId}/promote-comment-attachment`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ commentId })
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async getAuditNotes(auditId, stepIndex) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`);
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch { return []; }
+    },
+
+    async addAuditNote(auditId, stepIndex, formData) {
+        try {
+            const response = await fetch(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`, {
+                method: 'POST',
+                body: formData
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    // --- DOCUMENT APPROVALS ---
+    async getApprovals() {
+        try {
+            const response = await fetch(`${API_URL}/approvals`);
+            if (!response.ok) return [];
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
+        } catch { return []; }
+    },
+
+    async createApproval(data) {
+        try {
+            const response = await fetch(`${API_URL}/approvals`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async updateApproval(id, data) {
+        try {
+            const response = await fetch(`${API_URL}/approvals/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async submitApprovalAction(id, data) {
+        try {
+            const isFormData = data instanceof FormData;
+            const response = await fetch(`${API_URL}/approvals/${id}/action`, {
+                method: 'POST',
+                headers: isFormData ? {} : { 'Content-Type': 'application/json' },
+                body: isFormData ? data : JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async resetApprovalStep(id, stepIndex) {
+        try {
+            const response = await fetch(`${API_URL}/approvals/${id}/reset-step`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ stepIndex })
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async deleteApproval(id) {
+        try {
+            await fetch(`${API_URL}/approvals/${id}`, { method: 'DELETE' });
+        } catch (e) { console.error(e); }
+    },
+
+    // --- APPROVAL FLOWS (MASTER) ---
+    async getApprovalFlows() {
+        try {
+            const response = await fetch(`${API_URL}/approval-flows`);
+            if (!response.ok) return [];
+            return await response.json();
+        } catch { return []; }
+    },
+
+    async createApprovalFlow(data) {
+        try {
+            const response = await fetch(`${API_URL}/approval-flows`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async updateApprovalFlow(id, data) {
+        try {
+            const response = await fetch(`${API_URL}/approval-flows/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async deleteApprovalFlow(id) {
+        try {
+            await fetch(`${API_URL}/approval-flows/${id}`, { method: 'DELETE' });
+        } catch (e) { console.error(e); }
+    },
+
+    // --- PUSTAKA ---
+    async getPustakaGuides() {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/guides`);
+            if (!response.ok) return [];
+            return await response.json();
+        } catch { return []; }
+    },
+
+    async getGuideSlides(guideId) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/guides/${guideId}/slides`);
+            if (!response.ok) return [];
+            return await response.json();
+        } catch { return []; }
+    },
+
+    async createPustakaGuide(data) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/guides`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async createPustakaSlide(data) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/slides`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async updatePustakaGuide(id, data) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/guides/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data)
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async deletePustakaGuide(id) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/guides/${id}`, { method: 'DELETE' });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async deleteSlidesByGuideId(guideId) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/slides/by-guide/${guideId}`, { method: 'DELETE' });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    async getPustakaCategories() {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/categories`);
+            if (!response.ok) return [];
+            return await response.json();
+        } catch { return []; }
+    },
+
+    async searchPustaka(query) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/search?q=${encodeURIComponent(query)}`);
+            if (!response.ok) return [];
+            return await response.json();
+        } catch { return []; }
+    },
+
+    async createPustakaCategory(name) {
+        try {
+            const response = await fetch(`${API_URL}/pustaka/categories`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            return await response.json();
+        } catch (e) { console.error(e); return { success: false }; }
     }
 };

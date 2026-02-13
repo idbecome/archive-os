@@ -546,7 +546,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                                 <button className="p-2 hover:bg-gray-100 rounded-lg dark:hover:bg-slate-700"><Download size={16} className="text-gray-500" /></button>
                             </div>
                         </div>
-                        <div className="h-[350px]">
+                        <div className="h-[350px] min-h-[350px]">
                             <ResponsiveContainer width="100%" height="100%">
                                 <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                                     <defs>
@@ -582,7 +582,7 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                     {/* 2b. Distribution Pie Chart */}
                     <Card>
                         <h3 className="font-bold text-lg dark:text-white mb-6">Distribusi PPh (YTD)</h3>
-                        <div className="h-[300px]">
+                        <div className="h-[300px] min-h-[300px]">
                             <ResponsiveContainer width="100%" height="100%">
                                 <PieChart>
                                     <Pie

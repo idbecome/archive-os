@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
+import { motion, AnimatePresence } from 'framer-motion';
+import mammoth from 'mammoth';
 import { db as api } from './services/database';
 import { TOTAL_SLOTS, getStatusStyle } from './utils/constants'; // Import constants
 import { checkPermission, APP_MODULES } from './utils/permissions';
@@ -60,7 +62,9 @@ import {
   Building2,
   Paperclip,
   Menu,
-  RefreshCw
+  RefreshCw,
+  Rocket, Target, HelpCircle, Sparkles, Zap, Award, Globe, FileCheck, BookOpen, ScanLine,
+  Calculator
 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import Login from './pages/Login';
@@ -72,6 +76,8 @@ import TaxSummary from './pages/TaxSummary';
 import TaxCalculation from './pages/TaxCalculation';
 import MasterData from './pages/MasterData';
 import Profile from './pages/Profile';
+import DocumentApproval from './pages/DocumentApproval';
+import Pustaka from './pages/Pustaka';
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
 const API_URL = 'http://localhost:5000/api';
@@ -86,6 +92,142 @@ const API_URL = 'http://localhost:5000/api';
 
 // --- COMPONENTS ---
 
+const InitialLandingPage = ({ onClose }) => (
+  <motion.div 
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[300] bg-slate-50/80 dark:bg-[#0B1437]/90 backdrop-blur-2xl overflow-y-auto custom-scrollbar p-6 md:p-12"
+  >
+      <div className="max-w-6xl mx-auto">
+          <div className="flex justify-end mb-8">
+              <button 
+                  onClick={onClose}
+                  className="p-3 bg-white dark:bg-slate-800 rounded-2xl shadow-lg text-slate-400 hover:text-red-500 transition-all hover:scale-110"
+              >
+                  <X size={24} />
+              </button>
+          </div>
+
+          <div className="text-center mb-16 space-y-6">
+              <motion.div
+                  initial={{ scale: 0.5, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ duration: 0.5 }}
+                  className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full text-sm font-black uppercase tracking-widest mb-4"
+              >
+                  <Rocket size={16} className="animate-bounce" />
+                  <span>The Future of Knowledge</span>
+              </motion.div>
+              <motion.h1 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.2 }}
+                  className="text-4xl md:text-6xl font-black text-[#2B3674] dark:text-white tracking-tight leading-tight"
+              >
+                  Sistem Pustaka <br />
+                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">Terintegrasi</span>
+              </motion.h1>
+              <motion.p 
+                  initial={{ y: 20, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                  transition={{ delay: 0.3 }}
+                  className="text-lg text-slate-500 dark:text-slate-400 max-w-3xl mx-auto leading-relaxed font-medium"
+              >
+                  Pusat pengelolaan pengetahuan dan dokumen yang aman, akurat, dan mudah digunakan.
+              </motion.p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
+              <motion.div 
+                  initial={{ x: -50, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 0.4 }}
+                  className="p-8 bg-white dark:bg-slate-800 rounded-[3rem] shadow-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden group"
+              >
+                  <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
+                      <AlertCircle size={120} />
+                  </div>
+                  <div className="w-14 h-14 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-2xl flex items-center justify-center mb-6 shadow-inner">
+                      <Target size={28} />
+                  </div>
+                  <h3 className="text-2xl font-black text-slate-800 dark:text-white mb-4 uppercase tracking-tight">Latar Belakang</h3>
+                  <p className="text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
+                      Dalam era digital yang menuntut kecepatan, ketepatan, dan transparansi, perusahaan membutuhkan sistem pengelolaan informasi yang terpusat. Banyak data penting masih tersebar dan bergantung pada individu, yang berpotensi menimbulkan risiko kesalahan dan hilangnya pengetahuan.
+                  </p>
+              </motion.div>
+
+              <motion.div 
+                  initial={{ x: 50, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                  transition={{ delay: 0.5 }}
+                  className="p-8 bg-gradient-to-br from-indigo-600 to-purple-700 rounded-[3rem] shadow-2xl text-white relative overflow-hidden group"
+              >
+                  <div className="absolute bottom-0 left-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                      <Sparkles size={120} />
+                  </div>
+                  <div className="w-14 h-14 bg-white/20 backdrop-blur-md text-white rounded-2xl flex items-center justify-center mb-6 shadow-lg">
+                      <ShieldCheck size={28} />
+                  </div>
+                  <h3 className="text-2xl font-black mb-4 uppercase tracking-tight">Visi & Misi</h3>
+                  <p className="text-indigo-50 leading-relaxed font-medium">
+                      Sistem ini dirancang untuk mengintegrasikan seluruh informasi penting dalam satu platform. Memastikan kontinuitas operasional tetap berjalan meskipun terjadi pergantian personel atau perubahan struktur organisasi.
+                  </p>
+              </motion.div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
+              {[
+                  { icon: Calculator, title: "Pajak", desc: "Perhitungan & pemeriksaan pajak terpadu.", color: "bg-blue-50 text-blue-600" },
+                  { icon: FileCheck, title: "Approval", desc: "Manajemen dokumen persetujuan digital.", color: "bg-emerald-50 text-emerald-600" },
+                  { icon: BookOpen, title: "SOP & Edukasi", desc: "Pusat prosedur kerja & standar operasional.", color: "bg-amber-50 text-amber-600" },
+                  { icon: HelpCircle, title: "User Guide", desc: "Panduan lengkap seluruh proses pekerjaan.", color: "bg-purple-50 text-purple-600" },
+                  { icon: FolderOpen, title: "Digital Filing", desc: "Manajemen arsip digital yang terstruktur.", color: "bg-indigo-50 text-indigo-600" },
+                  { icon: ScanLine, title: "Teknologi OCR", desc: "Ekstraksi teks otomatis dari dokumen fisik.", color: "bg-rose-50 text-rose-600" },
+                  { icon: Search, title: "Semantic Search", desc: "Pencarian cerdas berbasis makna konten.", color: "bg-teal-50 text-teal-600" },
+                  { icon: Zap, title: "Efisiensi", desc: "Meningkatkan produktivitas tim secara masif.", color: "bg-orange-50 text-orange-600" }
+              ].map((feature, i) => (
+                  <motion.div
+                      key={i}
+                      initial={{ y: 30, opacity: 0 }}
+                      animate={{ y: 0, opacity: 1 }}
+                      transition={{ delay: 0.6 + (i * 0.05) }}
+                      className="p-6 bg-white dark:bg-slate-800 rounded-[2.5rem] border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-xl transition-all hover:-translate-y-2 group"
+                  >
+                      <div className={`w-12 h-12 ${feature.color} rounded-2xl flex items-center justify-center mb-4 shadow-inner group-hover:scale-110 transition-transform`}>
+                          <feature.icon size={24} />
+                      </div>
+                      <h4 className="font-black text-slate-800 dark:text-white mb-2 uppercase tracking-tight text-sm">{feature.title}</h4>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">{feature.desc}</p>
+                  </motion.div>
+              ))}
+          </div>
+
+          <motion.div 
+              initial={{ y: 20, opacity: 0 }} 
+              animate={{ y: 0, opacity: 1 }} 
+              transition={{ delay: 1.2 }} 
+              className="bg-indigo-600 rounded-[3rem] p-10 text-center text-white shadow-2xl shadow-indigo-500/40 relative overflow-hidden"
+          >
+              <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
+                  <div className="absolute top-10 left-10 w-32 h-32 bg-white rounded-full blur-3xl"></div>
+                  <div className="absolute bottom-10 right-10 w-32 h-32 bg-purple-400 rounded-full blur-3xl"></div>
+              </div>
+              <h3 className="text-3xl font-black mb-4 relative z-10">Siap Memulai Transformasi?</h3>
+              <p className="text-indigo-100 mb-8 max-w-2xl mx-auto font-medium relative z-10">
+                  Bangun budaya kerja berbasis pengetahuan yang berkelanjutan dan profesional bersama Sistem Pustaka Terintegrasi.
+              </p>
+              <button 
+                  onClick={onClose} 
+                  className="px-12 py-5 bg-white text-indigo-600 rounded-[2rem] font-black uppercase tracking-widest shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-3 mx-auto relative z-10"
+              >
+                  Mulai Menjelajah <ArrowRight size={20} />
+              </button>
+          </motion.div>
+      </div>
+  </motion.div>
+);
+
 // Modal imported from ./components/common/Modal
 
 // --- MAIN APPLICATION ---
@@ -96,6 +238,19 @@ export default function App() {
     const saved = localStorage.getItem('archive_theme');
     return saved ? saved === 'dark' : true;
   });
+
+  const [showInitialLanding, setShowInitialLanding] = useState(() => {
+    return !localStorage.getItem('archive_landing_seen');
+  });
+
+  const handleCloseLanding = () => {
+    setShowInitialLanding(false);
+    localStorage.setItem('archive_landing_seen', 'true');
+  };
+
+  const handleOpenLanding = () => {
+    setShowInitialLanding(true);
+  };
 
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
@@ -132,6 +287,12 @@ export default function App() {
     document.body.removeChild(textArea);
   };
 
+  const getFullUrl = (url) => {
+    if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
+    const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
+    return isDev ? `http://${window.location.hostname}:5000${url}` : url;
+  };
+
   const [selectedSlotId, setSelectedSlotId] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalTab, setModalTab] = useState('details');
@@ -147,6 +308,7 @@ export default function App() {
 
   // Data State
   const [inventory, setInventory] = useState([]);
+  const [inventoryIssues, setInventoryIssues] = useState([]);
   const [logs, setLogs] = useState([]);
 
   const [docList, setDocList] = useState([]);
@@ -182,12 +344,17 @@ export default function App() {
 
   // New Features State
   const [taxAudits, setTaxAudits] = useState([]);
+  const [approvals, setApprovals] = useState([]);
   const [taxSummaries, setTaxSummaries] = useState([]);
   const [activeInvTab, setActiveInvTab] = useState('internal'); // 'internal' | 'external'
   const [externalItems, setExternalItems] = useState([]);
 
   const [users, setUsers] = useState([]);
   const [roles, setRoles] = useState([]);
+  const [flows, setFlows] = useState([]); // NEW: State for Master Flows
+  const [isFlowModalOpen, setIsFlowModalOpen] = useState(false); // NEW: State for Flow Modal
+  const [editingFlow, setEditingFlow] = useState(null); // NEW: State for editing flow
+  const [flowForm, setFlowForm] = useState({ name: '', description: '', steps: [] }); // NEW: State for flow form
   const [departments, setDepartments] = useState([]);
 
   const [masterTab, setMasterTab] = useState('users');
@@ -275,6 +442,13 @@ export default function App() {
     setTaxAudits(data);
   };
 
+  const fetchApprovals = async () => {
+    const data = await api.getApprovals();
+    setApprovals(data);
+    const flowData = await api.getApprovalFlows(); // Fetch flows here
+    setFlows(flowData);
+  };
+
   const fetchInventory = async () => {
     try {
       const data = await api.getInventory();
@@ -286,7 +460,36 @@ export default function App() {
       const borrowedCount = data.filter(s => (s.status || '').toUpperCase() === 'BORROWED').length;
       const auditCount = data.filter(s => (s.status || '').toUpperCase() === 'AUDIT').length;
       const storedCount = data.filter(s => (s.status || '').toUpperCase() === 'STORED').length;
-      const occupancyRate = ((TOTAL_SLOTS - emptyCount) / TOTAL_SLOTS) * 100;
+      const occupancyRate = (data.filter(s => s.status && s.status.toUpperCase() !== 'EMPTY').length / TOTAL_SLOTS) * 100;
+
+      // Diagnostic Check for "Stuck" boxes (Duplicates or Corruption)
+      const issues = [];
+      const boxIdMap = {};
+      data.forEach(slot => {
+        const status = (slot.status || 'EMPTY').toUpperCase();
+        const boxId = slot.boxData?.id;
+
+        if (status !== 'EMPTY' && !boxId) {
+          issues.push({
+            type: 'CORRUPT',
+            slotId: slot.id,
+            message: `Slot #${slot.id} (${status}) memiliki data yang rusak atau terpotong.`
+          });
+        }
+
+        if (boxId) {
+          if (boxIdMap[boxId]) {
+            issues.push({
+              type: 'DUPLICATE',
+              boxId: boxId,
+              slots: [boxIdMap[boxId], slot.id],
+              message: `Box "${boxId}" terdeteksi ganda di Slot #${boxIdMap[boxId]} dan Slot #${slot.id}.`
+            });
+          }
+          boxIdMap[boxId] = slot.id;
+        }
+      });
+      setInventoryIssues(issues);
 
       setStats({
         stored: storedCount,
@@ -310,11 +513,13 @@ export default function App() {
         fetchFolders(),
         fetchLogs(),
         fetchTaxAudits(),
+        fetchApprovals(),
         fetchInventory(),
         api.getTaxSummaries().then(setTaxSummaries),
         api.getUsers().then(setUsers),
         api.getRoles().then(setRoles),
-        api.getDepartments().then(setDepartments)
+        api.getDepartments().then(setDepartments),
+        api.getApprovalFlows().then(setFlows) // Fetch flows on init
       ]);
       // Initialize OCR completion count
       try {
@@ -338,6 +543,17 @@ export default function App() {
     }
   }, [isDarkMode]);
 
+  // Favicon & Title Effect
+  useEffect(() => {
+    document.title = "Pustaka - Sistem Manajemen Terpadu";
+    const link = document.querySelector("link[rel*='icon']") || document.createElement('link');
+    link.type = 'image/svg+xml';
+    link.rel = 'shortcut icon';
+    // Menggunakan SVG BookOpen dari Lucide dengan warna Indigo (#4318FF)
+    link.href = `data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22none%22 stroke=%22%234318FF%22 stroke-width=%222%22 stroke-linecap=%22round%22 stroke-linejoin=%22round%22><path d=%22M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z%22/><path d=%22M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z%22/></svg>`;
+    document.getElementsByTagName('head')[0].appendChild(link);
+  }, []);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [inventorySearchQuery, setInventorySearchQuery] = useState('');
   const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -360,6 +576,7 @@ export default function App() {
   });
 
   const [viewDocData, setViewDocData] = useState(null);
+  const [previewHtml, setPreviewHtml] = useState('');
 
   // Temp State
   const [newOrdner, setNewOrdner] = useState({ noOrdner: '', period: '' });
@@ -371,8 +588,9 @@ export default function App() {
 
 
   const getSearchSnippet = (text, query) => {
-    if (!query) return text.substring(0, 120) + "...";
-    const lowerText = text.toLowerCase();
+    if (!text) return "";
+    if (!query) return String(text).substring(0, 120) + "...";
+    const lowerText = String(text).toLowerCase();
     const lowerQuery = query.toLowerCase();
     const index = lowerText.indexOf(lowerQuery);
     if (index === -1) return text.substring(0, 120) + "...";
@@ -386,33 +604,82 @@ export default function App() {
   const syncBoxFolder = async (boxId, status, oldBoxId = null) => {
     if (!boxId) return null;
     try {
-      const allFolders = await api.getFolders();
-      // Cari folder di root yang namanya persis atau diawali dengan ID Box (untuk folder yang sudah di-rename)
-      let folder = allFolders.find(f => {
-        const isRoot = !f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0';
-        if (!isRoot) return false;
+      // 1. Cari atau Buat folder sistem "DataBox" di Root
+      let dataBoxFolder = folders.find(f => f.name === 'DataBox' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      if (!dataBoxFolder) {
+        const allFolders = await api.getFolders();
+        dataBoxFolder = allFolders.find(f => f.name === 'DataBox' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      }
+
+      if (!dataBoxFolder && status !== 'EMPTY' && status !== 'REMOVED') {
+        await api.createFolder({
+          name: 'DataBox',
+          parentId: null,
+          privacy: 'public',
+          owner: 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        dataBoxFolder = updatedFolders.find(f => f.name === 'DataBox');
+      }
+
+      const dataBoxId = dataBoxFolder?.id || null;
+
+      // Helper function untuk mencari folder di parent tertentu
+      const findInParent = (list, pId) => list.find(f => {
+        const fParentId = (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0') ? null : String(f.parentId);
+        const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
+        if (fParentId !== targetParentId) return false;
         const targetId = oldBoxId || boxId;
         return f.name === targetId || f.name.startsWith(`${targetId}_`);
       });
 
-      // Jika folder belum ada dan status bukan penghapusan, buat folder baru
+      // 2. Cari folder box di dalam DataBox
+      let folder = findInParent(folders, dataBoxId);
+      if (!folder) {
+        const allFolders = await api.getFolders();
+        folder = findInParent(allFolders, dataBoxId);
+      }
+
+      // 3. MIGRASI: Jika tidak ada di DataBox, cek apakah ada di Root (terlanjur dibuat di root)
+      if (!folder && dataBoxId) {
+        let rootFolder = findInParent(folders, null);
+        if (!rootFolder) {
+          const allFolders = await api.getFolders();
+          rootFolder = findInParent(allFolders, null);
+        }
+
+        if (rootFolder) {
+          // Pindahkan folder dari Root ke DataBox secara otomatis
+          await api.moveFolder(rootFolder.id, dataBoxId);
+          await fetchFolders();
+          folder = rootFolder;
+          console.log(`Migrasi: Folder box "${folder.name}" dipindahkan dari root ke DataBox.`);
+        }
+      }
+
+      // Jika folder belum ada dan status bukan penghapusan, buat folder baru di dalam DataBox
       if (!folder && status !== 'EMPTY' && status !== 'REMOVED') {
-        const res = await api.createFolder({
+        await api.createFolder({
           name: boxId,
-          parentId: null,
+          parentId: dataBoxId,
           privacy: 'public',
           owner: currentUser?.name || 'System'
         });
         await fetchFolders();
         const updatedFolders = await api.getFolders();
-        folder = updatedFolders.find(f => f.name === boxId && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+        folder = findInParent(updatedFolders, dataBoxId);
       }
 
       if (folder) {
         let newName = boxId;
         // Jika box pindah/dihapus/keluar, rename dengan format: no_box_uniq no_status box
         if (status !== 'STORED' && status !== 'IMPORTED') {
-          newName = `${boxId}_${Date.now()} ${status} box`;
+          const dateStr = new Date().toISOString().split('T')[0];
+          newName = `[INV] ${boxId} - ${status} (${dateStr}_${Date.now().toString().slice(-4)})`;
+        } else if (oldBoxId && oldBoxId !== boxId) {
+          const dateStr = new Date().toISOString().split('T')[0];
+          newName = `[INV] ${boxId} (Renamed from ${oldBoxId}) ${dateStr}`;
         }
 
         if (newName !== folder.name) {
@@ -424,6 +691,144 @@ export default function App() {
       return null;
     } catch (err) {
       console.error("Folder sync failed:", err);
+      return null;
+    }
+  };
+
+  const syncAuditFolder = async (auditTitle, status = 'ACTIVE') => {
+    if (!auditTitle) return null;
+    try {
+      // 1. Cari atau Buat folder sistem "TaxAudit" di Root
+      let taxAuditParent = folders.find(f => f.name === 'TaxAudit' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      if (!taxAuditParent) {
+        const allFolders = await api.getFolders();
+        taxAuditParent = allFolders.find(f => f.name === 'TaxAudit' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      }
+
+      if (!taxAuditParent) {
+        await api.createFolder({
+          name: 'TaxAudit',
+          parentId: null,
+          privacy: 'public',
+          owner: 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        taxAuditParent = updatedFolders.find(f => f.name === 'TaxAudit');
+      }
+
+      const taxAuditParentId = taxAuditParent?.id || null;
+      const folderName = `Pemeriksaan - ${auditTitle}`;
+
+      const findInParent = (list, pId, name) => list.find(f => {
+        const fParentId = (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0') ? null : String(f.parentId);
+        const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
+        return fParentId === targetParentId && f.name === name;
+      });
+
+      let folder = findInParent(folders, taxAuditParentId, folderName);
+      if (!folder) {
+        const allFolders = await api.getFolders();
+        folder = findInParent(allFolders, taxAuditParentId, folderName);
+      }
+
+      if (!folder && taxAuditParentId) {
+        let rootFolder = findInParent(folders, null, folderName);
+        if (!rootFolder) {
+          const allFolders = await api.getFolders();
+          rootFolder = findInParent(allFolders, null, folderName);
+        }
+        if (rootFolder) {
+          await api.moveFolder(rootFolder.id, taxAuditParentId);
+          await fetchFolders();
+          folder = rootFolder;
+        }
+      }
+
+      if (!folder && taxAuditParentId && status === 'ACTIVE') {
+        await api.createFolder({
+          name: folderName,
+          parentId: taxAuditParentId,
+          privacy: 'public',
+          owner: currentUser?.name || 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        folder = findInParent(updatedFolders, taxAuditParentId, folderName);
+      }
+
+      if (folder) {
+        let newName = folderName;
+        if (status !== 'ACTIVE') {
+          const dateStr = new Date().toISOString().split('T')[0];
+          newName = `[TAX] ${auditTitle} - ${status} (${dateStr}_${Date.now().toString().slice(-4)})`;
+        }
+
+        if (newName !== folder.name) {
+          await api.updateFolder(folder.id, { name: newName });
+          await fetchFolders();
+        }
+      }
+
+      return folder?.id || null;
+    } catch (err) {
+      console.error("Audit folder sync failed:", err);
+      return null;
+    }
+  };
+
+  const syncApprovalFolder = async (approvalTitle, status = 'ACTIVE') => {
+    if (!approvalTitle) return null;
+    try {
+      // 1. Cari atau Buat folder sistem "ApprovalDoc" di Root
+      let approvalParent = folders.find(f => f.name === 'ApprovalDoc' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      if (!approvalParent) {
+        const allFolders = await api.getFolders();
+        approvalParent = allFolders.find(f => f.name === 'ApprovalDoc' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      }
+
+      if (!approvalParent) {
+        await api.createFolder({
+          name: 'ApprovalDoc',
+          parentId: null,
+          privacy: 'public',
+          owner: 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        approvalParent = updatedFolders.find(f => f.name === 'ApprovalDoc');
+      }
+
+      const approvalParentId = approvalParent?.id || null;
+      const folderName = approvalTitle;
+
+      const findInParent = (list, pId, name) => list.find(f => {
+        const fParentId = (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0') ? null : String(f.parentId);
+        const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
+        return fParentId === targetParentId && f.name === name;
+      });
+
+      let folder = findInParent(folders, approvalParentId, folderName);
+      if (!folder) {
+        const allFolders = await api.getFolders();
+        folder = findInParent(allFolders, approvalParentId, folderName);
+      }
+
+      if (!folder && approvalParentId && status === 'ACTIVE') {
+        await api.createFolder({
+          name: folderName,
+          parentId: approvalParentId,
+          privacy: 'public',
+          owner: currentUser?.name || 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        folder = findInParent(updatedFolders, approvalParentId, folderName);
+      }
+
+      return folder?.id || null;
+    } catch (err) {
+      console.error("Approval folder sync failed:", err);
       return null;
     }
   };
@@ -474,6 +879,11 @@ export default function App() {
       setCurrentUser(adminUser);
       localStorage.setItem('archive_user', JSON.stringify(adminUser));
       addLog('Admin', 'Login', 'Admin logged in');
+    } else if (username === 'viewer' && password === '123') {
+      const guestUser = { name: 'Tamu', role: 'viewer', username: 'viewer', department: 'General' };
+      setCurrentUser(guestUser);
+      localStorage.setItem('archive_user', JSON.stringify(guestUser));
+      addLog('Tamu', 'Login', 'Guest logged in');
     } else {
       if (onError) onError('Invalid credentials');
     }
@@ -495,18 +905,20 @@ export default function App() {
   // --- WAREHOUSE HANDLERS (API INTEGRATED) ---
 
   const handleSlotClick = (slot) => {
+    if (!slot) return;
+
     console.log("Slot Clicked:", slot.id, "Status:", slot.status);
-    console.log("Slot BoxData:", JSON.stringify(slot.boxData));
+    console.log("Slot BoxData:", slot.boxData ? JSON.stringify(slot.boxData) : 'null');
 
     setSelectedSlotId(slot.id);
     if (slot.status === 'EMPTY') {
       setBoxForm({ boxId: `BOX-${new Date().getFullYear()}-${String(slot.id).padStart(3, '0')}`, ordners: [] });
     } else {
-      setBoxForm({ boxId: slot.boxData.id, ordners: slot.boxData.ordners || [] });
+      setBoxForm({ boxId: slot.boxData?.id || '', ordners: slot.boxData?.ordners || [] });
     }
     setNewOrdner({ noOrdner: '', period: '' });
     setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
-    setExpandedOrdnerIds(slot.status !== 'EMPTY' ? slot.boxData.ordners.map(o => o.id) : []);
+    setExpandedOrdnerIds(slot.status !== 'EMPTY' && slot.boxData?.ordners ? slot.boxData.ordners.map(o => o.id) : []);
     setEditingItem(null);
     setShowMoveInput(false);
     setMoveTargetSlot('');
@@ -693,8 +1105,7 @@ export default function App() {
 
     try {
       await api.updateInventory(selectedSlotId, updatedSlot);
-      const updatedData = await api.getInventory();
-      setInventory(updatedData);
+      await fetchInventory();
       addLog(currentUser?.name || 'Admin', isNew ? 'Masuk Barang' : 'Update Barang', `Kardus ${boxForm.boxId} di Slot #${selectedSlotId}`);
       setIsModalOpen(false);
     } catch (error) {
@@ -703,6 +1114,7 @@ export default function App() {
   };
 
   const handleStatusChange = async (newStatus, label) => {
+    if (!selectedSlotId) return;
     const slotIndex = selectedSlotId - 1;
     const currentSlot = inventory[slotIndex];
 
@@ -720,8 +1132,7 @@ export default function App() {
 
     try {
       await api.updateInventory(selectedSlotId, updatedSlot);
-      const updatedData = await api.getInventory();
-      setInventory(updatedData);
+      await fetchInventory();
       addLog(currentUser?.name || 'Admin', 'Ubah Status', `Slot #${selectedSlotId} status: ${label}`);
       setIsModalOpen(false);
     } catch (error) {
@@ -741,14 +1152,11 @@ export default function App() {
       await syncBoxFolder(sourceSlot.boxData.id, 'MOVED');
     }
 
-    const updatedTarget = { ...targetSlot, status: sourceSlot.status, boxData: sourceSlot.boxData, lastUpdated: new Date().toISOString(), history: [...(targetSlot.history || []), createHistoryItem('MOVED', `Pindahan dr Slot #${selectedSlotId}`)] };
-    const updatedSource = { ...sourceSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(sourceSlot.history || []), createHistoryItem('MOVED', `Pindah ke Slot #${targetId}`)] };
-
     try {
-      await api.updateInventory(targetId, updatedTarget);
-      await api.updateInventory(selectedSlotId, updatedSource);
-      const updatedData = await api.getInventory();
-      setInventory(updatedData);
+      // Optimized: Perform move on server-side to avoid sending large boxData payloads
+      await api.moveInventory(selectedSlotId, targetId, currentUser?.name || 'Admin');
+      
+      await fetchInventory();
       addLog(currentUser?.name || 'Admin', 'Pindah Rak', `Kardus ${sourceSlot.boxData.id} -> Slot ${targetId}`);
       setIsModalOpen(false);
     } catch (error) {
@@ -757,6 +1165,7 @@ export default function App() {
   };
 
   const handleExternalTransfer = async (destination, date) => {
+    if (!selectedSlotId) return;
     if (!window.confirm(`Kirim ke ${destination} pada tanggal ${date}?`)) return;
     const currentSlot = inventory[selectedSlotId - 1];
 
@@ -838,23 +1247,34 @@ export default function App() {
   };
 
   const handleEmptySlot = async () => {
-    if (!window.confirm("Kosongkan slot? Data kardus akan dihapus.")) return;
-    const currentSlot = inventory[selectedSlotId - 1];
+    if (selectedSlotId) {
+        if (!window.confirm("Kosongkan slot? Data kardus akan dihapus.")) return;
+        const currentSlot = inventory[selectedSlotId - 1];
 
-    if (currentSlot.boxData) {
-      await syncBoxFolder(currentSlot.boxData.id, 'REMOVED');
-    }
+        if (currentSlot.boxData) {
+            await syncBoxFolder(currentSlot.boxData.id, 'REMOVED');
+        }
 
-    const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem('REMOVED', `Dikosongkan manual`)] };
+        const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem('REMOVED', `Dikosongkan manual`)] };
 
-    try {
-      await api.updateInventory(selectedSlotId, updatedSlot);
-      const updatedData = await api.getInventory();
-      setInventory(updatedData);
-      addLog(currentUser?.name || 'Admin', 'Kosongkan Slot', `Slot #${selectedSlotId}`);
-      setIsModalOpen(false);
-    } catch (error) {
-      alert("Gagal mengosongkan slot: " + error.message);
+        try {
+            await api.updateInventory(selectedSlotId, updatedSlot);
+            await fetchInventory();
+            addLog(currentUser?.name || 'Admin', 'Kosongkan Slot', `Slot #${selectedSlotId}`);
+            setIsModalOpen(false);
+        } catch (error) {
+            alert("Gagal mengosongkan slot: " + error.message);
+        }
+    } else if (selectedExternalItem) {
+        if (!window.confirm("Hapus data box ini secara permanen dari Indoarsip?")) return;
+        try {
+            await api.deleteExternalItem(selectedExternalItem.id);
+            await fetchInventory();
+            addLog(currentUser?.name || 'Admin', 'Hapus Permanen', `Box ${selectedExternalItem.boxId} dihapus dari Eksternal`);
+            setIsModalOpen(false);
+        } catch (error) {
+            alert("Gagal menghapus: " + error.message);
+        }
     }
   };
 
@@ -903,98 +1323,94 @@ export default function App() {
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-        let importedCount = 0;
-        let skippedCount = 0;
-
-        for (const row of jsonData) {
-          const slotId = parseInt(row['No Slot'] || row['Slot']);
-          const boxId = row['No Kardus'] || row['Box ID'];
-          const status = row['Status'];
-          // New fields support: Tgl Pembayaran for invoices? 
-          // Simplified import: checks if slot is invalid or occupied
-
-          if (slotId && slotId <= TOTAL_SLOTS && boxId) {
-            const currentSlot = inventory[slotId - 1];
-
-            // VALIDATION: Skip if slot is not EMPTY (and not just updating same box)
-            if (currentSlot.status !== 'EMPTY' && currentSlot.boxData?.id !== boxId) {
-              console.warn(`Slot ${slotId} is occupied. Skipped.`);
-              skippedCount++;
-              continue;
-            }
-
-            const newStatus = status === 'KOSONG' ? 'EMPTY' : 'IMPORTED';
-
-            // Create box data if not empty
-            let boxData = null;
-            if (newStatus !== 'EMPTY') {
-              const invNo = row['No Invoice'];
-              const vendor = row['Vendor'];
-              const payDate = row['Tgl Pembayaran'];
-              const ordnerNo = row['No Ordner'];
-              const period = row['Periode'];
-
-              const newInvoice = invNo ? {
-                id: Date.now() + Math.random(),
-                invoiceNo: invNo,
-                vendor: vendor || '-',
-                paymentDate: payDate || ''
-              } : null;
-
-              const existingBox = currentSlot.boxData || { id: boxId, ordners: [] };
-              let ordners = existingBox.ordners || [];
-
-              // Determine target ordner
-              const targetOrdnerName = ordnerNo || 'Imported';
-              const targetPeriod = period || 'Imported';
-
-              let targetOrdner = ordners.find(o => o.noOrdner === targetOrdnerName);
-
-              if (!targetOrdner) {
-                targetOrdner = {
-                  id: Date.now(),
-                  noOrdner: targetOrdnerName,
-                  period: targetPeriod,
-                  invoices: []
-                };
-                ordners.push(targetOrdner);
-              }
-
-              if (newInvoice) {
-                // Avoid duplicates
-                if (!targetOrdner.invoices) targetOrdner.invoices = [];
-                targetOrdner.invoices.push(newInvoice);
-              }
-
-              boxData = {
-                id: boxId,
-                ordners: ordners
-              };
-            }
-
-            // Sync Folder untuk Box yang di-import
-            await syncBoxFolder(boxId, 'IMPORTED');
-
-            const updatedSlot = {
-              ...currentSlot,
-              status: 'IMPORTED',
-              boxData: boxData,
-              lastUpdated: new Date().toISOString(),
-              history: [...(currentSlot.history || []), createHistoryItem('IMPORTED', `Import: ${boxId}`)]
-            };
-
-            await api.updateInventory(slotId, updatedSlot);
-            importedCount++;
-          }
+        if (inventory.length === 0) {
+          alert("Data inventory belum siap. Mohon tunggu beberapa detik atau refresh halaman lalu coba lagi.");
+          return;
         }
-        setInventory(await api.getInventory());
-        let msg = `Berhasil import ${importedCount} data kardus!`;
-        if (skippedCount > 0) msg += `\n${skippedCount} slot dilewati karena sudah terisi.`;
-        alert(msg);
-        addLog(currentUser?.name, 'Import Excel', `Import ${importedCount}, Skip ${skippedCount}`);
+
+        let importedCount = 0;
+        let skippedLogs = [];
+
+        // 1. Grouping logic: Gabungkan invoice yang memiliki Slot & Box ID yang sama
+        const groupedBySlot = {};
+        jsonData.forEach(row => {
+          const sId = parseInt(row['No Slot'] || row['Slot']);
+          const bId = row['No Kardus'] || row['Box ID'];
+          if (!sId || !bId) return;
+
+          if (!groupedBySlot[sId]) {
+            groupedBySlot[sId] = { boxId: bId, ordnerMap: {} };
+          }
+
+          const oNo = row['No Ordner'] || 'Imported';
+          const oPer = row['Periode'] || 'Imported';
+          if (!groupedBySlot[sId].ordnerMap[oNo]) {
+            groupedBySlot[sId].ordnerMap[oNo] = { noOrdner: oNo, period: oPer, invoices: [] };
+          }
+
+          if (row['No Invoice']) {
+            groupedBySlot[sId].ordnerMap[oNo].invoices.push({
+              id: Date.now() + Math.random(),
+              invoiceNo: row['No Invoice'],
+              vendor: row['Vendor'] || '-',
+              paymentDate: row['Tgl Pembayaran'] || ''
+            });
+          }
+        });
+
+        // 2. Iterasi hasil grouping untuk update database
+        let currentProcessingSlot = null;
+        for (const [sIdStr, data] of Object.entries(groupedBySlot)) {
+          currentProcessingSlot = parseInt(sIdStr);
+          if (currentProcessingSlot > TOTAL_SLOTS) {
+            skippedLogs.push(`Slot #${currentProcessingSlot}: Nomor slot melebihi kapasitas (${TOTAL_SLOTS})`);
+            continue;
+          }
+
+          // Cari slot berdasarkan ID (bukan indeks array) untuk akurasi
+          const currentSlot = inventory.find(s => Number(s.id) === currentProcessingSlot) || { id: currentProcessingSlot, status: 'EMPTY', history: [] };
+
+          // VALIDATION: Skip jika slot sudah terisi box lain
+          if (currentSlot.status !== 'EMPTY' && currentSlot.boxData?.id !== data.boxId) {
+            skippedLogs.push(`Slot #${currentProcessingSlot}: Skip (Slot tidak kosong, berisi Box ${currentSlot.boxData?.id || 'Unknown'})`);
+            continue;
+          }
+
+          // Siapkan struktur data box
+          const ordners = Object.values(data.ordnerMap).map(o => ({
+            ...o,
+            id: Date.now() + Math.random()
+          }));
+
+          const boxData = { id: data.boxId, ordners };
+
+          // Sinkronisasi Folder Digital
+          await syncBoxFolder(data.boxId, 'IMPORTED');
+
+          const updatedSlot = {
+            ...currentSlot,
+            status: 'IMPORTED',
+            boxData: boxData,
+            lastUpdated: new Date().toISOString(),
+            history: [...(Array.isArray(currentSlot.history) ? currentSlot.history : []), createHistoryItem('IMPORTED', `Import: ${data.boxId}`)]
+          };
+
+          await api.updateInventory(currentProcessingSlot, updatedSlot);
+          importedCount++;
+        }
+
+        await fetchInventory();
+        
+        let summaryMsg = `Import Selesai!\n- Berhasil: ${importedCount} box`;
+        if (skippedLogs.length > 0) {
+          summaryMsg += `\n- Dilewati: ${skippedLogs.length} baris\n\nDetail Skip:\n${skippedLogs.join('\n')}`;
+        }
+        
+        alert(summaryMsg);
+        addLog(currentUser?.name, 'Import Excel', `Import ${importedCount}, Skip ${skippedLogs.length}`);
       } catch (error) {
         console.error("Excel import error:", error);
-        alert(`Gagal membaca file Excel: ${error.message || error}`);
+        alert(`Gagal Import Excel: ${error.message}\n\nTerjadi kesalahan saat memproses Slot #${currentProcessingSlot || 'Unknown'}. Pastikan format file benar.`);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -1220,6 +1636,51 @@ export default function App() {
     try { await api.deleteRole(id); setRoles(await api.getRoles()); } catch (e) { alert(e.message); }
   };
 
+  const handleCreateFlow = () => {
+    setEditingFlow(null);
+    setFlowForm({ name: '', description: '', steps: [] });
+    setIsFlowModalOpen(true);
+  };
+
+  const handleEditFlow = (flow) => {
+    setEditingFlow(flow);
+    setFlowForm({ name: flow.name, description: flow.description, steps: flow.steps || [] });
+    setIsFlowModalOpen(true);
+  };
+
+  const handleDeleteFlow = async (id) => {
+    if (!window.confirm("Hapus alur persetujuan ini?")) return;
+    try {
+      await api.deleteApprovalFlow(id);
+      setFlows(await api.getApprovalFlows());
+      addLog(currentUser?.name, 'Delete Flow', `ID ${id}`);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleAddFlowStep = (user) => {
+    if (flowForm.steps.find(s => s.username === user.username)) return;
+    setFlowForm({ ...flowForm, steps: [...flowForm.steps, { username: user.username, name: user.name }] });
+  };
+
+  const handleRemoveFlowStep = (index) => {
+    const newSteps = [...flowForm.steps];
+    newSteps.splice(index, 1);
+    setFlowForm({ ...flowForm, steps: newSteps });
+  };
+
+  const handleSaveFlow = async () => {
+    if (!flowForm.name || flowForm.steps.length === 0) return alert("Nama alur dan minimal 1 step wajib diisi!");
+    try {
+      if (editingFlow) {
+        await api.updateApprovalFlow(editingFlow.id, flowForm);
+      } else {
+        await api.createApprovalFlow(flowForm);
+      }
+      setFlows(await api.getApprovalFlows());
+      setIsFlowModalOpen(false);
+      addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow', flowForm.name);
+    } catch (e) { alert(e.message); }
+  };
 
 
   // --- DOC HANDLERS (API INTEGRATED) ---
@@ -1263,31 +1724,12 @@ export default function App() {
     }));
   };
 
-  // NEW: Fungsi Manual untuk menjalankan OCR (Updated for Advanced OCR)
-  const handleRunOCR = async () => {
-    const file = uploadForm.fileData;
-    if (!file) return alert("Harap pilih file terlebih dahulu!");
-
-    setUploadForm(prev => ({ ...prev, isProcessing: true, processingMessage: 'Memulai OCR Canggih...' }));
-
-    let text = "";
-    try {
-      // Menggunakan Utility OCR Baru yang mendukung PDF (Scan/Digital), Word, Excel, PPTX, Gambar
-      text = await performAdvancedOCR(file, (msg, progress) => {
-        setUploadForm(prev => ({ ...prev, processingMessage: msg }));
-      });
-    } catch (err) {
-      console.error(err);
-      text = "Error ekstraksi: " + err.message;
-    }
-
-    setUploadForm(prev => ({ ...prev, ocrContent: text, isProcessing: false, processingMessage: '' }));
-  };
-
   const handleProcessDoc = async () => {
     // 1. Prioritaskan file baru yang diupload (fileBase64)
     // 2. Jika edit dan tidak ada file baru, gunakan file lama
     let fileContent = uploadForm.fileBase64;
+    const capturedForm = { ...uploadForm }; // Tangkap state form sebelum modal ditutup
+
     if (!fileContent && uploadForm.editMode && uploadForm.originalDoc) {
       fileContent = uploadForm.originalDoc?.fileData || uploadForm.originalDoc?.file_data;
     }
@@ -1304,32 +1746,31 @@ export default function App() {
       return;
     }
 
-    // Simplified: Processing is now automatic on select
+    // TUTUP MODAL SEGERA: Agar user bisa lanjut bekerja sementara upload/OCR berjalan di latar
+    setIsModalOpen(false);
 
     const newDoc = {
       // Gunakan ID lama jika edit, atau buat ID baru jika upload baru
-      id: uploadForm.editMode ? uploadForm.id : String(Date.now()),
-      title: uploadForm.title,
+      id: capturedForm.editMode ? capturedForm.id : String(Date.now()),
+      title: capturedForm.title,
       uploadDate: new Date().toISOString(),
-      ocrContent: uploadForm.ocrContent,
-      size: uploadForm.fileSize,
-      type: uploadForm.fileType,
-      previewUrl: uploadForm.previewUrl,
+      ocrContent: capturedForm.ocrContent,
+      size: capturedForm.fileSize,
+      type: capturedForm.fileType,
+      previewUrl: capturedForm.previewUrl,
       fileData: fileContent, // Format camelCase (Default)
       file_data: fileContent, // RESTORED: Backend mungkin menggunakan snake_case
       filedata: fileContent, // RESTORED: Backend mungkin menggunakan lowercase (Wajib ada jika backend minta ini)
       uploader: currentUser?.name || 'Admin',
       folderId: currentFolderId,
       version: 1,
-      versionsHistory: uploadForm.editMode ? (uploadForm.originalDoc?.versionsHistory || []) : [],
+      versionsHistory: capturedForm.editMode ? (capturedForm.originalDoc?.versionsHistory || []) : [],
       locked: false
     };
 
     try {
-      setUploadForm(prev => ({ ...prev, isProcessing: true, processingMessage: 'Sedang Mengupload Dokumen...' }));
-
-      if (uploadForm.editMode && uploadForm.id) {
-        await api.updateDocument(uploadForm.id, newDoc);
+      if (capturedForm.editMode && capturedForm.id) {
+        await api.updateDocument(capturedForm.id, newDoc);
         addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${newDoc.title}`);
       } else {
         await api.createDocument(newDoc);
@@ -1337,12 +1778,10 @@ export default function App() {
       }
       await fetchDocs();
       await fetchLogs();
-      setIsModalOpen(false);
     } catch (e) {
-      alert(e.message);
-    } finally {
-      setUploadForm(prev => ({ ...prev, isProcessing: false, processingMessage: '' }));
-    }
+      console.error("Background Upload Failed:", e);
+      alert("Gagal memproses dokumen di latar belakang: " + e.message);
+    } 
   };
 
   const handleEditDoc = async (e, doc) => {
@@ -1404,27 +1843,93 @@ export default function App() {
       // Potential improvement: pass filter to TaxSummary component
       return;
     }
+    if (doc.matchType === 'tax_monitoring') {
+      setActiveTab('tax-monitoring');
+      return;
+    }
+    if (doc.matchType === 'approval') {
+      setActiveTab('approvals');
+      // Backend should return full approval object in doc.data
+      setApprovals(prev => {
+          const exists = prev.find(a => a.id === doc.id);
+          return exists ? prev : [...prev, doc.data || doc];
+      });
+      // We might need a way to auto-open the modal in DocumentApproval.jsx
+      return;
+    }
+    if (doc.matchType === 'pustaka') {
+      setActiveTab('pustaka');
+      // We can pass state to Pustaka component if needed
+      return;
+    }
+    if (doc.matchType === 'tax_object') {
+      setActiveTab('tax-calculation');
+      return;
+    }
+    if (doc.matchType === 'note') {
+      // If note is on a document, view that document
+      if (doc.parentId && doc.parentType === 'document') {
+          const parentDoc = docList.find(d => d.id === doc.parentId);
+          if (parentDoc) handleViewDoc(parentDoc);
+      }
+      return;
+    }
 
     // 1. Set data awal (meta data) agar modal muncul cepat
     setViewDocData(doc);
     setModalTab('doc-view');
     setIsModalOpen(true);
+    setPreviewHtml('');
 
-    // 2. Cek apakah data file (Base64) kosong? Jika ya, ambil data lengkap dari server
+    // 2. Inisialisasi data awal & Cek apakah data file (Base64) kosong?
+    let fullDoc = doc;
     if (!doc.fileData && !doc.file_data && !doc.filedata) {
       try {
-        // Tampilkan status loading kecil (opsional) atau log
         console.log("Mengambil data lengkap dokumen dari server...", doc.id);
-
-        const fullDoc = await api.getDocumentById(doc.id);
-
-        if (fullDoc) {
-          // Update state viewDocData dengan data lengkap (termasuk fileData)
-          setViewDocData((prev) => ({ ...prev, ...fullDoc }));
+        const fetched = await api.getDocumentById(doc.id);
+        if (fetched) {
+          fullDoc = fetched;
+          setViewDocData(fullDoc);
         }
       } catch (error) {
         console.error("Gagal memuat detail dokumen:", error);
       }
+    }
+
+    // 3. Generate Preview for Office Files (Support URL fallback for disk storage)
+    const content = fullDoc?.fileData || fullDoc?.file_data || fullDoc?.filedata || fullDoc?.url;
+    if (content && typeof content === 'string') {
+      try {
+        let buffer;
+        if (content.startsWith('http') || content.startsWith('/uploads/') || content.startsWith('blob:')) {
+          const response = await fetch(getFullUrl(content));
+          buffer = await response.arrayBuffer();
+        } else if (content.includes('base64,') || content.length > 1000) {
+          let base64 = content;
+          if (base64.includes('base64,')) base64 = base64.split('base64,')[1];
+          base64 = base64.replace(/[\n\r\s]/g, ''); // Clean whitespace
+          try {
+            const binaryString = atob(base64);
+            const bytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) bytes[i] = binaryString.charCodeAt(i);
+            buffer = bytes.buffer;
+          } catch (atobErr) {
+            console.error("Gagal decode Base64 di handleViewDoc:", atobErr);
+          }
+        }
+
+        const type = String(fullDoc?.type || '').toLowerCase();
+        const name = String(fullDoc?.title || '').toLowerCase();
+
+        if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
+          const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+          setPreviewHtml(result.value);
+        } else if (buffer && (type?.includes('sheet') || type?.includes('excel') || name?.endsWith('.xlsx') || name?.endsWith('.xls'))) {
+          const wb = XLSX.read(buffer, { type: 'array' });
+          const firstSheet = wb.Sheets[wb.SheetNames[0]];
+          setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
+        }
+      } catch (e) { console.error("Preview error:", e); }
     }
   };
 
@@ -1463,10 +1968,10 @@ export default function App() {
       if (base64Content && typeof base64Content === 'string' && base64Content.length > 0) {
         try {
           // Cek apakah ini URL biasa (bukan base64)
-          if (base64Content.startsWith('http') || base64Content.startsWith('blob:')) {
-            downloadUrl = base64Content;
+          if (base64Content.startsWith('http') || base64Content.startsWith('blob:') || base64Content.startsWith('/uploads/')) {
+            downloadUrl = getFullUrl(base64Content);
             element.target = "_blank";
-          } else {
+          } else if (base64Content.includes('base64,') || base64Content.length > 1000) {
             let mime = doc.type || 'application/octet-stream'; // Default ke Binary Generic
 
             // Deteksi dan bersihkan prefix Data URI (data:application/pdf;base64,...)
@@ -1658,6 +2163,12 @@ export default function App() {
     if (e) e.stopPropagation();
     if (!newData || !newData.name) return;
 
+    // Proteksi folder DataBox
+    if ((folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && folder.name !== newData.name) {
+      alert(`Nama folder sistem '${folder.name}' tidak dapat diubah.`);
+      return;
+    }
+
     try {
       await api.updateFolder(folder.id, newData);
       setFolders(await api.getFolders());
@@ -1681,6 +2192,14 @@ export default function App() {
 
   const handleDeleteFolder = async (e, id) => {
     e.stopPropagation();
+
+    // Proteksi folder DataBox
+    const folder = folders.find(f => f.id === id);
+    if (folder?.name === 'DataBox' || folder?.name === 'TaxAudit' || folder?.name === 'ApprovalDoc') {
+      alert(`Folder sistem '${folder.name}' tidak dapat dihapus.`);
+      return;
+    }
+
     if (window.confirm("Hapus folder ini beserta isinya?")) {
       await api.deleteFolder(id);
       await fetchFolders();
@@ -1909,6 +2428,7 @@ export default function App() {
         isDarkMode={isDarkMode}
         setIsDarkMode={setIsDarkMode}
         handleLogout={handleLogout}
+        ocrStats={ocrStats}
       />
 
       {/* MOBILE OVERLAY */}
@@ -1922,8 +2442,10 @@ export default function App() {
       {/* MOBILE HEADER */}
       <div className="md:hidden fixed top-0 left-0 right-0 h-16 bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl border-b border-white/20 dark:border-white/10 flex items-center justify-between px-6 z-20">
         <div className="flex items-center gap-2">
-          <img src="/vite.svg" alt="Logo" className="w-8 h-8" />
-          <span className="font-bold text-lg dark:text-white tracking-tight">TaxArchi Suite</span>
+          <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center shadow-md">
+            <BookOpen className="text-white" size={18} />
+          </div>
+          <span className="font-bold text-lg dark:text-white tracking-tight">Pustaka</span>
         </div>
         <button onClick={() => setIsSidebarCollapsed(false)} className="p-2 text-gray-500 dark:text-white">
           <Menu size={24} />
@@ -1941,7 +2463,9 @@ export default function App() {
                       activeTab === 'tax-monitoring' ? 'Monitoring Pemeriksaan' :
                         activeTab === 'tax-summary' ? 'Kepatuhan Pajak' :
                           activeTab === 'tax-calculation' ? 'Kalkulasi Pajak' :
-                            activeTab === 'master' ? 'Master Data' : 'Digital Vault'}
+                            activeTab === 'master' ? 'Master Data' : 
+                              activeTab === 'approvals' ? 'Document Approval' : 
+                                activeTab === 'pustaka' ? 'Pustaka Pengetahuan' : 'Digital Vault'}
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
                 {activeTab === 'dashboard' ? 'Dashboard' :
@@ -1950,7 +2474,9 @@ export default function App() {
                       activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
                         activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
                           activeTab === 'tax-calculation' ? 'Kalkulasi & Pelaporan Pajak' :
-                            activeTab === 'master' ? 'Pengaturan Sistem' : 'Gudang Arsip Utama'}
+                            activeTab === 'master' ? 'Pengaturan Sistem' : 
+                            activeTab === 'approvals' ? 'Sistem Persetujuan Dokumen Berjenjang' : 
+                              activeTab === 'pustaka' ? 'Pusat Edukasi & Panduan Kerja' : 'Gudang Arsip Utama'}
               </p>
             </div>
           </div>
@@ -1981,6 +2507,7 @@ export default function App() {
                 folders={folders}
                 currentUser={currentUser}
                 onCopy={handleCopyToClipboard}
+                onOpenLanding={handleOpenLanding}
               />
             )}
             {activeTab === 'inventory' && (
@@ -2006,6 +2533,7 @@ export default function App() {
                   setShowRestoreForm(true);
                 }}
                 onViewExternal={handleViewExternal}
+                inventoryIssues={inventoryIssues}
               />
             )}
             {activeTab === 'documents' && (
@@ -2048,6 +2576,19 @@ export default function App() {
                 onRefresh={() => { fetchTaxAudits(); fetchDocs(); fetchFolders(); fetchLogs(); }}
                 hasPermission={hasPermission}
                 currentUser={currentUser}
+                syncAuditFolder={syncAuditFolder}
+              />
+            )}
+            {activeTab === 'approvals' && (
+              <DocumentApproval
+                approvals={approvals}
+                users={users}
+                departments={departments}
+                currentUser={currentUser}
+                onRefresh={fetchApprovals}
+                hasPermission={hasPermission}
+                flows={flows}
+                syncApprovalFolder={syncApprovalFolder}
               />
             )}
             {activeTab === 'tax-summary' && (
@@ -2073,6 +2614,7 @@ export default function App() {
                 users={users}
                 roles={roles}
                 departments={departments}
+                flows={flows} // Pass flows to MasterData
                 userSearchQuery={userSearchQuery}
                 setUserSearchQuery={setUserSearchQuery}
                 handleDeleteUser={handleDeleteUser}
@@ -2084,6 +2626,9 @@ export default function App() {
                 handleCreateDept={handleCreateDept}
                 handleEditDept={handleEditDept}
                 handleDeleteDept={handleDeleteDept}
+                handleCreateFlow={handleCreateFlow} // Pass flow handlers
+                handleEditFlow={handleEditFlow}
+                handleDeleteFlow={handleDeleteFlow}
                 setIsModalOpen={setIsModalOpen}
                 setModalTab={setModalTab}
                 setRoles={setRoles}
@@ -2097,11 +2642,25 @@ export default function App() {
                 onUpdateProfile={handleUpdateProfile}
               />
             )}
+            {activeTab === 'pustaka' && (
+              <Pustaka 
+                currentUser={currentUser}
+                hasPermission={hasPermission}
+                users={users}
+                departments={departments}
+              />
+            )}
           </div>
 
         </div>
 
         {/* NOTIFIKASI COPY GLOBAL (STARTUP STYLE) */}
+        <AnimatePresence>
+          {showInitialLanding && (
+            <InitialLandingPage onClose={handleCloseLanding} />
+          )}
+        </AnimatePresence>
+
         {copyNotification && (
           <div className="fixed bottom-10 right-10 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border border-emerald-500/50 p-4 rounded-[2rem] shadow-2xl z-[200] animate-in slide-in-from-bottom-8 flex items-center gap-4 ring-8 ring-emerald-500/5">
             <div className="p-3 bg-emerald-500 rounded-2xl text-white shadow-lg shadow-emerald-500/30 animate-bounce">
@@ -2123,7 +2682,7 @@ export default function App() {
         title="Restore Box"
         size="max-w-md"
       >
-        <div className="relative z-10">
+        <div className="relative z-10 pt-24">
           <div className="flex justify-between items-center mb-6">
             <div>
               <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide uppercase mt-1">
@@ -2216,8 +2775,8 @@ export default function App() {
                     : selectedSlotId ? `Slot #${selectedSlotId}` : `Detail Box Eksternal: ${boxForm?.boxId || ''}`
         }
       >
-        {activeTab === 'documents' && modalTab === 'upload' && (
-          <div className="space-y-6">
+        {modalTab === 'upload' && (
+          <div className="space-y-6 pt-24">
             {uploadForm.isProcessing ? (
               <div className="text-center py-12">
                 <div className="relative mx-auto mb-4 w-16 h-16">
@@ -2257,26 +2816,23 @@ export default function App() {
                   />
                 </div>
                 <div className="flex justify-end gap-3 pt-4">
-                  {/* Tombol OCR Manual */}
-                  <button
-                    onClick={handleRunOCR}
-                    disabled={!uploadForm.fileData}
-                    className="px-4 py-2 bg-amber-100 text-amber-700 hover:bg-amber-200 rounded-lg flex items-center gap-2 disabled:opacity-50"
-                  >
-                    <FileText size={16} /> Proses OCR
+                  <p className="text-[10px] text-slate-400 italic mr-auto self-center">
+                    * OCR akan diproses otomatis di latar belakang setelah upload selesai.
+                  </p>
+                  <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold shadow-lg shadow-blue-500/20 hover:scale-105 transition-all">
+                    {uploadForm.editMode ? 'Simpan Revisi' : 'Upload & Proses Latar'}
                   </button>
-                  <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg">{uploadForm.editMode ? 'Simpan Revisi' : 'Upload Baru'}</button>
                 </div>
               </>
             )}
           </div>
         )}
 
-        {activeTab === 'documents' && modalTab === 'doc-view' && viewDocData && (
-          <div className="space-y-6">
+        {modalTab === 'doc-view' && viewDocData && (
+          <div className="space-y-6 pt-24 pb-10">
             <div className="flex gap-4">
               <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
-                {viewDocData.type.includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
+                {String(viewDocData?.type || '').toLowerCase().includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
               </div>
               <div className="flex-1">
                 <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
@@ -2288,6 +2844,27 @@ export default function App() {
                 <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
               </div>
             </div>
+
+            {/* FILE PREVIEW SECTION */}
+            <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
+              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><Eye size={16} /> Preview Dokumen</h4>
+              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden min-h-[300px] max-h-[600px] overflow-y-auto shadow-inner">
+                {String(viewDocData?.type || '').toLowerCase().includes('image') ? (
+                  <img src={viewDocData?.fileData || viewDocData?.file_data || viewDocData?.filedata || getFullUrl(viewDocData?.url)} alt="Preview" className="max-w-full mx-auto" onError={(e) => { e.target.style.display='none'; }} />
+                ) : String(viewDocData?.type || '').toLowerCase().includes('pdf') ? (
+                  <iframe src={viewDocData?.fileData || viewDocData?.file_data || viewDocData?.filedata || getFullUrl(viewDocData?.url)} className="w-full h-[600px]" title="PDF Preview" />
+                ) : previewHtml ? (
+                  <div className="p-6 prose dark:prose-invert max-w-none overflow-x-auto preview-content" dangerouslySetInnerHTML={{ __html: previewHtml }} />
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-[300px] text-gray-400">
+                    <FileText size={48} className="mb-2 opacity-20" />
+                    <p className="text-sm font-medium">Preview tidak tersedia untuk format ini.</p>
+                    <p className="text-xs opacity-60 mt-1">Gunakan tombol Download untuk melihat file secara penuh.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
               <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><FileText size={16} /> Isi Dokumen (OCR & Analisis)</h4>
               <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent || 'Tidak ada konten OCR.'}</div>
@@ -2332,8 +2909,8 @@ export default function App() {
           </div>
         )}
 
-        {activeTab === 'inventory' && (
-          <div className="space-y-6 animate-in fade-in duration-500">
+        {(modalTab === 'details' || modalTab === 'history' || modalTab === 'invoice-detail') && (
+          <div className="space-y-6 animate-in fade-in duration-500 pt-24">
             <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -z-10 animate-pulse"></div>
 
             {/* Header Box ID - Capsule Style */}
@@ -2575,8 +3152,8 @@ export default function App() {
                   {/* Row 3: Status & External Actions - Capsule Style */}
                   {(selectedSlotId || selectedExternalItem) && (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' : true) && (
                     <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
-                      <div className="grid grid-cols-2 gap-4">
-                        {hasPermission('inventory', 'edit') && (
+                      <div className={`grid ${selectedSlotId ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
+                        {selectedSlotId && hasPermission('inventory', 'edit') && (
                           <>
                             {((inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status === 'BORROWED' || (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status === 'AUDIT') ? (
                               <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-5 border-2 border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
@@ -2654,6 +3231,28 @@ export default function App() {
                   </div>
 
                   {selectedInvoice.file && <button onClick={() => handleDownloadInvoice(selectedInvoice)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2"><Download size={18} /> Download Lampiran PDF/Gambar</button>}
+
+                  {/* Invoice Preview */}
+                  {selectedInvoice.file && (
+                    <div className="mt-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-inner">
+                      <div className="p-2 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Preview Lampiran</span>
+                      </div>
+                      <div className="h-80 overflow-auto bg-slate-50 dark:bg-slate-950">
+                        {(typeof selectedInvoice.file === 'string' && (selectedInvoice.file.match(/\.(jpg|jpeg|png|webp)$/i) || selectedInvoice.file.startsWith('data:image'))) ? (
+                          <img src={selectedInvoice.file} alt="Invoice Preview" className="max-w-full mx-auto" />
+                        ) : (typeof selectedInvoice.file === 'string' && (selectedInvoice.file.match(/\.pdf$/i) || selectedInvoice.file.startsWith('data:application/pdf'))) ? (
+                          <iframe src={selectedInvoice.file} className="w-full h-full min-h-[320px]" title="Invoice PDF" />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full py-12 text-slate-400">
+                            <FileText size={48} className="mb-2 opacity-20" />
+                            <p className="text-xs font-bold uppercase tracking-widest">Preview Terbatas</p>
+                            <p className="text-[10px] opacity-60 mt-1">Gunakan tombol Download untuk melihat file.</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {selectedInvoice.ocrContent && (
@@ -2666,44 +3265,108 @@ export default function App() {
             )}
 
             {modalTab === 'history' && (
-              <div className="space-y-8 pl-4 py-4 animate-in fade-in duration-500 relative">
-                <div className="absolute left-[39px] top-6 bottom-6 w-0.5 bg-gradient-to-b from-indigo-500/50 via-indigo-200/20 to-transparent dark:from-indigo-600/50 dark:via-indigo-900/20"></div>
-
-                {(selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history)?.slice().reverse().map((hist, idx) => (
-                  <div key={idx} className="relative pl-12 group">
-                    <div className={`absolute left-0 top-1.5 w-6 h-6 rounded-full border-4 border-white dark:border-slate-800 shadow-xl z-10 transition-all group-hover:scale-125 ring-4 ring-transparent group-hover:ring-indigo-500/10 ${hist.action === 'REMOVED' || hist.action === 'EXTERNAL' ? 'bg-red-500 shadow-red-500/30' :
-                      hist.action === 'MOVED' ? 'bg-blue-500 shadow-blue-500/30' :
-                        hist.action === 'IMPORTED' ? 'bg-emerald-500 shadow-emerald-500/30' :
-                          'bg-indigo-600 shadow-indigo-500/30'
-                      }`}></div>
-                    <div className="bg-white/40 dark:bg-slate-800/40 p-5 rounded-3xl border border-white/40 dark:border-white/5 backdrop-blur-md shadow-lg hover:shadow-2xl transition-all transform hover:-translate-y-1">
-                      <div className="flex justify-between items-start mb-3">
-                        <span className={`font-black text-xs px-3 py-1 rounded-full uppercase tracking-widest ${hist.action === 'REMOVED' ? 'bg-red-100 text-red-600' :
-                          hist.action === 'MOVED' ? 'bg-blue-100 text-blue-600' :
-                            hist.action === 'IMPORTED' ? 'bg-emerald-100 text-emerald-600' :
-                              'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300'
-                          }`}>
-                          {hist.action}
-                        </span>
-                        <div className="flex items-center gap-1.5 text-[10px] font-black text-slate-400 bg-slate-100/50 dark:bg-slate-900/50 px-3 py-1 rounded-full">
-                          <Clock size={10} /> {new Date(hist.timestamp).toLocaleString()}
-                        </div>
+              <div className="space-y-6 py-4 animate-in fade-in duration-500 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
+                {/* Current Status Summary Card */}
+                <div className="bg-indigo-600 rounded-[2rem] p-6 text-white shadow-xl shadow-indigo-500/20 relative overflow-hidden mb-8">
+                  <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <History size={120} />
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-100 mb-2">Status Terkini Kardus</p>
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-inner">
+                        <Package size={28} />
                       </div>
-                      <p className="text-sm text-slate-600 dark:text-slate-300 font-medium leading-relaxed italic">"{hist.note}"</p>
-                      <div className="mt-4 pt-3 border-t border-white/20 dark:border-white/5 flex items-center justify-between">
-                        <div className="text-[10px] text-indigo-600 dark:text-indigo-300 flex items-center gap-2 font-black bg-indigo-500/10 px-3 py-1 rounded-lg">
-                          <User size={12} fill="currentColor" className="opacity-40" /> {hist.user}
+                      <div>
+                        <h3 className="text-2xl font-black tracking-tight">{boxForm.boxId}</h3>
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="px-2 py-0.5 bg-white/20 rounded-lg text-[10px] font-black uppercase tracking-wider">
+                            {selectedSlotId ? `Slot #${selectedSlotId}` : selectedExternalItem?.destination || 'External'}
+                          </span>
+                          <div className="w-1 h-1 rounded-full bg-white/40"></div>
+                          <span className="text-[10px] font-bold text-indigo-100">
+                            Update: {new Date((selectedSlotId ? inventory[selectedSlotId - 1]?.lastUpdated : selectedExternalItem?.sentDate) || Date.now()).toLocaleDateString()}
+                          </span>
                         </div>
                       </div>
                     </div>
                   </div>
-                ))}
-                {(!selectedSlotId && !selectedExternalItem?.history?.length && (!inventory[selectedSlotId - 1]?.history || inventory[selectedSlotId - 1]?.history.length === 0)) && (
-                  <div className="text-center py-20 text-slate-400 italic">
-                    <div className="flex justify-center mb-4 opacity-20"><History size={64} /></div>
-                    <p className="font-black tracking-widest uppercase text-xs">Belum ada riwayat tercatat.</p>
-                  </div>
-                )}
+                </div>
+
+                <div className="relative pl-4">
+                  {/* Vertical Trail Line */}
+                  <div className="absolute left-[39px] top-4 bottom-4 w-1 bg-slate-100 dark:bg-slate-800 rounded-full"></div>
+
+                  {(() => {
+                    const history = (selectedSlotId ? inventory[selectedSlotId - 1]?.history : selectedExternalItem?.history) || [];
+                    if (history.length === 0) {
+                      return (
+                        <div className="text-center py-20 text-slate-400 italic">
+                          <div className="flex justify-center mb-4 opacity-20"><History size={64} /></div>
+                          <p className="font-black tracking-widest uppercase text-xs">Belum ada riwayat tercatat.</p>
+                        </div>
+                      );
+                    }
+
+                    return history.slice().reverse().map((hist, idx) => {
+                      const getActionConfig = (action) => {
+                        const a = action?.toUpperCase();
+                        if (a === 'CREATED' || a === 'IMPORTED') return { icon: Plus, color: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50' };
+                        if (a === 'STORED' || a === 'RESTORED') return { icon: CheckCircle2, color: 'bg-indigo-500', text: 'text-indigo-600', bg: 'bg-indigo-50' };
+                        if (a === 'MOVED') return { icon: ArrowLeftRight, color: 'bg-blue-500', text: 'text-blue-600', bg: 'bg-blue-50' };
+                        if (a === 'BORROWED') return { icon: User, color: 'bg-amber-500', text: 'text-amber-600', bg: 'bg-amber-50' };
+                        if (a === 'AUDIT') return { icon: Shield, color: 'bg-purple-500', text: 'text-purple-600', bg: 'bg-purple-50' };
+                        if (a === 'EXTERNAL') return { icon: Truck, color: 'bg-orange-500', text: 'text-orange-600', bg: 'bg-orange-50' };
+                        if (a === 'REMOVED') return { icon: Trash2, color: 'bg-red-500', text: 'text-red-600', bg: 'bg-red-50' };
+                        return { icon: History, color: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-50' };
+                      };
+
+                      const config = getActionConfig(hist.action);
+                      const Icon = config.icon;
+
+                      return (
+                        <div key={idx} className="relative pl-16 pb-10 group last:pb-0">
+                          {/* Trail Node */}
+                          <div className={`absolute left-0 top-0 w-12 h-12 rounded-2xl border-4 border-white dark:border-slate-900 shadow-xl z-10 transition-all group-hover:scale-110 flex items-center justify-center ${config.color} text-white`}>
+                            <Icon size={20} />
+                          </div>
+
+                          {/* Content Card */}
+                          <div className="bg-white dark:bg-slate-800/50 p-5 rounded-3xl border border-slate-100 dark:border-white/5 shadow-sm group-hover:shadow-md transition-all group-hover:-translate-y-1">
+                            <div className="flex justify-between items-start mb-3">
+                              <div>
+                                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${config.bg} ${config.text}`}>
+                                  {hist.action}
+                                </span>
+                                <h4 className="mt-2 font-bold text-slate-800 dark:text-white text-sm leading-tight">
+                                  {hist.note}
+                                </h4>
+                              </div>
+                              <div className="text-right">
+                                <div className="flex items-center justify-end gap-1.5 text-[10px] font-black text-slate-400">
+                                  <Clock size={10} /> {new Date(hist.timestamp).toLocaleDateString()}
+                                </div>
+                                <div className="text-[9px] font-bold text-slate-300 mt-0.5">
+                                  {new Date(hist.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-50 dark:border-white/5">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-black text-slate-500">
+                                  {hist.user?.charAt(0).toUpperCase()}
+                                </div>
+                                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Oleh: <span className="text-indigo-500">{hist.user}</span></span>
+                              </div>
+                              <div className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">Verified Trail</div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
               </div>
             )}
 
@@ -2714,9 +3377,8 @@ export default function App() {
 
 
         {/* MASTER DATA MODALS */}
-        {
-          activeTab === 'master' && (
-            <>
+        {(modalTab === 'user-create' || modalTab === 'dept-form' || modalTab === 'role-create' || modalTab === 'role-edit') && (
+            <div className="space-y-6 pt-24">
               {modalTab === 'user-create' && (
                 <div className="space-y-5 animate-in slide-in-from-bottom-2 duration-300">
                   <div className="grid grid-cols-2 gap-4">
@@ -2879,14 +3541,13 @@ export default function App() {
                   </div>
                 </div>
               )}
-            </>
-          )
-        }
+            </div>
+        )}
 
         {/* TAX FORM MODAL */}
         {
           (modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
-            <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
+            <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300 pt-24">
               <div className="grid grid-cols-3 gap-6 bg-white/30 dark:bg-slate-800/30 p-6 rounded-3xl border border-white/20 dark:border-white/5">
                 <div>
                   <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Bulan</label>
@@ -3059,7 +3720,7 @@ export default function App() {
             </div>
           )
         }
-      </Modal >
+      </Modal>
 
       {/* GLOBAL POPUPS - Root Level */}
       <Modal
@@ -3068,6 +3729,7 @@ export default function App() {
         title="Kirim ke Indoarsip"
         size="max-w-sm"
       >
+        <div className="pt-24">
         <div className="w-16 h-16 rounded-[2rem] bg-indigo-600 text-white flex items-center justify-center shadow-2xl shadow-indigo-600/30 mx-auto mb-6">
           <Truck size={32} />
         </div>
@@ -3097,6 +3759,65 @@ export default function App() {
             >
               Batalkan
             </button>
+          </div>
+        </div>
+        </div>
+      </Modal>
+
+      {/* MODAL: CREATE/EDIT APPROVAL FLOW */}
+      <Modal isOpen={isFlowModalOpen} onClose={() => setIsFlowModalOpen(false)} title={editingFlow ? "Edit Alur Persetujuan" : "Buat Alur Persetujuan Baru"} size="max-w-2xl">
+        <div className="space-y-6 pt-24 max-h-[80vh] overflow-y-auto custom-scrollbar px-1">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nama Alur</label>
+            <input
+              className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-bold"
+              placeholder="Contoh: Alur Cuti Karyawan"
+              value={flowForm.name}
+              onChange={e => setFlowForm({ ...flowForm, name: e.target.value })}
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Deskripsi</label>
+            <textarea
+              className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-medium resize-none"
+              rows="3"
+              placeholder="Jelaskan tujuan alur persetujuan ini..."
+              value={flowForm.description}
+              onChange={e => setFlowForm({ ...flowForm, description: e.target.value })}
+            />
+          </div>
+
+          <div className="space-y-4 p-6 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-[2rem] border border-indigo-100 dark:border-indigo-800">
+            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
+              <ShieldCheck size={16} /> Tentukan Alur Persetujuan
+            </h4>
+            <div className="space-y-2">
+              {(flowForm.steps || []).map((step, idx) => (
+                <div key={idx} className="flex items-center gap-3 bg-white dark:bg-slate-900 p-3 rounded-2xl shadow-sm">
+                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-black">{idx + 1}</div>
+                  <div className="flex-1">
+                    <p className="text-sm font-black text-slate-800 dark:text-white">{step.name}</p>
+                    <p className="text-[10px] text-slate-400 font-bold uppercase">{step.username}</p>
+                  </div>
+                  <button onClick={() => handleRemoveFlowStep(idx)} className="p-2 text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
+                </div>
+              ))}
+            </div>
+            <select 
+              className="w-full px-5 py-3 bg-white dark:bg-slate-900 border-2 border-indigo-100 dark:border-indigo-800 rounded-2xl outline-none dark:text-white font-bold appearance-none"
+              onChange={(e) => {
+                const user = users.find(u => u.username === e.target.value);
+                if (user) handleAddFlowStep(user);
+                e.target.value = "";
+              }}
+            >
+              <option value="">+ Tambah Approver</option>
+              {users.map(u => <option key={u.id} value={u.username}>{u.name} ({u.role})</option>)}
+            </select>
+          </div>
+          <div className="flex gap-3 pt-4">
+            <button onClick={() => setIsFlowModalOpen(false)} className="flex-1 py-4 text-slate-500 font-black uppercase text-xs tracking-widest">Batal</button>
+            <button onClick={handleSaveFlow} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-indigo-500/20 hover:bg-indigo-500 transition-all active:scale-95">Simpan Flow</button>
           </div>
         </div>
       </Modal>

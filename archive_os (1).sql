@@ -557,9 +557,43 @@ CREATE TABLE `roles` (
 --
 
 INSERT INTO `roles` (`id`, `label`, `access`) VALUES
-('admin', 'Administrator', '{\"dashboard\":[\"view\",\"create\",\"edit\",\"delete\"],\"inventory\":[\"view\",\"create\",\"edit\",\"delete\"],\"documents\":[\"view\",\"create\",\"edit\",\"delete\"],\"tax-monitoring\":[\"view\",\"create\",\"edit\",\"delete\"],\"tax-summary\":[\"view\",\"create\",\"edit\",\"delete\"],\"master\":[\"view\",\"create\",\"edit\",\"delete\"]}'),
-('staff', 'Staff Gudang', '{\"dashboard\":[\"view\",\"create\",\"edit\",\"delete\"],\"inventory\":[\"view\",\"create\",\"edit\",\"delete\"],\"documents\":[\"view\",\"create\",\"edit\",\"delete\"],\"tax-monitoring\":[\"view\",\"create\",\"edit\",\"delete\"],\"tax-summary\":[\"view\",\"create\",\"edit\",\"delete\"]}'),
-('viewer', 'Tamu / Viewer', '{\"dashboard\":[\"view\"],\"inventory\":[\"view\"],\"documents\":[\"view\"],\"tax-monitoring\":[\"view\"],\"tax-summary\":[\"view\"]}');
+('admin', 'Administrator', '{"dashboard":["view","create","edit","delete"],"inventory":["view","create","edit","delete"],"documents":["view","create","edit","delete"],"tax-monitoring":["view","create","edit","delete"],"tax-summary":["view","create","edit","delete"],"master":["view","create","edit","delete"],"approvals":["view","create","edit","delete"]}'),
+('staff', 'Staff Gudang', '{"dashboard":["view","create","edit","delete"],"inventory":["view","create","edit","delete"],"documents":["view","create","edit","delete"],"tax-monitoring":["view","create","edit","delete"],"tax-summary":["view","create","edit","delete"],"approvals":["view","create","edit","delete"]}'),
+('viewer', 'Tamu / Viewer', '{"dashboard":["view"],"inventory":["view"],"documents":["view"],"tax-monitoring":["view"],"tax-summary":["view"],"approvals":["view"]}');
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `document_approvals`
+--
+
+CREATE TABLE IF NOT EXISTS `document_approvals` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `title` text DEFAULT NULL,
+  `description` text DEFAULT NULL,
+  `division` text DEFAULT NULL,
+  `requester_name` text DEFAULT NULL,
+  `requester_username` text DEFAULT NULL,
+  `attachment_url` text DEFAULT NULL,
+  `attachment_name` text DEFAULT NULL,
+  `status` varchar(50) DEFAULT 'Pending',
+  `current_step_index` int(11) DEFAULT 0,
+  `created_at` datetime DEFAULT current_timestamp(),
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS `approval_steps` (
+  `id` int(11) NOT NULL AUTO_INCREMENT,
+  `approval_id` int(11) DEFAULT NULL,
+  `step_index` int(11) DEFAULT NULL,
+  `approver_username` text DEFAULT NULL,
+  `approver_name` text DEFAULT NULL,
+  `status` varchar(50) DEFAULT 'Pending',
+  `action_date` datetime DEFAULT NULL,
+  `note` text DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  FOREIGN KEY (`approval_id`) REFERENCES `document_approvals`(`id`) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- --------------------------------------------------------
 

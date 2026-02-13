@@ -200,30 +200,135 @@ function initDb() {
             processed_at DATETIME,
             finished_at DATETIME,
             error TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS document_approvals (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title TEXT,
+            description TEXT,
+            division TEXT,
+            requester_name TEXT,
+            requester_username TEXT,
+            attachment_url TEXT,
+            attachment_name TEXT,
+            status VARCHAR(50) DEFAULT 'Pending',
+            current_step_index INT DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            ocr_content LONGTEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS approval_steps (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            approval_id INT,
+            step_index INT,
+            approver_username TEXT,
+            approver_name TEXT,
+            status VARCHAR(50) DEFAULT 'Pending',
+            action_date DATETIME,
+            note TEXT,
+            attachment_url TEXT,
+            attachment_name TEXT,
+            FOREIGN KEY (approval_id) REFERENCES document_approvals(id) ON DELETE CASCADE
+        )`
+        ,
+        `CREATE TABLE IF NOT EXISTS approval_flows (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(255),
+            description TEXT,
+            steps LONGTEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS pustaka_guides (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            title VARCHAR(255),
+            description TEXT,
+            category VARCHAR(100),
+            icon VARCHAR(50),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            privacy VARCHAR(50) DEFAULT 'public',
+            allowed_depts TEXT,
+            allowed_users TEXT,
+            owner VARCHAR(100)
+        )`,
+        `CREATE TABLE IF NOT EXISTS pustaka_slides (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            guide_id INT,
+            title VARCHAR(255),
+            content TEXT,
+            image TEXT,
+            step_order INT,
+            FOREIGN KEY (guide_id) REFERENCES pustaka_guides(id) ON DELETE CASCADE
+        )`,
+        `CREATE TABLE IF NOT EXISTS pustaka_categories (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            name VARCHAR(100) UNIQUE
+        )`,
+        `CREATE TABLE IF NOT EXISTS comments (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            documentId VARCHAR(255),
+            user VARCHAR(100),
+            text TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            attachmentUrl TEXT,
+            attachmentName TEXT,
+            attachmentType VARCHAR(100),
+            attachmentSize VARCHAR(50)
+        )`,
+        `CREATE TABLE IF NOT EXISTS tax_audit_notes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            auditId VARCHAR(255),
+            stepIndex INT,
+            user VARCHAR(100),
+            text TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            attachmentUrl TEXT,
+            attachmentName TEXT,
+            attachmentType VARCHAR(100),
+            attachmentSize VARCHAR(50)
         )`
     ];
 
-    tables.forEach(sql => {
-        db.run(sql, [], (err) => {
-            if (err) console.error("Error init table:", err);
-        });
-    });
-
-    // MIGRATION: Add columns if missing
-    db.all("SHOW COLUMNS FROM logs LIKE 'oldValue'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating logs table: Adding oldValue/newValue columns...");
-            db.run("ALTER TABLE logs ADD COLUMN oldValue TEXT");
-            db.run("ALTER TABLE logs ADD COLUMN newValue TEXT");
+    // Execute table creation sequentially to avoid foreign key errors (errno 150)
+    (async () => {
+        for (const sql of tables) {
+            await new Promise((resolve) => {
+                db.run(sql, [], (err) => {
+                    if (err) console.error("Error init table:", err.message);
+                    resolve();
+                });
+            });
         }
-    });
 
-    // MIGRATION: Pastikan tax_summaries menggunakan skema baru (kolom 'data')
-    db.all("SHOW COLUMNS FROM tax_summaries LIKE 'data'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating tax_summaries table: Old schema detected. Recreating for dynamic structure...");
-            db.run("DROP TABLE tax_summaries", [], () => {
-                db.run(`CREATE TABLE tax_summaries(
+        // MIGRATION: Add columns if missing
+        db.all("SHOW COLUMNS FROM logs LIKE 'oldValue'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating logs table: Adding oldValue/newValue columns...");
+                db.run("ALTER TABLE logs ADD COLUMN oldValue TEXT");
+                db.run("ALTER TABLE logs ADD COLUMN newValue TEXT");
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM pustaka_guides LIKE 'privacy'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating pustaka_guides table: Adding privacy columns...");
+                db.run("ALTER TABLE pustaka_guides ADD COLUMN privacy VARCHAR(50) DEFAULT 'public'");
+                db.run("ALTER TABLE pustaka_guides ADD COLUMN allowed_depts TEXT");
+                db.run("ALTER TABLE pustaka_guides ADD COLUMN allowed_users TEXT");
+                db.run("ALTER TABLE pustaka_guides ADD COLUMN owner VARCHAR(100)");
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM approval_steps LIKE 'attachment_url'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating approval_steps table: Adding attachment columns...");
+                db.run("ALTER TABLE approval_steps ADD COLUMN attachment_url TEXT");
+                db.run("ALTER TABLE approval_steps ADD COLUMN attachment_name TEXT");
+            }
+        });
+
+        // MIGRATION: Pastikan tax_summaries menggunakan skema baru (kolom 'data')
+        db.all("SHOW COLUMNS FROM tax_summaries LIKE 'data'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating tax_summaries table: Old schema detected. Recreating for dynamic structure...");
+                db.run("DROP TABLE tax_summaries", [], () => {
+                    db.run(`CREATE TABLE tax_summaries(
                     id VARCHAR(255) PRIMARY KEY,
                     type VARCHAR(20),
                     month VARCHAR(50),
@@ -231,143 +336,144 @@ function initDb() {
                     pembetulan INT DEFAULT 0,
                     data LONGTEXT
                 )`);
-            });
-        }
-    });
-
-    db.all("SHOW COLUMNS FROM documents LIKE 'version'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating documents table: Adding version column...");
-            db.run("ALTER TABLE documents ADD COLUMN version INT DEFAULT 1");
-            // Ensure existing documents have version 1
-            setTimeout(() => {
-                db.run("UPDATE documents SET version = 1 WHERE version IS NULL");
-            }, 1000);
-        } else {
-            // Even if column exists, check for NULLs
-            db.run("UPDATE documents SET version = 1 WHERE version IS NULL");
-        }
-    });
-
-    db.all("SHOW COLUMNS FROM documents LIKE 'versionsHistory'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating documents table: Adding versionsHistory column...");
-            db.run("ALTER TABLE documents ADD COLUMN versionsHistory LONGTEXT");
-            setTimeout(() => {
-                db.run("UPDATE documents SET versionsHistory = '[]' WHERE versionsHistory IS NULL");
-            }, 1000);
-        } else {
-            db.run("UPDATE documents SET versionsHistory = '[]' WHERE versionsHistory IS NULL");
-        }
-    });
-
-    db.all("SHOW COLUMNS FROM documents LIKE 'vector'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating documents table: Adding vector (LONGTEXT) column...");
-            db.run("ALTER TABLE documents ADD COLUMN vector LONGTEXT"); // JSON string of float array
-        }
-    });
-
-    db.all("SHOW COLUMNS FROM inventory LIKE 'box_data'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating inventory table: Adding box_data (LONGTEXT) column...");
-            db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT");
-        }
-    });
-
-    db.all("SHOW COLUMNS FROM documents LIKE 'status'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating documents table: Adding status column...");
-            db.run("ALTER TABLE documents ADD COLUMN status VARCHAR(50) DEFAULT 'ready'");
-        }
-    });
-
-    // Rate migrations
-    db.all("SHOW COLUMNS FROM master_tax_objects LIKE 'rate'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating master_tax_objects table: Adding rate column...");
-            db.run("ALTER TABLE master_tax_objects ADD COLUMN rate DECIMAL(5, 2)");
-        }
-    });
-
-    // MIGRATION: Tambahkan kolom yang hilang pada tax_objects (email, ppn, dll)
-    const taxObjectColumns = [
-        { name: 'email', type: 'VARCHAR(255) AFTER name' },
-        { name: 'ppn', type: 'DECIMAL(15, 2) AFTER pph' },
-        { name: 'total_payable', type: 'DECIMAL(15, 2) AFTER ppn' },
-        { name: 'discount', type: 'DECIMAL(15, 2) AFTER total_payable' },
-        { name: 'dpp_net', type: 'DECIMAL(15, 2) AFTER discount' }
-    ];
-
-    taxObjectColumns.forEach(col => {
-        db.all(`SHOW COLUMNS FROM tax_objects LIKE '${col.name}'`, [], (err, rows) => {
-            if (!err && rows.length === 0) {
-                console.log(`Migrating tax_objects table: Adding ${col.name} column...`);
-                db.run(`ALTER TABLE tax_objects ADD COLUMN ${col.name} ${col.type}`);
+                });
             }
         });
-    });
 
-    db.all("SHOW COLUMNS FROM tax_objects LIKE 'rate'", [], (err, rows) => {
-        if (!err && rows.length === 0) {
-            console.log("Migrating tax_objects table: Adding rate column...");
-            db.run("ALTER TABLE tax_objects ADD COLUMN rate DECIMAL(5, 2)");
-        }
-    });
-
-
-    // Seed Data
-    db.all("SELECT count(*) as count FROM users", [], (err, rows) => {
-        if (!err && rows[0].count === 0) {
-            console.log("Seeding initial data...");
-            db.run("INSERT INTO users (username, password, name, role, department) VALUES ('admin', '123', 'Administrator', 'admin', 'IT')");
-            db.run("INSERT INTO users (username, password, name, role, department) VALUES ('staff', '123', 'Staff Gudang', 'staff', 'Warehouse')");
-            db.run("INSERT INTO users (username, password, name, role, department) VALUES ('viewer', '123', 'Tamu', 'viewer', 'General')");
-        }
-    });
-
-    db.all("SELECT count(*) as count FROM departments", [], (err, rows) => {
-        if (!err && rows[0].count === 0) {
-            ['IT', 'Finance', 'HR', 'Warehouse', 'General'].forEach(dept => {
-                db.run("INSERT INTO departments (name) VALUES (?)", [dept]);
-            });
-        }
-    });
-
-    db.all("SELECT count(*) as count FROM roles", [], (err, rows) => {
-        if (!err && rows[0].count === 0) {
-            db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['admin', 'Administrator', JSON.stringify({
-                dashboard: ['view'],
-                inventory: ['view', 'create', 'edit', 'delete'],
-                documents: ['view', 'create', 'edit', 'delete'],
-                'tax-monitoring': ['view', 'create', 'edit', 'delete'],
-                'tax-summary': ['view', 'create', 'edit', 'delete'],
-                master: ['view', 'create', 'edit', 'delete']
-            })]);
-            db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['staff', 'Staff Gudang', JSON.stringify({
-                dashboard: ['view'],
-                inventory: ['view', 'create', 'edit'],
-                documents: ['view', 'create'],
-                'tax-monitoring': ['view'],
-                'tax-summary': ['view']
-            })]);
-            db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['viewer', 'Tamu / Viewer', JSON.stringify({
-                dashboard: ['view'],
-                inventory: ['view'],
-                documents: ['view'],
-                'tax-monitoring': ['view'],
-                'tax-summary': ['view']
-            })]);
-        }
-    });
-
-    db.all("SELECT count(*) as count FROM inventory", [], (err, rows) => {
-        if (!err && rows[0].count === 0) {
-            for (let i = 1; i <= 100; i++) {
-                db.run("INSERT INTO inventory (id, status, lastUpdated, boxData, history) VALUES (?, ?, ?, ?, ?)", [i, 'EMPTY', null, null, JSON.stringify([])]);
+        db.all("SHOW COLUMNS FROM documents LIKE 'version'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating documents table: Adding version column...");
+                db.run("ALTER TABLE documents ADD COLUMN version INT DEFAULT 1");
+                // Ensure existing documents have version 1
+                setTimeout(() => {
+                    db.run("UPDATE documents SET version = 1 WHERE version IS NULL");
+                }, 1000);
+            } else {
+                // Even if column exists, check for NULLs
+                db.run("UPDATE documents SET version = 1 WHERE version IS NULL");
             }
-        }
-    });
+        });
+
+        db.all("SHOW COLUMNS FROM documents LIKE 'versionsHistory'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating documents table: Adding versionsHistory column...");
+                db.run("ALTER TABLE documents ADD COLUMN versionsHistory LONGTEXT");
+                setTimeout(() => {
+                    db.run("UPDATE documents SET versionsHistory = '[]' WHERE versionsHistory IS NULL");
+                }, 1000);
+            } else {
+                db.run("UPDATE documents SET versionsHistory = '[]' WHERE versionsHistory IS NULL");
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM documents LIKE 'vector'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating documents table: Adding vector (LONGTEXT) column...");
+                db.run("ALTER TABLE documents ADD COLUMN vector LONGTEXT"); // JSON string of float array
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM inventory LIKE 'box_data'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating inventory table: Adding box_data (LONGTEXT) column...");
+                db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT");
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM documents LIKE 'status'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating documents table: Adding status column...");
+                db.run("ALTER TABLE documents ADD COLUMN status VARCHAR(50) DEFAULT 'ready'");
+            }
+        });
+
+        // Rate migrations
+        db.all("SHOW COLUMNS FROM master_tax_objects LIKE 'rate'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating master_tax_objects table: Adding rate column...");
+                db.run("ALTER TABLE master_tax_objects ADD COLUMN rate DECIMAL(5, 2)");
+            }
+        });
+
+        // MIGRATION: Tambahkan kolom yang hilang pada tax_objects (email, ppn, dll)
+        const taxObjectColumns = [
+            { name: 'email', type: 'VARCHAR(255) AFTER name' },
+            { name: 'ppn', type: 'DECIMAL(15, 2) AFTER pph' },
+            { name: 'total_payable', type: 'DECIMAL(15, 2) AFTER ppn' },
+            { name: 'discount', type: 'DECIMAL(15, 2) AFTER total_payable' },
+            { name: 'dpp_net', type: 'DECIMAL(15, 2) AFTER discount' }
+        ];
+
+        taxObjectColumns.forEach(col => {
+            db.all(`SHOW COLUMNS FROM tax_objects LIKE '${col.name}'`, [], (err, rows) => {
+                if (!err && rows.length === 0) {
+                    console.log(`Migrating tax_objects table: Adding ${col.name} column...`);
+                    db.run(`ALTER TABLE tax_objects ADD COLUMN ${col.name} ${col.type}`);
+                }
+            });
+        });
+
+        db.all("SHOW COLUMNS FROM tax_objects LIKE 'rate'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating tax_objects table: Adding rate column...");
+                db.run("ALTER TABLE tax_objects ADD COLUMN rate DECIMAL(5, 2)");
+            }
+        });
+
+
+        // Seed Data
+        db.all("SELECT count(*) as count FROM users", [], (err, rows) => {
+            if (!err && rows[0].count === 0) {
+                console.log("Seeding initial data...");
+                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('admin', '123', 'Administrator', 'admin', 'IT')");
+                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('staff', '123', 'Staff Gudang', 'staff', 'Warehouse')");
+                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('viewer', '123', 'Tamu', 'viewer', 'General')");
+            }
+        });
+
+        db.all("SELECT count(*) as count FROM departments", [], (err, rows) => {
+            if (!err && rows[0].count === 0) {
+                ['IT', 'Finance', 'HR', 'Warehouse', 'General'].forEach(dept => {
+                    db.run("INSERT INTO departments (name) VALUES (?)", [dept]);
+                });
+            }
+        });
+
+        db.all("SELECT count(*) as count FROM roles", [], (err, rows) => {
+            if (!err && rows[0].count === 0) {
+                db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['admin', 'Administrator', JSON.stringify({
+                    dashboard: ['view'],
+                    inventory: ['view', 'create', 'edit', 'delete'],
+                    documents: ['view', 'create', 'edit', 'delete'],
+                    'tax-monitoring': ['view', 'create', 'edit', 'delete'],
+                    'tax-summary': ['view', 'create', 'edit', 'delete'],
+                    master: ['view', 'create', 'edit', 'delete']
+                })]);
+                db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['staff', 'Staff Gudang', JSON.stringify({
+                    dashboard: ['view'],
+                    inventory: ['view', 'create', 'edit'],
+                    documents: ['view', 'create'],
+                    'tax-monitoring': ['view'],
+                    'tax-summary': ['view']
+                })]);
+                db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)", ['viewer', 'Tamu / Viewer', JSON.stringify({
+                    dashboard: ['view'],
+                    inventory: ['view'],
+                    documents: ['view'],
+                    'tax-monitoring': ['view'],
+                    'tax-summary': ['view']
+                })]);
+            }
+        });
+
+        db.all("SELECT count(*) as count FROM inventory", [], (err, rows) => {
+            if (!err && rows[0].count === 0) {
+                for (let i = 1; i <= 100; i++) {
+                    db.run("INSERT INTO inventory (id, status, lastUpdated, boxData, history) VALUES (?, ?, ?, ?, ?)", [i, 'EMPTY', null, null, JSON.stringify([])]);
+                }
+            }
+        });
+    })();
 }
 
 pool.getConnection((err, connection) => {

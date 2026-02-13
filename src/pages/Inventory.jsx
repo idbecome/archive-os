@@ -1,5 +1,5 @@
 import React from 'react';
-import { Grid3X3, Package, Clock, AlertCircle, Download, FileSpreadsheet, Plus, Search, FileText, Truck, Sparkles, TrendingUp } from 'lucide-react';
+import { Grid3X3, Package, Clock, AlertCircle, Download, FileSpreadsheet, Plus, Search, FileText, Truck, Sparkles, TrendingUp, ShieldAlert } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
 
 export default function Inventory({
@@ -7,7 +7,7 @@ export default function Inventory({
     handleSlotClick, handleExcelImport, downloadTemplate, excelInputRef,
     handleExportInventory, inventorySearchQuery, setInventorySearchQuery,
     hasPermission, activeInvTab, setActiveInvTab, externalItems,
-    onRestoreExternal, onViewExternal
+    onRestoreExternal, onViewExternal, inventoryIssues = []
 }) {
 
     // Unified match helper for both Internal Slot and External Item
@@ -158,6 +158,51 @@ export default function Inventory({
                     colorClass="bg-purple-500/10 text-purple-600 dark:text-purple-400 backdrop-blur-md ring-1 ring-purple-500/30"
                 />
             </div>
+
+            {/* INCONSISTENCY WARNING (STUCK BOXES) */}
+            {inventoryIssues.length > 0 && (
+                <div className="mb-6 p-5 bg-red-50 dark:bg-red-900/20 border-2 border-red-200 dark:border-red-800 rounded-[2rem] animate-in slide-in-from-top-4 duration-500">
+                    <div className="flex items-start gap-4">
+                        <div className="p-3 bg-red-100 dark:bg-red-900/50 rounded-2xl text-red-600 dark:text-red-400 shadow-sm">
+                            <ShieldAlert size={24} />
+                        </div>
+                        <div className="flex-1">
+                            <h3 className="text-sm font-black text-red-800 dark:text-red-200 uppercase tracking-widest mb-2">Terdeteksi Masalah Data (Box Nyangkut)</h3>
+                            <div className="space-y-2">
+                                {inventoryIssues.map((issue, idx) => (
+                                    <div key={idx} className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-white/50 dark:bg-black/20 p-3 rounded-xl border border-red-100 dark:border-red-900/30">
+                                        <div className="flex-1">
+                                            <p className="text-xs font-bold text-red-700 dark:text-red-300">{issue.message}</p>
+                                        </div>
+                                        <div className="flex gap-2 shrink-0">
+                                            {issue.type === 'CORRUPT' && (
+                                                <button 
+                                                    onClick={() => handleSlotClick(inventory.find(s => Number(s.id) === Number(issue.slotId)))}
+                                                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black rounded-lg transition-all shadow-sm active:scale-95"
+                                                >
+                                                    PERBAIKI SLOT #{issue.slotId}
+                                                </button>
+                                            )}
+                                            {issue.type === 'DUPLICATE' && issue.slots.map(sid => (
+                                                <button 
+                                                    key={sid}
+                                                    onClick={() => handleSlotClick(inventory.find(s => Number(s.id) === Number(sid)))}
+                                                    className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black rounded-lg transition-all shadow-sm active:scale-95"
+                                                >
+                                                    CEK SLOT #{sid}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                            <p className="mt-4 text-[10px] text-red-600/70 dark:text-red-400/70 font-medium italic">
+                                * Masalah ini biasanya terjadi jika proses pindah rak terputus sebelum perbaikan kode dilakukan.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* AI SMART INSIGHT BANNER */}
             <div className={`mb-6 p-4 rounded-2xl border backdrop-blur-md flex items-center gap-4 animate-in slide-in-from-top-4 duration-700 ${insight.color}`}>

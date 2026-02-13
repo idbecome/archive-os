@@ -33,5 +33,7 @@ export const APP_MODULES = {
     'tax-monitoring': { id: 'tax-monitoring', label: 'Tax Monitoring' },
     'tax-summary': { id: 'tax-summary', label: 'Tax Summary' },
     'tax-calculation': { id: 'tax-calculation', label: 'Tax Calculation' },
-    master: { id: 'master', label: 'Master Data' }
+    master: { id: 'master', label: 'Master Data' },
+    approvals: { id: 'approvals', label: 'Document Approval' },
+    pustaka: { id: 'pustaka', label: 'Pustaka Pengetahuan' }
 };

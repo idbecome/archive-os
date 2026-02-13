@@ -17,6 +17,7 @@
     "bullmq": "^5.67.3",
     "cors": "^2.8.6",
     "express": "^5.2.1",
+    "framer-motion": "^12.34.0",
     "ioredis": "^5.9.2",
     "jszip": "^3.10.1",
     "lucide-react": "^0.563.0",

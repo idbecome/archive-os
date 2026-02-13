@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock } from 'lucide-react';
+import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock, Eye, Info, MessageSquare, BookOpen, FileCheck, ClipboardCheck, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
 
 export default function Dashboard({
@@ -15,14 +15,14 @@ export default function Dashboard({
     setActiveInvTab,
     handleDownload,
     handleDownloadInvoice,
-    ocrStats = { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] },
     taxSummaries = [],
     taxAudits = [],
     users = [],
     departments = [],
     externalItems = [],
     folders = [],
-    currentUser
+    currentUser,
+    onOpenLanding
 }) {
     // Defensive Defaults
     const stats = propStats || { occupancy: 0, stored: 0, borrowed: 0, audit: 0, empty: 0 };
@@ -34,12 +34,15 @@ export default function Dashboard({
     const [semanticQuery, setSemanticQuery] = useState('');
     const [searchResults, setSearchResults] = useState([]);
     const [isSearching, setIsSearching] = useState(false);
+    const [currentPage, setCurrentPage] = useState(1);
+    const resultsPerPage = 10;
 
     const handleSearch = async (e) => {
         e.preventDefault();
         if (!semanticQuery.trim()) return;
 
         setIsSearching(true);
+        setCurrentPage(1);
         try {
             const res = await fetch(`http://${window.location.hostname}:5000/api/search?q=${encodeURIComponent(semanticQuery)}`);
             const data = await res.json();
@@ -51,23 +54,15 @@ export default function Dashboard({
         }
     };
 
+    const handleResetSearch = () => {
+        setSemanticQuery('');
+        setSearchResults([]);
+        setCurrentPage(1);
+    };
+
     const toggleLog = (id) => {
         setExpandedLogId(expandedLogId === id ? null : id);
     };
-
-    // --- OCR NOTIFICATION (Local, based on prop updates) ---
-    const [ocrNotification, setOcrNotification] = useState(null);
-    const lastCompletedRef = useRef(ocrStats?.counts?.completed || 0);
-
-    useEffect(() => {
-        const newCompleted = ocrStats?.counts?.completed || 0;
-        if (lastCompletedRef.current > 0 && newCompleted > lastCompletedRef.current) {
-            const diff = newCompleted - lastCompletedRef.current;
-            setOcrNotification(`🎉 ${diff} Dokumen selesai diproses OCR!`);
-            setTimeout(() => setOcrNotification(null), 5000);
-        }
-        lastCompletedRef.current = newCompleted;
-    }, [ocrStats?.counts?.completed]);
 
     // --- GREETING LOGIC ---
     const getGreeting = () => {
@@ -96,20 +91,31 @@ export default function Dashboard({
         <div className="space-y-6 animate-in fade-in duration-500">
             {/* STARTUP STYLE GREETING SECTION */}
             <div className="relative overflow-hidden bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 border border-white/40 dark:border-white/5 shadow-2xl shadow-indigo-500/10 group">
-                <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all duration-700"></div>
-                <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl group-hover:bg-purple-500/20 transition-all duration-700"></div>
+                <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all duration-700 pointer-events-none"></div>
+                <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl group-hover:bg-purple-500/20 transition-all duration-700 pointer-events-none"></div>
                 
                 <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div className="space-y-2">
-                        <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-black text-xs uppercase tracking-[0.2em]">
-                            <Clock size={14} />
-                            <span>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                        <div className="flex flex-wrap items-center gap-4">
+                            <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-black text-xs uppercase tracking-[0.2em]">
+                                <Clock size={14} />
+                                <span>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                            </div>
+                            <button 
+                                onClick={onOpenLanding}
+                                className="group relative flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-full text-[11px] font-black uppercase tracking-widest transition-all hover:scale-110 hover:shadow-[0_0_20px_rgba(79,70,229,0.4)] active:scale-95 ring-4 ring-indigo-500/10 overflow-hidden"
+                            >
+                                <div className="absolute inset-0 bg-white/20 rounded-full opacity-0 group-hover:opacity-100 transition-opacity animate-pulse"></div>
+                                <Sparkles size={14} className="relative z-10 animate-pulse" />
+                                <span className="relative z-10">Visi Sistem</span>
+                                <ArrowRight size={14} className="relative z-10 group-hover:translate-x-1 transition-transform" />
+                            </button>
                         </div>
                         <h1 className="text-4xl md:text-5xl font-black text-[#2B3674] dark:text-white tracking-tight">
-                            {getGreeting()}, <span className="text-indigo-600">{currentUser?.name?.split(' ')[0] || 'User'}!</span>
+                            {getGreeting()}, <span className="text-indigo-600">{currentUser?.name?.split(' ')[0] || 'User'}</span>
                         </h1>
                         <p className="text-lg text-slate-500 dark:text-slate-400 font-medium max-w-xl leading-relaxed">
-                            Selamat datang kembali di <span className="font-bold text-indigo-500">SysArchive</span>. Mari buat manajemen arsip hari ini lebih produktif!
+                            Selamat datang kembali di <span className="font-bold text-indigo-500">Pustaka</span>. Mari buat Pekerjaan hari ini lebih produktif!
                         </p>
                     </div>
                     
@@ -125,117 +131,9 @@ export default function Dashboard({
                 </div>
             </div>
 
-            {/* OCR NOTIFICATION BANNER */}
-            {ocrNotification && (
-                <div className="bg-emerald-100 border border-emerald-400 text-emerald-700 px-4 py-3 rounded-xl relative shadow-lg animate-in slide-in-from-top-2 flex items-center gap-3" role="alert">
-                    <CheckCircle2 size={24} />
-                    <div>
-                        <strong className="font-bold">Selesai!</strong>
-                        <span className="block sm:inline"> {ocrNotification}</span>
-                    </div>
-                    <span className="absolute top-0 bottom-0 right-0 px-4 py-3" onClick={() => setOcrNotification(null)}>
-                        <X size={20} className="cursor-pointer" />
-                    </span>
-                </div>
-            )}
-
-            {/* OCR STATUS WIDGET */}
-            <div className="bg-gradient-to-r from-blue-600 to-indigo-600 rounded-3xl p-6 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden transition-all duration-500">
-                <div className="absolute top-0 right-0 p-4 opacity-10">
-                    <ScanLine size={120} />
-                </div>
-
-                <div className="relative z-10">
-                    {/* IDLE STATE */}
-                    {((ocrStats?.counts?.active || 0) === 0 && (ocrStats?.counts?.waiting || 0) === 0) ? (
-                        <div className="flex items-center gap-4">
-                            <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center backdrop-blur-sm">
-                                <CheckCircle2 size={24} className="text-white" />
-                            </div>
-                            <div>
-                                <h3 className="text-lg font-bold">Sistem OCR Siap</h3>
-                                <p className="text-blue-100 text-sm">Tidak ada antrian dokumen saat ini.</p>
-                            </div>
-                        </div>
-                    ) : (
-                        /* ACTIVE STATE */
-                        <>
-                            <div className="flex justify-between items-start mb-6">
-                                <h3 className="text-lg font-bold flex items-center gap-2">
-                                    <div className="w-3 h-3 bg-white rounded-full animate-ping"></div>
-                                    Sedang Memproses OCR...
-                                </h3>
-                                <button 
-                                    onClick={async (e) => {
-                                        e.stopPropagation();
-                                        if(window.confirm("Yakin ingin mereset antrian yang macet? Gunakan ini hanya jika proses tidak berjalan.")) {
-                                            try {
-                                                await fetch(`http://${window.location.hostname}:5000/api/ocr/reset`, { method: 'POST' });
-                                                // Force refresh stats locally to update UI immediately
-                                                window.location.reload();
-                                            } catch(err) {
-                                                alert("Gagal reset: " + err.message);
-                                            }
-                                        }
-                                    }}
-                                    className="text-[10px] bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg border border-white/20 transition-colors font-medium text-white"
-                                >
-                                    Reset Macet
-                                </button>
-                            </div>
-
-                            {/* PROGRESS BAR SECTION */}
-                            {(ocrStats?.activeJobs || []).length > 0 && (
-                                <div className="mb-6 bg-white/10 backdrop-blur-md rounded-2xl p-4 border border-white/20">
-                                    <div className="flex justify-between items-end mb-2">
-                                        <div>
-                                            <p className="text-xs text-blue-100 font-bold uppercase tracking-wider mb-1">Sedang Dikerjakan</p>
-                                            <p className="font-medium truncate max-w-[200px] sm:max-w-md">{ocrStats.activeJobs[0].filename}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-3xl font-bold">{ocrStats.activeJobs[0].progress || 0}<span className="text-base font-normal opacity-70">%</span></p>
-                                        </div>
-                                    </div>
-
-                                    {/* Progress Bar Track */}
-                                    <div className="w-full bg-black/20 rounded-full h-3 overflow-hidden mb-2">
-                                        <div
-                                            className="bg-white h-full rounded-full transition-all duration-500 ease-out shadow-[0_0_10px_rgba(255,255,255,0.5)]"
-                                            style={{ width: `${ocrStats.activeJobs[0].progress || 0}%` }}
-                                        ></div>
-                                    </div>
-
-                                    {/* ETA & Info */}
-                                    <div className="flex justify-between text-xs text-blue-100">
-                                        <span>Estimasi: {Math.max(1, Math.round((100 - (ocrStats.activeJobs[0].progress || 0)) * 0.5))} detik lagi</span>
-                                        <span>{(ocrStats.activeJobs[0].progress || 0) < 30 ? 'Memulai ekstraksi...' : (ocrStats.activeJobs[0].progress || 0) < 80 ? 'Analisis Teks...' : 'Finishing...'}</span>
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* STATS GRID */}
-                            <div className="grid grid-cols-3 gap-4">
-                                <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/20 text-center">
-                                    <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider mb-1">Antrian</p>
-                                    <p className="text-xl font-bold">{ocrStats?.counts?.waiting || 0}</p>
-                                </div>
-                                <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/20 text-center">
-                                    <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider mb-1">Sukses</p>
-                                    <p className="text-xl font-bold">{ocrStats?.counts?.completed || 0}</p>
-                                </div>
-                                <div className="bg-white/10 backdrop-blur-md rounded-xl p-3 border border-white/20 text-center">
-                                    <p className="text-[10px] text-blue-100 uppercase font-bold tracking-wider mb-1">Gagal</p>
-                                    <p className="text-xl font-bold">{ocrStats?.counts?.failed || 0}</p>
-                                </div>
-                            </div>
-                        </>
-                    )}
-                </div>
-            </div>
-
             {/* 🔍 SEMANTIC SEARCH BAR */}
             <div className="bg-white/50 dark:bg-slate-900/50 backdrop-blur-xl p-6 rounded-3xl border border-white/20 shadow-xl shadow-indigo-500/5 relative overflow-hidden group">
-                <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-700 pointer-events-none"></div>
 
                 <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-600 to-purple-600 dark:from-indigo-400 dark:to-purple-400 mb-4 flex items-center gap-2">
                     <ScanLine className="text-indigo-500" /> AI Semantic Search
@@ -247,9 +145,19 @@ export default function Dashboard({
                             type="text"
                             value={semanticQuery}
                             onChange={(e) => setSemanticQuery(e.target.value)}
-                            placeholder="Cari dokumen secara natural (contoh: 'Invoice yang masih pending')..."
-                            className="w-full pl-5 pr-14 py-4 rounded-2xl bg-white dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-800 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all font-medium text-slate-700 dark:text-slate-200 shadow-sm"
+                            placeholder="Cari apa saja (contoh: 'SOP pengarsipan', 'Catatan pajak bulan lalu', 'Approval tertunda')..."
+                            className="w-full pl-5 pr-24 py-4 rounded-2xl bg-white dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-800 focus:border-indigo-500 focus:ring-4 focus:ring-indigo-500/10 transition-all font-medium text-slate-700 dark:text-slate-200 shadow-sm"
                         />
+                        {semanticQuery && (
+                            <button
+                                type="button"
+                                onClick={handleResetSearch}
+                                className="absolute right-14 top-1/2 -translate-y-1/2 p-2 text-slate-400 hover:text-red-500 transition-colors"
+                                title="Reset Pencarian"
+                            >
+                                <X size={20} />
+                            </button>
+                        )}
                         <button
                             type="submit"
                             disabled={isSearching}
@@ -266,14 +174,14 @@ export default function Dashboard({
 
                 {/* SEARCH RESULTS */}
                 {(searchResults.length > 0 || isSearching) && (
-                    <div className="mt-6 space-y-3 animate-in fade-in slide-in-from-top-4">
+                    <div className="mt-6 space-y-3 animate-in fade-in slide-in-from-top-4 relative z-10">
                         <h3 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                            Hasil Pencarian AI
+                            Hasil Analisis Semantik
                             <span className="text-[10px] bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 px-2 py-0.5 rounded-full">Beta</span>
                         </h3>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                            {searchResults.map(doc => (
+                            {searchResults.slice((currentPage - 1) * resultsPerPage, currentPage * resultsPerPage).map(doc => (
                                 <div
                                     key={doc.id}
                                     onClick={() => handleViewDoc(doc)}
@@ -288,10 +196,17 @@ export default function Dashboard({
                                             ${doc.matchType === 'invoice' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 dark:text-amber-400' :
                                                 doc.matchType === 'external_item' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-400' :
                                                     doc.matchType === 'tax_summary' ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 dark:text-purple-400' :
-                                                        'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'}`}>
+                                                        doc.matchType === 'tax_monitoring' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 dark:text-orange-400' :
+                                                            doc.matchType === 'approval' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-400' :
+                                                                doc.matchType === 'pustaka' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' :
+                                                                    doc.matchType === 'note' ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400' :
+                                                                        doc.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' :
+                                                                            'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'}`}>
                                             {doc.matchType === 'invoice' ? <Package size={20} /> :
                                                 doc.matchType === 'external_item' ? <Truck size={20} /> :
-                                                    doc.matchType === 'tax_summary' ? <FileBarChart size={20} /> :
+                                                    doc.matchType === 'tax_summary' ? <FileBarChart size={20} /> : 
+                                                        doc.matchType === 'tax_monitoring' ? <ClipboardCheck size={20} /> : doc.matchType === 'approval' ? <FileCheck size={20} /> : doc.matchType === 'pustaka' ? <BookOpen size={20} /> : doc.matchType === 'note' ? <MessageSquare size={20} /> :
+                                                        doc.matchType === 'tax_object' ? <User size={20} /> :
                                                         (doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />)}
                                         </div>
                                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${doc.score > 0.3 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}`}>
@@ -303,30 +218,38 @@ export default function Dashboard({
                                         {doc.title}
                                     </h4>
                                     <p className="text-xs text-slate-500 dark:text-slate-400 relative z-10 mb-3 block truncate">
-                                        {new Date(doc.uploadDate).toLocaleDateString()} • {doc.size}
+                                        {doc.uploadDate ? new Date(doc.uploadDate).toLocaleDateString() : 'System Data'} • {doc.size || doc.category || 'Metadata'}
                                     </p>
 
                                     {/* OCR Snippet Result */}
-                                    {doc.ocrContent && (
-                                        <div className="relative z-10 mb-3 text-[10px] text-slate-500 bg-slate-50 dark:bg-slate-900/50 p-2 rounded border border-slate-100 dark:border-slate-800 line-clamp-2 italic">
-                                            "{doc.ocrContent.substring(0, 100).replace(/\n/g, ' ')}..."
+                                    {(doc.ocrContent || doc.content || doc.text) && (
+                                        <div className="relative z-10 mb-3 text-[10px] text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-2 rounded border border-slate-100 dark:border-slate-800 line-clamp-2 italic leading-relaxed">
+                                            "{(doc.ocrContent || doc.content || doc.text).substring(0, 120).replace(/\n/g, ' ')}..."
                                         </div>
                                     )}
 
-                                    <div className="relative z-10">
+                                    <div className="flex gap-2 relative z-10">
                                         <button
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                if (doc.matchType === 'invoice') {
-                                                    handleDownloadInvoice(doc.data || doc);
-                                                } else {
-                                                    handleDownload(doc.data || doc);
-                                                }
-                                            }}
-                                            className="w-full text-xs bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg transition-all font-medium flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                                            onClick={(e) => { e.stopPropagation(); handleViewDoc(doc); }}
+                                            className="flex-1 text-xs bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 py-2 rounded-lg transition-all font-bold flex items-center justify-center gap-1.5 border border-indigo-100 dark:border-indigo-800 hover:bg-indigo-100"
                                         >
-                                            <Download size={14} /> Download File
+                                            <Eye size={14} /> {doc.matchType === 'note' ? 'Lihat Konteks' : 'Preview'}
                                         </button>
+                                        {doc.matchType !== 'pustaka' && doc.matchType !== 'note' && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    if (doc.matchType === 'invoice') {
+                                                        handleDownloadInvoice(doc.data || doc);
+                                                    } else {
+                                                        handleDownload(doc.data || doc);
+                                                    }
+                                                }}
+                                                className="flex-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded-lg transition-all font-medium flex items-center justify-center gap-1.5 shadow-sm active:scale-95"
+                                            >
+                                                <Download size={14} /> Download
+                                            </button>
+                                        )}
                                     </div>
                                     <div className="mt-2 relative z-10">
                                         <button
@@ -340,6 +263,21 @@ export default function Dashboard({
                                                     setActiveInvTab('external');
                                                 } else if (doc.matchType === 'tax_summary') {
                                                     setActiveTab('tax-summary');
+                                                } else if (doc.matchType === 'tax_monitoring') {
+                                                    setActiveTab('tax-monitoring');
+                                                } else if (doc.matchType === 'approval') {
+                                                    setActiveTab('approvals');
+                                                } else if (doc.matchType === 'pustaka') {
+                                                    setActiveTab('pustaka');
+                                                } else if (doc.matchType === 'tax_object') {
+                                                    setActiveTab('tax-calculation');
+                                                } else if (doc.matchType === 'note') {
+                                                    if (doc.parentType === 'audit') {
+                                                        setActiveTab('tax-monitoring');
+                                                    } else {
+                                                        setActiveTab('documents');
+                                                        if (doc.folderId) handleNavigateToFolder(doc.folderId);
+                                                    }
                                                 } else {
                                                     handleNavigateToFolder(doc.folderId);
                                                 }
@@ -348,17 +286,70 @@ export default function Dashboard({
                                                 ${doc.matchType === 'invoice' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 hover:bg-amber-100' :
                                                     doc.matchType === 'external_item' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100' :
                                                         doc.matchType === 'tax_summary' ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 hover:bg-purple-100' :
-                                                            'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
+                                                            doc.matchType === 'tax_monitoring' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 hover:bg-orange-100' :
+                                                                doc.matchType === 'approval' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 hover:bg-rose-100' :
+                                                                    doc.matchType === 'pustaka' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-100' :
+                                                                    doc.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400' :
+                                                                        'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
                                         >
                                             {doc.matchType === 'invoice' ? `📦 ${doc.folderName}` :
                                                 doc.matchType === 'external_item' ? `🚚 ${doc.folderName}` :
                                                     doc.matchType === 'tax_summary' ? `📊 ${doc.folderName}` :
-                                                        `📂 ${doc.folderName || 'General'}`}
+                                                        doc.matchType === 'tax_monitoring' ? `🔍 ${doc.folderName || 'Pemeriksaan'}` :
+                                                            doc.matchType === 'note' ? `💬 ${doc.folderName || 'Diskusi'}` :
+                                                                doc.matchType === 'approval' ? `✅ ${doc.folderName || 'Approval'}` :
+                                                                    doc.matchType === 'pustaka' ? `📚 ${doc.folderName || 'Pustaka'}` :
+                                                                        doc.matchType === 'tax_object' ? `👥 ${doc.folderName || 'Database WP'}` :
+                                                                            `📂 ${doc.folderName || 'General'}`}
                                         </button>
                                     </div>
                                 </div>
                             ))}
                         </div>
+
+                        {/* Pagination Controls */}
+                        {searchResults.length > resultsPerPage && (
+                            <div className="flex items-center justify-center gap-2 mt-8 relative z-20">
+                                <button
+                                    type="button"
+                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    disabled={currentPage === 1}
+                                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 disabled:opacity-30 transition-all hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                                >
+                                    <ChevronLeft size={20} />
+                                </button>
+                                
+                                <div className="flex items-center gap-1">
+                                    {Array.from({ length: Math.ceil(searchResults.length / resultsPerPage) }).map((_, i) => {
+                                        const page = i + 1;
+                                        const totalPages = Math.ceil(searchResults.length / resultsPerPage);
+                                        if (totalPages > 5 && page !== 1 && page !== totalPages && (page < currentPage - 1 || page > currentPage + 1)) {
+                                            if (page === currentPage - 2 || page === currentPage + 2) return <span key={page} className="text-slate-400">...</span>;
+                                            return null;
+                                        }
+                                        return (
+                                            <button
+                                                type="button"
+                                                key={page}
+                                                onClick={() => setCurrentPage(page)}
+                                                className={`w-10 h-10 rounded-xl text-sm font-bold transition-all ${currentPage === page ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/20' : 'bg-white dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'}`}
+                                            >
+                                                {page}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, Math.ceil(searchResults.length / resultsPerPage)))}
+                                    disabled={currentPage === Math.ceil(searchResults.length / resultsPerPage)}
+                                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 disabled:opacity-30 transition-all hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                                >
+                                    <ChevronRight size={20} />
+                                </button>
+                            </div>
+                        )}
                     </div>
                 )}
             </div>
