@@ -5,7 +5,7 @@ import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 import mammoth from 'mammoth';
-import XLSX from 'xlsx';
+import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import db from './db.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
@@ -37,7 +37,7 @@ function isImageFile(filePath) {
         const fd = fs.openSync(filePath, 'r');
         fs.readSync(fd, buffer, 0, 12, 0);
         fs.closeSync(fd);
-        
+
         // JPEG: FF D8 FF
         if (buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) return true;
         // PNG: 89 50 4E 47
@@ -173,8 +173,8 @@ async function processOCRJob(job) {
             console.log(`[Worker] Detected PDF signature for ${filePath}. Forcing type to application/pdf.`);
             effectiveFileType = 'application/pdf';
         } else if (effectiveFileType.startsWith('image/') && !isImageFile(filePath)) {
-             console.warn(`[Worker] File ${filePath} has image MIME type but invalid signature. Skipping Tesseract.`);
-             effectiveFileType = 'application/octet-stream';
+            console.warn(`[Worker] File ${filePath} has image MIME type but invalid signature. Skipping Tesseract.`);
+            effectiveFileType = 'application/octet-stream';
         }
 
         // 2. OCR Hybrid logic (Internal Text extraction + Tesseract fallback)
@@ -195,10 +195,10 @@ async function processOCRJob(job) {
         }
         else if (effectiveFileType === 'application/pdf') {
             const dataBuffer = fs.readFileSync(filePath);
-            
+
             let pdfText = "";
             let isScanned = false;
-            
+
             // 1. Try PDF.js Text Extraction (Better layout & reliability)
             try {
                 const uint8Array = new Uint8Array(dataBuffer);
@@ -207,7 +207,7 @@ async function processOCRJob(job) {
                     standardFontDataUrl: pathToFileURL(standardFontDataUrl).href
                 });
                 const pdfDocument = await loadingTask.promise;
-                
+
                 const numPages = pdfDocument.numPages;
                 let totalTextLength = 0;
 
@@ -219,7 +219,7 @@ async function processOCRJob(job) {
                     pdfText += pageText + "\n";
                     totalTextLength += pageText.length;
                 }
-                
+
                 // Heuristic: If average text per page < 50 chars, assume scanned
                 if (totalTextLength / Math.min(numPages, 50) < 50) {
                     isScanned = true;
@@ -243,14 +243,14 @@ async function processOCRJob(job) {
                             ocrText += text + "\n";
                         }
                         await tess.terminate();
-                        
+
                         if (ocrText.trim().length > 20) {
                             extractedText = `[OCR-SCAN]\n${ocrText}\n\n[METADATA]\n${extractedText}`;
                         } else {
-                             extractedText = `[PDF-LOW-TEXT]\n${extractedText}\n(OCR yielded no text)`;
+                            extractedText = `[PDF-LOW-TEXT]\n${extractedText}\n(OCR yielded no text)`;
                         }
                     } else {
-                         extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
+                        extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
                     }
                 } catch (ocrErr) {
                     console.error("[Worker] OCR Failed:", ocrErr);
@@ -273,7 +273,9 @@ async function processOCRJob(job) {
             fileType.includes('excel') ||
             (originalName && (originalName.endsWith('.xlsx') || originalName.endsWith('.xls')))
         ) {
-            const workbook = XLSX.readFile(filePath);
+            console.log(`[Worker] Starting Excel extraction for: ${filePath}`);
+            const data = fs.readFileSync(filePath);
+            const workbook = XLSX.read(data, { type: 'buffer' });
             let result = "";
             workbook.SheetNames.forEach(sheetName => {
                 const sheet = workbook.Sheets[sheetName];
@@ -295,12 +297,12 @@ async function processOCRJob(job) {
             const invoiceId = context.invoiceId;
 
             await new Promise((resolve, reject) => {
-                db.get("SELECT box_data, boxData FROM inventory WHERE id = ?", [slotId], (err, row) => {
+                db.get("SELECT box_data FROM inventory WHERE id = ?", [slotId], (err, row) => {
                     if (err) return reject(new Error(`[Worker] Failed to fetch inventory ${slotId}: ${err.message}`));
                     if (!row) return reject(new Error(`[Worker] Inventory ${slotId} not found`));
 
                     try {
-                        const raw = row.box_data || row.boxData;
+                        const raw = row.box_data;
                         const box = typeof raw === 'string' ? JSON.parse(raw) : raw;
                         let updated = false;
 
@@ -317,7 +319,7 @@ async function processOCRJob(job) {
                             });
 
                             if (updated) {
-                                db.run("UPDATE inventory SET box_data = ?, boxData = NULL WHERE id = ?",
+                                db.run("UPDATE inventory SET box_data = ? WHERE id = ?",
                                     [JSON.stringify(box), slotId],
                                     (upErr) => {
                                         if (upErr) reject(new Error(`[Worker] Failed to update inventory ${slotId} with OCR: ${upErr.message}`));
@@ -376,7 +378,7 @@ async function processOCRJob(job) {
 // --- POLLING WORKER (Replaces BullMQ/Redis) ---
 async function startPolling() {
     console.log("[Worker] Starting MySQL Polling (No Redis)...");
-    
+
     // FIX: Reset stuck jobs on startup (Active -> Waiting)
     db.run("UPDATE job_queue SET status = 'waiting' WHERE status = 'active'", [], (err) => {
         if (err) console.error("[Worker] Failed to reset stuck jobs:", err);
@@ -395,13 +397,13 @@ async function startPolling() {
                 if (row) {
                     // 2. Mark as Active
                     db.run("UPDATE job_queue SET status = 'active', processed_at = NOW() WHERE id = ?", [row.id], async () => {
-                        
+
                         // Construct Job Object
                         const job = {
                             id: row.id,
                             data: JSON.parse(row.data),
                             updateProgress: async (progress) => {
-                                db.run("UPDATE job_queue SET progress = ? WHERE id = ?", [progress, row.id], () => {});
+                                db.run("UPDATE job_queue SET progress = ? WHERE id = ?", [progress, row.id], () => { });
                             }
                         };
 

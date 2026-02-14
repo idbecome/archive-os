@@ -30,7 +30,9 @@ const Sidebar = ({
     isDarkMode,
     setIsDarkMode,
     handleLogout,
-    ocrStats
+    ocrStats,
+    setModalTab,
+    setIsModalOpen
 }) => {
     return (
         <aside
@@ -51,10 +53,10 @@ const Sidebar = ({
                         <div className="w-10 h-10 relative z-10 flex items-center justify-center bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl shadow-lg transform group-hover:rotate-12 transition-transform duration-300">
                             <BookOpen className="text-white" size={24} />
                         </div>
-                        
+
                         {/* Collapsed OCR Badge */}
                         {isSidebarCollapsed && (ocrStats?.counts?.active > 0 || ocrStats?.counts?.waiting > 0) && (
-                            <div 
+                            <div
                                 title={`Antrian OCR: ${ocrStats?.counts?.active || 0} Aktif, ${ocrStats?.counts?.waiting || 0} Menunggu`}
                                 className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-blue-600 text-white text-[10px] font-black rounded-full flex items-center justify-center border-2 border-white dark:border-[#111C44] z-20 animate-bounce shadow-lg shadow-blue-500/40"
                             >
@@ -174,7 +176,13 @@ const Sidebar = ({
                 {/* OCR STATUS WIDGET - CROSS-MENU MONITORING */}
                 {!isSidebarCollapsed && (
                     <div className="mt-8 px-2">
-                        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-4 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden transition-all duration-500 border border-white/10">
+                        <div
+                            onClick={() => {
+                                setModalTab('ocr-details');
+                                setIsModalOpen(true);
+                            }}
+                            className="bg-gradient-to-br from-blue-600 to-indigo-700 rounded-3xl p-4 text-white shadow-xl shadow-blue-500/20 relative overflow-hidden transition-all duration-500 border border-white/10 cursor-pointer hover:scale-[1.02] active:scale-95 group/ocr"
+                        >
                             <div className="absolute top-0 right-0 p-2 opacity-10">
                                 <ScanLine size={60} />
                             </div>
@@ -197,14 +205,14 @@ const Sidebar = ({
                                                 <div className="w-2 h-2 bg-white rounded-full animate-ping"></div>
                                                 Proses OCR...
                                             </h3>
-                                            <button 
+                                            <button
                                                 onClick={async (e) => {
                                                     e.stopPropagation();
-                                                    if(window.confirm("Yakin ingin mereset antrian yang macet?")) {
+                                                    if (window.confirm("Yakin ingin mereset antrian yang macet?")) {
                                                         try {
                                                             await fetch(`http://${window.location.hostname}:5000/api/ocr/reset`, { method: 'POST' });
                                                             window.location.reload();
-                                                        } catch(err) {
+                                                        } catch (err) {
                                                             alert("Gagal reset: " + err.message);
                                                         }
                                                     }

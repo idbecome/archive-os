@@ -10,6 +10,7 @@ import {
 import { SummaryCard } from '../components/ui/Card';
 import { db as api } from '../services/database';
 import Modal from '../components/common/Modal';
+import PdfViewer from '../components/ui/PdfViewer';
 
 export default function Documents({
     docList, folders, currentFolderId, setCurrentFolderId,
@@ -20,7 +21,7 @@ export default function Documents({
     hasPermission, docStats,
     getSearchSnippet, logs,
     navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex,
-    onRefresh, users, departments, currentUser, handleEditFolder, handleDownload
+    onRefresh, users, departments, currentUser, handleEditFolder, handleDownload, ocrStats
 }) {
     const [showHistory, setShowHistory] = useState(false);
     const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
@@ -41,6 +42,7 @@ export default function Documents({
     const [previewFile, setPreviewFile] = useState(null);
     const [previewHtml, setPreviewHtml] = useState('');
     const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
+    const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
 
     // --- BULK SELECTION STATE ---
     const [selectedDocIds, setSelectedDocIds] = useState(new Set());
@@ -85,7 +87,9 @@ export default function Documents({
     const handlePreview = async (doc, isAttachment = false) => {
         setIsGeneratingPreview(true);
         setPreviewHtml('');
-        
+        // Clear previous PDF data
+        if (pdfBlobUrl) setPdfBlobUrl(null);
+
         let fullDoc = doc;
         // Ambil data lengkap jika fileData kosong (optimasi bandwidth list)
         if (!isAttachment && !doc.fileData && !doc.file_data && !doc.filedata) {
@@ -96,7 +100,7 @@ export default function Documents({
                 console.error("Gagal mengambil data lengkap:", err);
             }
         }
-        
+
         if (!isAttachment) {
             setSelectedDocPreview(fullDoc);
         }
@@ -104,6 +108,10 @@ export default function Documents({
 
         // Support URL fallback for files stored on disk
         const content = fullDoc?.fileData || fullDoc?.file_data || fullDoc?.filedata || fullDoc?.url;
+        const type = String(fullDoc?.type || '').toLowerCase();
+        const name = String(fullDoc?.title || '').toLowerCase();
+        const isPdf = type.includes('pdf') || name.endsWith('.pdf') || (typeof content === 'string' && (content.match(/\.pdf$/i) || content.startsWith('data:application/pdf')));
+
         if (content && typeof content === 'string') {
             try {
                 let buffer;
@@ -122,10 +130,10 @@ export default function Documents({
                     } catch (e) { console.error("Base64 decode error", e); }
                 }
 
-                const type = String(fullDoc?.type || '').toLowerCase();
-                const name = String(fullDoc?.title || '').toLowerCase();
-
-                if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
+                // For PDFs: pass ArrayBuffer directly to PdfViewer
+                if (buffer && isPdf) {
+                    setPdfBlobUrl(buffer);
+                } else if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
                     const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
                     setPreviewHtml(result.value);
                 } else if (buffer && (type?.includes('sheet') || type?.includes('excel') || name?.endsWith('.xlsx') || name?.endsWith('.xls'))) {
@@ -286,10 +294,10 @@ export default function Documents({
         }
 
         // 2. Analisis OCR Processing
-        const processingCount = docList.filter(d => d.status === 'processing').length;
-        if (processingCount > 0) {
+        const totalPending = (ocrStats?.counts?.active || 0) + (ocrStats?.counts?.waiting || 0);
+        if (totalPending > 0) {
             return {
-                text: `Antrian OCR: ${processingCount} dokumen sedang dalam proses ekstraksi teks. Anda dapat terus bekerja, sistem akan memperbarui konten secara otomatis.`,
+                text: `Antrian OCR: ${totalPending} dokumen sedang dalam proses ekstraksi teks. Anda dapat terus bekerja, sistem akan memperbarui konten secara otomatis.`,
                 icon: <RefreshCw className="text-amber-500 animate-spin" size={20} />,
                 color: "border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200"
             };
@@ -406,8 +414,8 @@ export default function Documents({
                         {isViewingDataBox && (
                             <div className="flex items-center gap-2 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded-lg px-3 shadow-sm">
                                 <AlertCircle size={14} className="text-indigo-500" />
-                                <select 
-                                    value={statusFilter} 
+                                <select
+                                    value={statusFilter}
                                     onChange={(e) => setStatusFilter(e.target.value)}
                                     className="bg-transparent py-2 text-xs font-bold text-gray-600 dark:text-slate-300 focus:outline-none cursor-pointer"
                                 >
@@ -554,11 +562,11 @@ export default function Documents({
                             if (isViewingDataBox) {
                                 const isAInv = a.name.startsWith('[INV]');
                                 const isBInv = b.name.startsWith('[INV]');
-                                
+
                                 // Folder Aktif (tanpa prefix) selalu di atas
                                 if (!isAInv && isBInv) return -1;
                                 if (isAInv && !isBInv) return 1;
-                                
+
                                 // Jika keduanya aktif, urutkan berdasarkan No Slot (angka terakhir di BOX-YYYY-SLOT)
                                 if (!isAInv && !isBInv) {
                                     const slotA = parseInt(a.name.split('-').pop()) || 0;
@@ -595,123 +603,123 @@ export default function Documents({
                             }
 
                             return (
-                            <div key={folder.id}
-                                onClick={() => navigateFolder(folder.id)}
-                                style={{ animationDelay: `${idx * 20}ms` }}
-                                className={`group relative flex flex-col items-center p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/10 hover:border-indigo-200 dark:hover:border-indigo-800 cursor-pointer transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both shadow-sm aspect-[1/1.1] hover:scale-110 hover:-rotate-1 ${activeFolderMenuId === folder.id ? 'z-[120] ring-2 ring-indigo-500 shadow-2xl scale-[1.02]' : 'z-10'} ${isSyncFolder ? 'opacity-80 grayscale-[0.3]' : ''}`}
-                            >
-                                <div className="flex-1 flex items-center justify-center w-full relative">
-                                    <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform ${
-                                        isInvSync ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500' : 
-                                        isTaxSync ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-500' : 
-                                        'bg-amber-100 dark:bg-amber-900/30 text-amber-500'
-                                    }`}>
-                                        {isSyncFolder ? <SyncIcon size={32} /> : <FolderOpen size={36} fill="currentColor" className="opacity-80" />}
-                                    </div>
-                                    {/* Privacy Indicator Badge */}
-                                    {folder.privacy !== 'public' && (
-                                        <div className="absolute -top-1 -right-1 w-6 h-6 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center border border-gray-200 dark:border-slate-700 shadow-sm" title={folder.privacy === 'private' ? 'Private' : folder.privacy === 'dept' ? 'Department' : 'Specific Users'}>
-                                            {folder.privacy === 'private' && <Lock size={12} className="text-red-500" />}
-                                            {folder.privacy === 'dept' && <Building size={12} className="text-blue-500" />}
-                                            {folder.privacy === 'user' && <User size={12} className="text-purple-500" />}
+                                <div key={folder.id}
+                                    onClick={() => navigateFolder(folder.id)}
+                                    style={{ animationDelay: `${idx * 20}ms` }}
+                                    className={`group relative flex flex-col items-center p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/10 hover:border-indigo-200 dark:hover:border-indigo-800 cursor-pointer transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both shadow-sm aspect-[1/1.1] hover:scale-110 hover:-rotate-1 ${activeFolderMenuId === folder.id ? 'z-[120] ring-2 ring-indigo-500 shadow-2xl scale-[1.02]' : 'z-10'} ${isSyncFolder ? 'opacity-80 grayscale-[0.3]' : ''}`}
+                                >
+                                    <div className="flex-1 flex items-center justify-center w-full relative">
+                                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform ${isInvSync ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500' :
+                                            isTaxSync ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-500' :
+                                                'bg-amber-100 dark:bg-amber-900/30 text-amber-500'
+                                            }`}>
+                                            {isSyncFolder ? <SyncIcon size={32} /> : <FolderOpen size={36} fill="currentColor" className="opacity-80" />}
                                         </div>
-                                    )}
-                                    {/* Sync/History Badge */}
-                                    {isSyncFolder && (
-                                        <div className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow-sm ${badgeColor}`} title={badgeTitle}>
-                                            <BadgeIcon size={10} className="text-white" />
-                                        </div>
-                                    )}
-                                    {/* System Lock Badge */}
-                                    {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && (
-                                        <div className="absolute -top-1 -left-1 w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow-sm" title="System Folder">
-                                            <Lock size={10} className="text-white" />
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="w-full text-center mt-3">
-                                    <span className="font-medium text-gray-700 dark:text-gray-200 text-sm line-clamp-2 break-words leading-tight px-1">
-                                        {folder.name}
-                                    </span>
-                                    {/* Creator Info Tooltip/Text */}
-                                    <div className="text-[10px] text-gray-400 mt-1 truncate">
-                                        Author: {folder.owner || 'Unknown'}
-                                    </div>
-                                </div>
-
-                                {/* Actions Overlay - Minimalist Dropdown */}
-                                <div className="absolute top-2 right-2">
-                                    <button
-                                        onClick={(e) => {
-                                            e.stopPropagation();
-                                            setActiveFolderMenuId(activeFolderMenuId === folder.id ? null : folder.id);
-                                        }}
-                                        className="p-1.5 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-full transition-all opacity-0 group-hover:opacity-100"
-                                    >
-                                        <MoreVertical size={16} />
-                                    </button>
-
-                                    {activeFolderMenuId === folder.id && (
-                                        <div
-                                            className={`absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[130] overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right`}
-                                        >
-                                            <div className="py-1">
-                                                {hasPermission('documents', 'edit') && (
-                                                    <button
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setFolderForm({
-                                                                id: folder.id,
-                                                                name: folder.name,
-                                                                privacy: folder.privacy || 'public',
-                                                                allowedDepts: folder.allowedDepts || [],
-                                                                allowedUsers: folder.allowedUsers || []
-                                                            });
-                                                            setIsFolderModalOpen(true);
-                                                            setActiveFolderMenuId(null);
-                                                        }}
-                                                        className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2"
-                                                    >
-                                                        {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') ? (
-                                                            <Shield size={14} className="text-amber-500 group-hover:scale-110 transition-transform" />
-                                                        ) : (
-                                                            <PenLine size={14} className="group-hover:rotate-12 transition-transform" />
-                                                        )}
-                                                        {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') ? 'Akses Kontrol' : 'Edit'}
-                                                    </button>
-                                                )}
-
-                                                {!(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && (
-                                                    <>
-                                                        {hasPermission('documents', 'create') && (
-                                                            <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); setActiveFolderMenuId(null); }} className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                <Copy size={14} className="group-hover:scale-110 group-hover:text-indigo-500 transition-all" /> Salin
-                                                            </button>
-                                                        )}
-                                                        {hasPermission('documents', 'edit') && (
-                                                            <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'folder', folder); setActiveFolderMenuId(null); }} className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
-                                                                <Move size={14} className="group-hover:translate-x-1 transition-transform" /> Pindah
-                                                            </button>
-                                                        )}
-                                                        {hasPermission('documents', 'delete') && (
-                                                            <>
-                                                                <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
-                                                                <button
-                                                                    onClick={(e) => { handleDeleteFolder(e, folder.id); setActiveFolderMenuId(null); }}
-                                                                    className="group w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 flex items-center gap-2"
-                                                                >
-                                                                    <Trash2 size={14} className="group-hover:scale-110 transition-transform" /> Hapus
-                                                                </button>
-                                                            </>
-                                                        )}
-                                                    </>
-                                                )}
+                                        {/* Privacy Indicator Badge */}
+                                        {folder.privacy !== 'public' && (
+                                            <div className="absolute -top-1 -right-1 w-6 h-6 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center border border-gray-200 dark:border-slate-700 shadow-sm" title={folder.privacy === 'private' ? 'Private' : folder.privacy === 'dept' ? 'Department' : 'Specific Users'}>
+                                                {folder.privacy === 'private' && <Lock size={12} className="text-red-500" />}
+                                                {folder.privacy === 'dept' && <Building size={12} className="text-blue-500" />}
+                                                {folder.privacy === 'user' && <User size={12} className="text-purple-500" />}
                                             </div>
+                                        )}
+                                        {/* Sync/History Badge */}
+                                        {isSyncFolder && (
+                                            <div className={`absolute -bottom-1 -right-1 w-6 h-6 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow-sm ${badgeColor}`} title={badgeTitle}>
+                                                <BadgeIcon size={10} className="text-white" />
+                                            </div>
+                                        )}
+                                        {/* System Lock Badge */}
+                                        {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && (
+                                            <div className="absolute -top-1 -left-1 w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow-sm" title="System Folder">
+                                                <Lock size={10} className="text-white" />
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="w-full text-center mt-3">
+                                        <span className="font-medium text-gray-700 dark:text-gray-200 text-sm line-clamp-2 break-words leading-tight px-1">
+                                            {folder.name}
+                                        </span>
+                                        {/* Creator Info Tooltip/Text */}
+                                        <div className="text-[10px] text-gray-400 mt-1 truncate">
+                                            Author: {folder.owner || 'Unknown'}
                                         </div>
-                                    )}
+                                    </div>
+
+                                    {/* Actions Overlay - Minimalist Dropdown */}
+                                    <div className="absolute top-2 right-2">
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setActiveFolderMenuId(activeFolderMenuId === folder.id ? null : folder.id);
+                                            }}
+                                            className="p-1.5 bg-white/50 dark:bg-slate-800/50 hover:bg-white dark:hover:bg-slate-700 text-gray-500 hover:text-indigo-600 rounded-full transition-all opacity-0 group-hover:opacity-100"
+                                        >
+                                            <MoreVertical size={16} />
+                                        </button>
+
+                                        {activeFolderMenuId === folder.id && (
+                                            <div
+                                                className={`absolute right-0 top-full mt-2 w-48 bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-gray-100 dark:border-slate-700 z-[130] overflow-hidden animate-in zoom-in-95 slide-in-from-top-2 duration-200 origin-top-right`}
+                                            >
+                                                <div className="py-1">
+                                                    {hasPermission('documents', 'edit') && (
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setFolderForm({
+                                                                    id: folder.id,
+                                                                    name: folder.name,
+                                                                    privacy: folder.privacy || 'public',
+                                                                    allowedDepts: folder.allowedDepts || [],
+                                                                    allowedUsers: folder.allowedUsers || []
+                                                                });
+                                                                setIsFolderModalOpen(true);
+                                                                setActiveFolderMenuId(null);
+                                                            }}
+                                                            className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2"
+                                                        >
+                                                            {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') ? (
+                                                                <Shield size={14} className="text-amber-500 group-hover:scale-110 transition-transform" />
+                                                            ) : (
+                                                                <PenLine size={14} className="group-hover:rotate-12 transition-transform" />
+                                                            )}
+                                                            {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') ? 'Akses Kontrol' : 'Edit'}
+                                                        </button>
+                                                    )}
+
+                                                    {!(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && (
+                                                        <>
+                                                            {hasPermission('documents', 'create') && (
+                                                                <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); setActiveFolderMenuId(null); }} className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <Copy size={14} className="group-hover:scale-110 group-hover:text-indigo-500 transition-all" /> Salin
+                                                                </button>
+                                                            )}
+                                                            {hasPermission('documents', 'edit') && (
+                                                                <button onClick={(e) => { e.stopPropagation(); startMgmtOp('move', 'folder', folder); setActiveFolderMenuId(null); }} className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
+                                                                    <Move size={14} className="group-hover:translate-x-1 transition-transform" /> Pindah
+                                                                </button>
+                                                            )}
+                                                            {hasPermission('documents', 'delete') && (
+                                                                <>
+                                                                    <div className="h-px bg-gray-100 dark:bg-slate-800 my-1" />
+                                                                    <button
+                                                                        onClick={(e) => { handleDeleteFolder(e, folder.id); setActiveFolderMenuId(null); }}
+                                                                        className="group w-full text-left px-4 py-2 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-900/10 flex items-center gap-2"
+                                                                    >
+                                                                        <Trash2 size={14} className="group-hover:scale-110 transition-transform" /> Hapus
+                                                                    </button>
+                                                                </>
+                                                            )}
+                                                        </>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
                                 </div>
-                            </div>
-                        )})}
+                            )
+                        })}
                     </div>
                 </div>
 
@@ -720,7 +728,7 @@ export default function Documents({
                     {(docList || []).some(d => {
                         const matchesSearch = ((d.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || (d.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()));
                         if (searchQuery) return matchesSearch;
-                        return (d.folderId === currentFolderId || (!d.folderId && currentFolderId === null));
+                        return (String(d.folderId) === String(currentFolderId) || ((!d.folderId || d.folderId === 'null') && (currentFolderId === null || currentFolderId === 'null')));
                     }) && (
                             <h3 className="text-sm font-semibold text-gray-500 mb-3 uppercase tracking-wider mt-6">Files</h3>
                         )}
@@ -729,12 +737,12 @@ export default function Documents({
                             {(docList || []).filter(d => {
                                 const matchesSearch = ((d.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || (d.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()));
                                 if (searchQuery) return matchesSearch; // Global search
-                                return (String(d.folderId) === String(currentFolderId) || (!d.folderId && currentFolderId === null));
+                                return (String(d.folderId) === String(currentFolderId) || ((!d.folderId || d.folderId === 'null') && (currentFolderId === null || currentFolderId === 'null')));
                             }).map((doc, idx) => {
                                 const isContentMatch = (doc.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()) && searchQuery.length > 0;
 
                                 return (
-                                    <div key={doc.id} style={{ animationDelay: `${(folders.length + idx) * 20}ms` }} 
+                                    <div key={doc.id} style={{ animationDelay: `${(folders.length + idx) * 20}ms` }}
                                         className={`group relative flex flex-col p-4 glass-card rounded-2xl transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both h-full hover:scale-105 hover:shadow-2xl ${selectedDocIds.has(doc.id) ? 'ring-2 ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20' : ''} ${activeMenuId === doc.id ? 'z-[120] ring-2 ring-indigo-500 shadow-2xl scale-[1.02]' : 'z-10'}`}>
                                         {/* Selection Checkbox */}
                                         {hasPermission('documents', 'delete') && (
@@ -888,7 +896,7 @@ export default function Documents({
                                 {(docList || []).filter(d => {
                                     const matchesSearch = ((d.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || (d.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()));
                                     if (searchQuery) return matchesSearch; // Global search
-                                    return (String(d.folderId) === String(currentFolderId) || (!d.folderId && currentFolderId === null));
+                                    return (String(d.folderId) === String(currentFolderId) || ((!d.folderId || d.folderId === 'null') && (currentFolderId === null || currentFolderId === 'null')));
                                 }).map((doc) => {
                                     const isContentMatch = (doc.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()) && searchQuery.length > 0;
 
@@ -1350,7 +1358,10 @@ export default function Documents({
             {/* QUICK PREVIEW MODAL */}
             <Modal
                 isOpen={!!selectedDocPreview}
-                onClose={() => setSelectedDocPreview(null)}
+                onClose={() => {
+                    setSelectedDocPreview(null);
+                    setPdfBlobUrl(null);
+                }}
                 title="Preview Dokumen & OCR"
                 size="max-w-6xl"
             >
@@ -1363,16 +1374,25 @@ export default function Documents({
                                 <p className="text-sm font-bold text-slate-500 animate-pulse">Menyiapkan Preview...</p>
                             </div>
                         ) : previewFile?.type?.toLowerCase()?.startsWith('image/') ? (
-                            <img src={previewFile?.fileData || previewFile?.file_data || previewFile?.filedata || getFullUrl(previewFile?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display='none'; }} />
+                            <img src={previewFile?.fileData || previewFile?.file_data || previewFile?.filedata || getFullUrl(previewFile?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
                         ) : previewFile?.type?.toLowerCase()?.includes('pdf') ? (
-                            <iframe src={previewFile?.fileData || previewFile?.file_data || previewFile?.filedata || getFullUrl(previewFile?.url)} className="w-full h-full" title="PDF Preview"></iframe>
+                            pdfBlobUrl ? (
+                                <PdfViewer src={pdfBlobUrl} className="w-full h-full" />
+                            ) : (
+                                <div className="flex flex-col items-center gap-3">
+                                    <FileText size={64} className="text-slate-300" />
+                                    <p className="text-sm font-bold text-slate-500">Data PDF tidak tersedia</p>
+                                    <p className="text-[10px] text-slate-400">File mungkin belum diunggah ulang ke server.</p>
+                                    <button onClick={() => handleDownload(selectedDocPreview)} className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black shadow-lg hover:scale-105 transition-all">DOWNLOAD PDF</button>
+                                </div>
+                            )
                         ) : previewHtml ? (
                             <div className="w-full h-full p-8 bg-white dark:bg-slate-900 overflow-auto prose dark:prose-invert max-w-none shadow-inner" dangerouslySetInnerHTML={{ __html: previewHtml }} />
                         ) : (
                             <div className="text-center p-10 text-slate-400">
                                 <FileText size={64} className="mx-auto mb-4 opacity-20" />
                                 <p className="font-bold uppercase tracking-widest text-xs">Preview Terbatas</p>
-                                <p className="text-[10px] mt-2 opacity-60">Format ini tidak mendukung preview langsung.<br/>Gunakan tombol Download untuk melihat file.</p>
+                                <p className="text-[10px] mt-2 opacity-60">Format ini tidak mendukung preview langsung.<br />Gunakan tombol Download untuk melihat file.</p>
                                 <button onClick={() => handleDownload(selectedDocPreview)} className="mt-6 px-6 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black shadow-lg shadow-indigo-500/20 hover:scale-105 transition-all">DOWNLOAD FILE</button>
                             </div>
                         )}
@@ -1390,68 +1410,68 @@ export default function Documents({
                                 <span>{new Date(selectedDocPreview?.uploadDate).toLocaleDateString()}</span>
                             </div>
                         </div>
-                            {/* Comments Section */}
-                            <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                                    <MoreVertical size={12} className="text-indigo-500" /> Riwayat Koordinasi
-                                </h4>
-                                <div className="flex-1 min-h-0 max-h-[220px] overflow-y-auto custom-scrollbar mb-4 px-1 bg-slate-50/30 dark:bg-slate-900/30 rounded-2xl p-2">
-                                    <div className="space-y-4 flex flex-col">
-                                        {Array.isArray(comments) && comments.map(c => {
-                                            const isMe = c.user === currentUser?.name || c.user === currentUser?.username;
-                                            const timestamp = c.timestamp ? new Date(c.timestamp) : null;
-                                            const isValidDate = timestamp && !isNaN(timestamp.getTime());
+                        {/* Comments Section */}
+                        <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                                <MoreVertical size={12} className="text-indigo-500" /> Riwayat Koordinasi
+                            </h4>
+                            <div className="flex-1 min-h-0 max-h-[220px] overflow-y-auto custom-scrollbar mb-4 px-1 bg-slate-50/30 dark:bg-slate-900/30 rounded-2xl p-2">
+                                <div className="space-y-4 flex flex-col">
+                                    {Array.isArray(comments) && comments.map(c => {
+                                        const isMe = c.user === currentUser?.name || c.user === currentUser?.username;
+                                        const timestamp = c.timestamp ? new Date(c.timestamp) : null;
+                                        const isValidDate = timestamp && !isNaN(timestamp.getTime());
 
-                                            return (
-                                                <div key={c.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} w-full animate-in slide-in-from-bottom-2`}>
-                                                    <div className={`max-w-[85%] p-3 rounded-2xl shadow-sm ${isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-tl-none'}`}>
-                                                        <div className="flex justify-between items-center gap-4 text-[9px] mb-1 opacity-80 font-black uppercase tracking-wider">
-                                                            {!isMe && <span className="text-indigo-600 dark:text-indigo-400">{c.user}</span>}
-                                                            <span className={isMe ? 'text-indigo-100 ml-auto' : 'text-slate-400'}>
-                                                                {isValidDate ? timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}
-                                                            </span>
-                                                        </div>
-                                                        <p className="text-xs leading-relaxed break-words">{c.text}</p>
-                                                        {c.attachmentUrl && (
-                                                            <div className={`mt-2 flex items-center justify-between p-2 rounded-lg border border-dashed ${isMe ? 'bg-white/10 border-white/20' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
-                                                                <div className="flex items-center gap-2 overflow-hidden">
-                                                                    <Paperclip size={10} className={isMe ? 'text-indigo-200' : 'text-indigo-500'} />
-                                                                    <span className="text-[9px] font-bold truncate max-w-[100px]">{c.attachmentName}</span>
-                                                                </div>
-                                                                <div className="flex gap-2 shrink-0 ml-2">
-                                                                    <button onClick={() => handlePreview({ id: 'att-' + c.id, url: c.attachmentUrl, title: c.attachmentName, type: c.attachmentType, fileData: null }, true)} className={`text-[9px] font-black uppercase hover:underline ${isMe ? 'text-white' : 'text-indigo-600'}`}>Preview</button>
-                                                                    {hasPermission('documents', 'edit') && (
-                                                                        <button onClick={() => handlePromoteAttachment(c.id)} className={`text-[9px] font-black uppercase hover:underline ${isMe ? 'text-emerald-300' : 'text-emerald-600'}`}>Revisi</button>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        )}
+                                        return (
+                                            <div key={c.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} w-full animate-in slide-in-from-bottom-2`}>
+                                                <div className={`max-w-[85%] p-3 rounded-2xl shadow-sm ${isMe ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white dark:bg-slate-900 border border-gray-100 dark:border-slate-800 rounded-tl-none'}`}>
+                                                    <div className="flex justify-between items-center gap-4 text-[9px] mb-1 opacity-80 font-black uppercase tracking-wider">
+                                                        {!isMe && <span className="text-indigo-600 dark:text-indigo-400">{c.user}</span>}
+                                                        <span className={isMe ? 'text-indigo-100 ml-auto' : 'text-slate-400'}>
+                                                            {isValidDate ? timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '-'}
+                                                        </span>
                                                     </div>
+                                                    <p className="text-xs leading-relaxed break-words">{c.text}</p>
+                                                    {c.attachmentUrl && (
+                                                        <div className={`mt-2 flex items-center justify-between p-2 rounded-lg border border-dashed ${isMe ? 'bg-white/10 border-white/20' : 'bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700'}`}>
+                                                            <div className="flex items-center gap-2 overflow-hidden">
+                                                                <Paperclip size={10} className={isMe ? 'text-indigo-200' : 'text-indigo-500'} />
+                                                                <span className="text-[9px] font-bold truncate max-w-[100px]">{c.attachmentName}</span>
+                                                            </div>
+                                                            <div className="flex gap-2 shrink-0 ml-2">
+                                                                <button onClick={() => handlePreview({ id: 'att-' + c.id, url: c.attachmentUrl, title: c.attachmentName, type: c.attachmentType, fileData: null }, true)} className={`text-[9px] font-black uppercase hover:underline ${isMe ? 'text-white' : 'text-indigo-600'}`}>Preview</button>
+                                                                {hasPermission('documents', 'edit') && (
+                                                                    <button onClick={() => handlePromoteAttachment(c.id)} className={`text-[9px] font-black uppercase hover:underline ${isMe ? 'text-emerald-300' : 'text-emerald-600'}`}>Revisi</button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    )}
                                                 </div>
-                                            );
-                                        })}
-                                        <div ref={chatEndRef} />
-                                    </div>
-                                </div>
-                                <div className="space-y-2">
-                                    <textarea 
-                                        value={newComment} onChange={e => setNewComment(e.target.value)}
-                                        placeholder="Tulis komentar..."
-                                        className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white resize-none"
-                                        rows="2"
-                                    />
-                                    <div className="flex justify-between items-center">
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <div className={`p-2 rounded-lg ${commentAttachment ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                                                <Paperclip size={14} />
                                             </div>
-                                            <span className="text-[10px] font-bold text-slate-500 truncate max-w-[100px]">{commentAttachment ? commentAttachment.name : 'Lampiran'}</span>
-                                            <input type="file" className="hidden" onChange={e => setCommentAttachment(e.target.files[0])} />
-                                        </label>
-                                        <button onClick={handlePostComment} disabled={isPostingComment || (!newComment.trim() && !commentAttachment)} className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-lg disabled:opacity-50">Kirim</button>
-                                    </div>
+                                        );
+                                    })}
+                                    <div ref={chatEndRef} />
                                 </div>
                             </div>
+                            <div className="space-y-2">
+                                <textarea
+                                    value={newComment} onChange={e => setNewComment(e.target.value)}
+                                    placeholder="Tulis komentar..."
+                                    className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white resize-none"
+                                    rows="2"
+                                />
+                                <div className="flex justify-between items-center">
+                                    <label className="flex items-center gap-2 cursor-pointer">
+                                        <div className={`p-2 rounded-lg ${commentAttachment ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                                            <Paperclip size={14} />
+                                        </div>
+                                        <span className="text-[10px] font-bold text-slate-500 truncate max-w-[100px]">{commentAttachment ? commentAttachment.name : 'Lampiran'}</span>
+                                        <input type="file" className="hidden" onChange={e => setCommentAttachment(e.target.files[0])} />
+                                    </label>
+                                    <button onClick={handlePostComment} disabled={isPostingComment || (!newComment.trim() && !commentAttachment)} className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-lg disabled:opacity-50">Kirim</button>
+                                </div>
+                            </div>
+                        </div>
                         <div className="flex-1 flex flex-col min-h-0 overflow-y-auto custom-scrollbar space-y-6 pr-1">
                             {/* OCR Section */}
                             <div>

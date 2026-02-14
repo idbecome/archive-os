@@ -1,11 +1,13 @@
 import mysql from 'mysql2';
+import dotenv from 'dotenv';
+dotenv.config();
 
 // Create a connection pool
 const pool = mysql.createPool({
-    host: '127.0.0.1',
-    user: 'root',
-    password: '',
-    database: 'archive_os',
+    host: process.env.DB_HOST || '127.0.0.1',
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASS || '',
+    database: process.env.DB_NAME || 'archive_os',
     waitForConnections: true,
     connectionLimit: 10,
     queueLimit: 0,
@@ -98,7 +100,7 @@ function initDb() {
             id INT PRIMARY KEY,
             status VARCHAR(50),
             lastUpdated DATETIME,
-            boxData TEXT,
+            box_data LONGTEXT,
             history TEXT
         )`,
         `CREATE TABLE IF NOT EXISTS folders (
@@ -162,6 +164,49 @@ function initDb() {
             sender VARCHAR(100),
             boxData TEXT,
             history TEXT
+        )`,
+        `CREATE TABLE IF NOT EXISTS inventory_items (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            inventory_id INT,
+            box_id VARCHAR(100),
+            ordner_id VARCHAR(100),
+            invoice_no VARCHAR(255),
+            vendor VARCHAR(255),
+            date DATETIME,
+            amount DECIMAL(15, 2),
+            file_url TEXT,
+            ocr_content LONGTEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_search (invoice_no, vendor),
+            FOREIGN KEY (inventory_id) REFERENCES inventory(id) ON DELETE CASCADE
+        )`,
+        `CREATE TABLE IF NOT EXISTS boxes (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            inventory_id INT,
+            box_id VARCHAR(100),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            INDEX idx_box_id (box_id),
+            INDEX idx_inventory_id (inventory_id)
+        )`,
+        `CREATE TABLE IF NOT EXISTS ordners (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            box_ref_id INT,
+            no_ordner VARCHAR(100),
+            period VARCHAR(100),
+            FOREIGN KEY (box_ref_id) REFERENCES boxes(id) ON DELETE CASCADE
+        )`,
+        `CREATE TABLE IF NOT EXISTS invoices (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            ordner_ref_id INT,
+            invoice_no VARCHAR(255),
+            vendor VARCHAR(255),
+            payment_date VARCHAR(100),
+            file_url TEXT,
+            file_name VARCHAR(255),
+            ocr_content LONGTEXT,
+            INDEX idx_invoice_no (invoice_no),
+            INDEX idx_vendor (vendor),
+            FOREIGN KEY (ordner_ref_id) REFERENCES ordners(id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS tax_objects (
             id INT AUTO_INCREMENT PRIMARY KEY,
@@ -373,10 +418,96 @@ function initDb() {
             }
         });
 
+        // MIGRATION: Consolidate boxData → box_data and drop legacy column
         db.all("SHOW COLUMNS FROM inventory LIKE 'box_data'", [], (err, rows) => {
             if (!err && rows.length === 0) {
                 console.log("Migrating inventory table: Adding box_data (LONGTEXT) column...");
-                db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT");
+                db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT", [], () => {
+                    // Copy data from boxData to box_data
+                    db.run("UPDATE inventory SET box_data = boxData WHERE box_data IS NULL AND boxData IS NOT NULL", [], () => {
+                        console.log("Copied boxData → box_data for existing rows.");
+                    });
+                });
+            } else if (!err && rows.length > 0) {
+                // Column exists — consolidate any remaining boxData data
+                db.all("SHOW COLUMNS FROM inventory LIKE 'boxData'", [], (err2, rows2) => {
+                    if (!err2 && rows2.length > 0) {
+                        // Legacy column still exists, consolidate and drop
+                        db.run("UPDATE inventory SET box_data = boxData WHERE (box_data IS NULL OR box_data = '') AND boxData IS NOT NULL AND boxData != ''", [], (updErr) => {
+                            if (!updErr) {
+                                console.log("Consolidated boxData → box_data. Dropping legacy boxData column...");
+                                db.run("ALTER TABLE inventory DROP COLUMN boxData", [], (dropErr) => {
+                                    if (dropErr) {
+                                        console.error("Could not drop boxData column (may already be dropped):", dropErr.message);
+                                    } else {
+                                        console.log("Legacy boxData column dropped successfully.");
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+            }
+        });
+
+        // MIGRATION: Populate relational tables (boxes, ordners, invoices) from JSON
+        db.all("SELECT count(*) as count FROM boxes", [], (err, rows) => {
+            if (err) return; // Table might not exist yet on first run
+            if (rows[0].count === 0) {
+                console.log("Populating relational tables from inventory JSON data...");
+                db.all("SELECT id, box_data FROM inventory WHERE status != 'EMPTY'", [], (invErr, invRows) => {
+                    if (invErr || !invRows) return;
+
+                    let boxCount = 0, ordnerCount = 0, invoiceCount = 0;
+
+                    invRows.forEach(row => {
+                        const rawJson = row.box_data;
+                        if (!rawJson) return;
+
+                        let data;
+                        try { data = typeof rawJson === 'string' ? JSON.parse(rawJson) : rawJson; } catch (e) { return; }
+                        if (!data || !data.id) return; // data.id = box_id (e.g. "BOX-2024-001")
+
+                        // Insert into boxes
+                        db.run("INSERT INTO boxes (inventory_id, box_id) VALUES (?, ?)",
+                            [row.id, data.id], function (bErr) {
+                                if (bErr) { console.error("Box insert err:", bErr.message); return; }
+                                const boxRefId = this.lastID;
+                                boxCount++;
+
+                                if (!data.ordners || !Array.isArray(data.ordners)) return;
+
+                                data.ordners.forEach(ord => {
+                                    db.run("INSERT INTO ordners (box_ref_id, no_ordner, period) VALUES (?, ?, ?)",
+                                        [boxRefId, ord.noOrdner || '', ord.period || ''], function (oErr) {
+                                            if (oErr) { console.error("Ordner insert err:", oErr.message); return; }
+                                            const ordnerRefId = this.lastID;
+                                            ordnerCount++;
+
+                                            if (!ord.invoices || !Array.isArray(ord.invoices)) return;
+
+                                            ord.invoices.forEach(inv => {
+                                                db.run(`INSERT INTO invoices (ordner_ref_id, invoice_no, vendor, payment_date, file_url, file_name, ocr_content) 
+                                                        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                                    [ordnerRefId, inv.invoiceNo || '', inv.vendor || '', inv.paymentDate || null,
+                                                        inv.file || '', inv.fileName || '', inv.ocrContent || ''],
+                                                    (iErr) => {
+                                                        if (iErr) console.error("Invoice insert err:", iErr.message);
+                                                        else invoiceCount++;
+                                                    }
+                                                );
+                                            });
+                                        }
+                                    );
+                                });
+                            }
+                        );
+                    });
+
+                    setTimeout(() => {
+                        console.log(`Relational migration complete: ${boxCount} boxes, ${ordnerCount} ordners, ${invoiceCount} invoices.`);
+                    }, 3000);
+                });
             }
         });
 
@@ -469,7 +600,7 @@ function initDb() {
         db.all("SELECT count(*) as count FROM inventory", [], (err, rows) => {
             if (!err && rows[0].count === 0) {
                 for (let i = 1; i <= 100; i++) {
-                    db.run("INSERT INTO inventory (id, status, lastUpdated, boxData, history) VALUES (?, ?, ?, ?, ?)", [i, 'EMPTY', null, null, JSON.stringify([])]);
+                    db.run("INSERT INTO inventory (id, status, lastUpdated, box_data, history) VALUES (?, ?, ?, ?, ?)", [i, 'EMPTY', null, null, JSON.stringify([])]);
                 }
             }
         });

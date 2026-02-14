@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
+import bcrypt from 'bcrypt';
 import { addOCRJob, ocrQueue } from './queue.js'; // NEW
 
 const __filename = fileURLToPath(import.meta.url);
@@ -456,56 +457,60 @@ app.get('/api/search', (req, res) => {
         });
     });
 
-    // 2. Search Inventory (Invoices inside Boxes)
+    // 2. Search Inventory (Invoices inside Boxes) -> OPTIMIZED
     const invPromise = new Promise((resolve) => {
-        const sql = `SELECT * FROM inventory`;
-        db.all(sql, [], (err, rows) => {
+        const term = `%${query}%`;
+        const sql = `
+            SELECT i.*, inv.box_data 
+            FROM inventory_items i
+            LEFT JOIN inventory inv ON i.inventory_id = inv.id
+            WHERE i.invoice_no LIKE ? OR i.vendor LIKE ? OR i.ocr_content LIKE ?
+            LIMIT 50
+        `;
+
+        db.all(sql, [term, term, term], (err, rows) => {
             if (err || !rows) return resolve([]);
 
-            const matches = [];
-            rows.forEach(slot => {
-                const rawData = slot.box_data || slot.boxData;
-                if (!rawData) return;
-                try {
-                    const box = typeof rawData === 'string' ? JSON.parse(rawData) : rawData;
-                    if (box.ordners) {
-                        box.ordners.forEach(ord => {
-                            if (ord.invoices) {
-                                ord.invoices.forEach(inv => {
-                                    const invNo = (inv.invoiceNo || '').toLowerCase();
-                                    const vendor = (inv.vendor || '').toLowerCase();
-                                    const ocr = (typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || '')).toLowerCase();
+            const matches = rows.map(item => {
+                // Construct the result object matching the previous structure
+                let score = 0;
+                const invNo = (item.invoice_no || '').toLowerCase();
+                const vendor = (item.vendor || '').toLowerCase();
+                const ocr = (item.ocr_content || '').toLowerCase();
 
-                                    if (invNo.includes(query) || vendor.includes(query) || ocr.includes(query)) {
-                                        let score = 0;
-                                        if (invNo.includes(query)) score += 0.5;
-                                        if (vendor.includes(query)) score += 0.4;
-                                        if (ocr.includes(query)) score += 0.3;
+                if (invNo.includes(query)) score += 0.5;
+                if (vendor.includes(query)) score += 0.4;
+                if (ocr.includes(query)) score += 0.3;
 
-                                        matches.push({
-                                            id: `INV-${inv.id}`,
-                                            title: `Invoice: ${inv.invoiceNo} (${inv.vendor})`,
-                                            type: inv.file && inv.file.match(/image\//) ? 'image/jpeg' : 'application/pdf',
-                                            size: inv.fileName || 'Invoice',
-                                            uploadDate: inv.paymentDate || new Date().toISOString(),
-                                            folderId: 'INVENTORY', // Special flag for frontend
-                                            folderName: `Box ${box.boxId} / Ordner ${ord.noOrdner}`,
-                                            score: score,
-                                            matchType: 'invoice',
-                                            data: inv, // Pass full object for viewing
-                                            boxId: box.boxId,
-                                            slotId: slot.id,
-                                            ocrContent: typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || ''), // Include OCR for display
-                                            url: inv.file // Ensure URL is passed for download/view
-                                        });
-                                    }
-                                });
-                            }
-                        });
-                    }
-                } catch (e) {
-                    // Ignore parse errors
-                }
+                // Reconstruct the 'data' object expected by frontend
+                // The frontend likely expects the full invoice object
+                const invoiceData = {
+                    id: item.id, // Using item ID might differ from original random ID but should work
+                    invoiceNo: item.invoice_no,
+                    vendor: item.vendor,
+                    paymentDate: item.date,
+                    totalAmount: item.amount,
+                    file: item.file_url,
+                    ocrContent: item.ocr_content,
+                    fileName: 'Invoice' // Fallback
+                };
+
+                return {
+                    id: `INV-${item.id}`,
+                    title: `Invoice: ${item.invoice_no} (${item.vendor})`,
+                    type: item.file_url && item.file_url.match(/image\//) ? 'image/jpeg' : 'application/pdf',
+                    size: 'Invoice',
+                    uploadDate: item.date || new Date().toISOString(),
+                    folderId: 'INVENTORY', // Special flag for frontend
+                    folderName: `Box ${item.box_id} / Ordner ${item.ordner_id}`, // Use columns directly
+                    score: score,
+                    matchType: 'invoice',
+                    data: invoiceData, // Pass full object for viewing
+                    boxId: item.box_id,
+                    slotId: item.inventory_id,
+                    ocrContent: item.ocr_content, // Include OCR for display
+                    url: item.file_url // Ensure URL is passed for download/view
+                };
             });
             resolve(matches);
         });
@@ -800,9 +805,48 @@ db.run("SET GLOBAL max_allowed_packet = 67108864", [], (err) => { // 64MB
 });
 
 // --- USERS ---
-app.get('/api/users', (req, res) => {
-    db.all("SELECT * FROM users", [], (err, rows) => {
+// --- AUTH HANDLERS ---
+app.post('/api/login', (req, res) => {
+    const { username, password } = req.body;
+
+    db.get("SELECT * FROM users WHERE username = ?", [username], async (err, user) => {
         if (err) return res.status(500).json({ error: err.message });
+        if (!user) return res.status(401).json({ error: "Invalid credentials" });
+
+        // Check password (support both bcrypt and legacy plaintext for safety during migration)
+        let match = false;
+        if (user.password.startsWith('$2b$') || user.password.startsWith('$2a$')) {
+            match = await bcrypt.compare(password, user.password);
+        } else {
+            match = (user.password === password); // Legacy fallback (should actally trigger migration if possible, but keep simple)
+        }
+
+        if (match) {
+            // Remove password from response
+            const { password, ...userWithoutPass } = user;
+
+            // Log login
+            const logDate = new Date().toISOString();
+            // We can't update last_login if column doesn't exist, preserving schema for now.
+            // Just return user.
+
+            res.json(userWithoutPass);
+        } else {
+            res.status(401).json({ error: "Invalid credentials" });
+        }
+    });
+
+    // Admin/Viewer hardcoded check can be moved to DB or kept here if essential fallback
+    // But ideally we should rely on DB users. 
+    // Additional logic could handle 'admin'/'viewer' if they are not in DB, but let's assume valid users are in DB now.
+});
+
+app.get('/api/users', (req, res) => {
+    // Exclude password from result
+    db.all("SELECT id, username, name, role, department FROM users", [], (err, rows) => {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
         res.json(rows);
     });
 });
@@ -819,29 +863,39 @@ app.get('/api/folders', (req, res) => {
     });
 });
 
-app.post('/api/users', (req, res) => {
+app.post('/api/users', async (req, res) => {
     const { username, password, name, role, department } = req.body;
-    db.run("INSERT INTO users (username, password, name, role, department) VALUES (?, ?, ?, ?, ?)",
-        [username, password, name, role, department],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ id: this.lastID });
-        }
-    );
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        db.run("INSERT INTO users (username, password, name, role, department) VALUES (?, ?, ?, ?, ?)",
+            [username, hashedPassword, name, role, department],
+            function (err) {
+                if (err) return res.status(500).json({ error: err.message });
+                res.json({ id: this.lastID });
+            }
+        );
+    } catch (e) {
+        res.status(500).json({ error: "Failed to hash password" });
+    }
 });
 
 app.put('/api/users/:id', (req, res) => {
     const { username, password, name, role, department } = req.body;
 
     // Fetch OLD value for Audit
-    db.get("SELECT * FROM users WHERE id = ?", [req.params.id], (err, oldUser) => {
+    db.get("SELECT * FROM users WHERE id = ?", [req.params.id], async (err, oldUser) => {
         if (err || !oldUser) {
-            // Fallback if fetch fails, still update but no detailed audit
             console.error("Failed to fetch old user for audit", err);
         }
 
+        let newPassword = password;
+        if (password && password !== oldUser.password && !password.startsWith('$2b$')) {
+            // Only hash if it looks like a new plaintext password
+            newPassword = await bcrypt.hash(password, 10);
+        }
+
         db.run("UPDATE users SET username = ?, password = ?, name = ?, role = ?, department = ? WHERE id = ?",
-            [username, password, name, role, department, req.params.id],
+            [username, newPassword, name, role, department, req.params.id],
             async function (err) {
                 if (err) return res.status(500).json({ error: err.message });
 
@@ -853,7 +907,7 @@ app.put('/api/users/:id', (req, res) => {
                     if (oldUser.department !== department) changes.push(`Dept: ${oldUser.department} -> ${department}`);
 
                     if (changes.length > 0) {
-                        await systemLog(null, "Update User", `Update User: ${name}`, JSON.stringify(oldUser), JSON.stringify({ username, password, name, role, department }));
+                        await systemLog(null, "Update User", `Update User: ${name}`, JSON.stringify(oldUser), JSON.stringify({ username, password: '***', name, role, department }));
                     }
                 }
 
@@ -867,20 +921,25 @@ app.put('/api/users/profile/:id', (req, res) => {
     const { name, currentPassword, newPassword } = req.body;
     const userId = req.params.id;
 
-    db.get("SELECT * FROM users WHERE id = ?", [userId], (err, user) => {
+    db.get("SELECT * FROM users WHERE id = ?", [userId], async (err, user) => {
         if (err || !user) {
             return res.status(404).json({ success: false, error: 'User not found' });
         }
 
         // If trying to update password, verify current password first
         if (newPassword) {
-            if (user.password !== currentPassword) {
+            const match = await bcrypt.compare(currentPassword, user.password);
+            if (!match) {
                 return res.status(400).json({ success: false, error: 'Password saat ini salah' });
             }
         }
 
         const updatedName = name || user.name;
-        const updatedPassword = newPassword || user.password;
+        let updatedPassword = user.password;
+
+        if (newPassword) {
+            updatedPassword = await bcrypt.hash(newPassword, 10);
+        }
 
         db.run("UPDATE users SET name = ?, password = ? WHERE id = ?",
             [updatedName, updatedPassword, userId],
@@ -1126,13 +1185,19 @@ app.post('/api/inventory/move', (req, res) => {
 
             const boxData = source.box_data || source.boxData;
 
-            db.run("UPDATE inventory SET status = ?, box_data = ?, boxData = NULL, history = ?, lastUpdated = ? WHERE id = ?",
+            db.run("UPDATE inventory SET status = ?, box_data = ?, history = ?, lastUpdated = ? WHERE id = ?",
                 [source.status, boxData, JSON.stringify(targetHistory), now, targetId], (err) => {
                     if (err) return res.status(500).json({ error: err.message });
 
-                    db.run("UPDATE inventory SET status = 'EMPTY', box_data = NULL, boxData = NULL, history = ?, lastUpdated = ? WHERE id = ?",
+                    db.run("UPDATE inventory SET status = 'EMPTY', box_data = NULL, history = ?, lastUpdated = ? WHERE id = ?",
                         [JSON.stringify(sourceHistory), now, sourceId], (err2) => {
                             if (err2) return res.status(500).json({ error: err2.message });
+
+                            // Sync relational table: update box's inventory_id
+                            db.run("UPDATE boxes SET inventory_id = ? WHERE inventory_id = ?", [targetId, sourceId], (boxErr) => {
+                                if (boxErr) console.error("Failed to update boxes.inventory_id:", boxErr.message);
+                            });
+
                             res.json({ success: true });
                         });
                 });
@@ -1166,32 +1231,78 @@ app.put('/api/inventory/:id', (req, res) => {
     db.get("SELECT * FROM inventory WHERE id = ?", [req.params.id], (err, oldItem) => {
         if (err) return res.status(500).json({ error: err.message });
 
-        // FIX: Primary Update - Save to box_data (LONGTEXT) and Clear boxData (legacy) to avoid confusion
-        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, boxData = NULL, history = ? WHERE id = ?",
+        // FIX: Primary Update - Save to box_data (LONGTEXT). boxData column is deprecated/dropped.
+        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, history = ? WHERE id = ?",
             [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
             async (err) => {
                 try {
                     if (err) {
-                        // Fallback: Jika kolom box_data tidak ada, coba simpan ke boxData (Legacy)
-                        if (err.message && err.message.includes("no such column")) {
-                            console.warn("Column 'box_data' missing, falling back to 'boxData'. Please update DB schema.");
-                            db.run("UPDATE inventory SET status = ?, lastUpdated = ?, boxData = ?, history = ? WHERE id = ?",
-                                [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
-                                async (errFallback) => {
-                                    try {
-                                        if (errFallback) return res.status(500).json({ error: errFallback.message });
-                                        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id} (Legacy Fallback)`);
-                                        res.json({ success: true, id: req.params.id });
-                                    } catch (e2) { console.error(e2); if (!res.headersSent) res.status(500).json({ error: e2.message }); }
-                                }
-                            );
-                        } else {
-                            return res.status(500).json({ error: err.message });
-                        }
-                    } else {
-                        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id}`);
-                        res.json({ success: true, id: req.params.id });
+                        return res.status(500).json({ error: err.message });
                     }
+
+                    // --- SYNC TO RELATIONAL TABLES (boxes, ordners, invoices) ---
+                    const slotId = req.params.id;
+
+                    // 1. Delete old relational data for this slot
+                    db.run("DELETE FROM boxes WHERE inventory_id = ?", [slotId], (delErr) => {
+                        if (delErr) console.error("Error clearing boxes:", delErr);
+                    });
+
+                    // Also sync inventory_items for backward compatibility
+                    db.run("DELETE FROM inventory_items WHERE inventory_id = ?", [slotId], (delErr) => {
+                        if (delErr) console.error("Error clearing inventory_items:", delErr);
+                    });
+
+                    // 2. Insert new relational data
+                    if (dataObj && dataObj.id) {
+                        db.run("INSERT INTO boxes (inventory_id, box_id) VALUES (?, ?)",
+                            [slotId, dataObj.id], function (bErr) {
+                                if (bErr) { console.error("Box insert err:", bErr.message); return; }
+                                const boxRefId = this.lastID;
+
+                                if (!dataObj.ordners || !Array.isArray(dataObj.ordners)) return;
+
+                                dataObj.ordners.forEach(ord => {
+                                    db.run("INSERT INTO ordners (box_ref_id, no_ordner, period) VALUES (?, ?, ?)",
+                                        [boxRefId, ord.noOrdner || '', ord.period || ''], function (oErr) {
+                                            if (oErr) { console.error("Ordner insert err:", oErr.message); return; }
+                                            const ordnerRefId = this.lastID;
+
+                                            if (!ord.invoices || !Array.isArray(ord.invoices)) return;
+
+                                            ord.invoices.forEach(inv => {
+                                                const invoiceNo = inv.invoiceNo || '';
+                                                const vendor = inv.vendor || '';
+                                                const paymentDate = inv.paymentDate || null;
+                                                const fileUrl = inv.file || '';
+                                                const fileName = inv.fileName || '';
+                                                const ocrContent = typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || '');
+
+                                                // New normalized table
+                                                db.run(`INSERT INTO invoices (ordner_ref_id, invoice_no, vendor, payment_date, file_url, file_name, ocr_content) 
+                                                        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                                                    [ordnerRefId, invoiceNo, vendor, paymentDate, fileUrl, fileName, ocrContent],
+                                                    (iErr) => { if (iErr) console.error("Invoice insert err:", iErr.message); }
+                                                );
+
+                                                // Legacy inventory_items (for search compatibility)
+                                                const amount = inv.totalAmount ? parseFloat(String(inv.totalAmount).replace(/[^0-9.-]+/g, "")) : 0;
+                                                db.run(`INSERT INTO inventory_items (inventory_id, box_id, ordner_id, invoice_no, vendor, date, amount, file_url, ocr_content) 
+                                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                                                    [slotId, dataObj.id, ord.noOrdner, invoiceNo, vendor, paymentDate, amount, fileUrl, ocrContent],
+                                                    (insErr) => { if (insErr) console.error("inventory_items sync err:", insErr.message); }
+                                                );
+                                            });
+                                        }
+                                    );
+                                });
+                            }
+                        );
+                    }
+
+                    await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id}`);
+                    res.json({ success: true, id: req.params.id });
+
                 } catch (e) {
                     console.error("Critical Error in Update Callback:", e);
                     if (!res.headersSent) res.status(500).json({ error: e.message });
@@ -1243,6 +1354,91 @@ app.delete('/api/inventory/external/:id', (req, res) => {
             res.json({ success: true });
         }
     );
+});
+
+// --- NORMALIZED QUERY ENDPOINTS ---
+
+// Search invoices with filters (vendor, invoice_no, period)
+app.get('/api/invoices', (req, res) => {
+    const { vendor, invoice_no, period, limit = 100, offset = 0 } = req.query;
+
+    let sql = `
+        SELECT i.*, o.no_ordner, o.period, b.box_id, b.inventory_id
+        FROM invoices i
+        JOIN ordners o ON i.ordner_ref_id = o.id
+        JOIN boxes b ON o.box_ref_id = b.id
+        WHERE 1=1
+    `;
+    const params = [];
+
+    if (vendor) {
+        sql += " AND i.vendor LIKE ?";
+        params.push(`%${vendor}%`);
+    }
+    if (invoice_no) {
+        sql += " AND i.invoice_no LIKE ?";
+        params.push(`%${invoice_no}%`);
+    }
+    if (period) {
+        sql += " AND o.period LIKE ?";
+        params.push(`%${period}%`);
+    }
+
+    sql += " ORDER BY i.id DESC LIMIT ? OFFSET ?";
+    params.push(parseInt(limit), parseInt(offset));
+
+    db.all(sql, params, (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows || []);
+    });
+});
+
+// Aggregate stats for invoices
+app.get('/api/stats/invoices', (req, res) => {
+    const sql = `
+        SELECT 
+            COUNT(*) as total_invoices,
+            COUNT(DISTINCT b.box_id) as total_boxes,
+            COUNT(DISTINCT o.id) as total_ordners
+        FROM invoices i
+        JOIN ordners o ON i.ordner_ref_id = o.id
+        JOIN boxes b ON o.box_ref_id = b.id
+    `;
+
+    db.get(sql, [], (err, stats) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Also get top vendors
+        db.all(`
+            SELECT i.vendor, COUNT(*) as count 
+            FROM invoices i 
+            WHERE i.vendor != '' 
+            GROUP BY i.vendor 
+            ORDER BY count DESC 
+            LIMIT 10
+        `, [], (err2, vendors) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+
+            // Get invoice count per period
+            db.all(`
+                SELECT o.period, COUNT(*) as count 
+                FROM invoices i 
+                JOIN ordners o ON i.ordner_ref_id = o.id 
+                WHERE o.period != '' 
+                GROUP BY o.period 
+                ORDER BY count DESC 
+                LIMIT 12
+            `, [], (err3, periods) => {
+                if (err3) return res.status(500).json({ error: err3.message });
+
+                res.json({
+                    ...stats,
+                    top_vendors: vendors || [],
+                    by_period: periods || []
+                });
+            });
+        });
+    });
 });
 
 // --- LOGS ---
@@ -1373,13 +1569,11 @@ app.get('/api/documents/:id', (req, res) => {
     });
 });
 
-import { getEmbedding, cosineSimilarity } from './semantic.js';
-import Tesseract from 'tesseract.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdfParse = require('pdf-parse');
 import mammoth from 'mammoth';
-import XLSX from 'xlsx';
+import * as XLSX from 'xlsx';
 
 // --- OCR HELPER ---
 // --- OCR HELPER ---
@@ -1420,13 +1614,12 @@ const extractTextFromFile = async (buffer, mimeType) => {
         }
 
         // 4. Excel Spreadsheet (.xlsx) (xlsx)
-        if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+        if (mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || mimeType.includes('excel') || mimeType.includes('spreadsheet')) {
             console.log("Starting XLSX Text Extraction...");
             const workbook = XLSX.read(buffer, { type: 'buffer' });
             let allText = "";
             workbook.SheetNames.forEach(sheetName => {
                 const sheet = workbook.Sheets[sheetName];
-                // Convert sheet to text (CSV-like but simple connection)
                 const text = XLSX.utils.sheet_to_txt(sheet);
                 allText += `\n--- Sheet: ${sheetName} ---\n${text}`;
             });

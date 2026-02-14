@@ -20,7 +20,7 @@ export const db = {
             return data.map(slot => {
                 const rawBoxData = slot.boxData || slot.box_data || slot.boxdata;
                 const rawHistory = slot.history || slot.history_data; // Defensive
-                
+
                 const parsedHistory = typeof rawHistory === 'string' ? JSON.parse(rawHistory) : (rawHistory || []);
 
                 return {
@@ -209,6 +209,26 @@ export const db = {
             return JSON.parse(localStorage.getItem('tax_summaries') || '[]');
         }
     },
+    async login(username, password) {
+        try {
+            const response = await fetch(`${API_URL}/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error || 'Login failed');
+            }
+            return data;
+        } catch (e) {
+            console.error("Login error:", e);
+            throw e;
+        }
+    },
+
     async getUsers() {
         try {
             const response = await fetch(`${API_URL}/users`);
@@ -761,5 +781,29 @@ export const db = {
             });
             return await response.json();
         } catch (e) { console.error(e); return { success: false }; }
+    },
+
+    // --- NORMALIZED QUERY ENDPOINTS ---
+    async getInvoices(params = {}) {
+        try {
+            const query = new URLSearchParams(params).toString();
+            const response = await fetch(`${API_URL}/invoices?${query}`);
+            if (!response.ok) throw new Error('Gagal mengambil data invoice');
+            return await response.json();
+        } catch (e) {
+            console.error("getInvoices Error:", e);
+            return [];
+        }
+    },
+
+    async getInvoiceStats() {
+        try {
+            const response = await fetch(`${API_URL}/stats/invoices`);
+            if (!response.ok) throw new Error('Gagal mengambil statistik invoice');
+            return await response.json();
+        } catch (e) {
+            console.error("getInvoiceStats Error:", e);
+            return { total_invoices: 0, total_boxes: 0, total_ordners: 0, top_vendors: [], by_period: [] };
+        }
     }
 };

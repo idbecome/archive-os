@@ -1,5 +1,7 @@
 import db from './db.js';
-
+import * as XLSX from 'xlsx'; // Fixed for ESM
+import fs from 'fs';
+import path from 'path';
 // Simple MySQL-based Queue Replacement for BullMQ
 class DbQueue {
     constructor(name) {
@@ -60,7 +62,7 @@ export const ocrQueue = new DbQueue('OCR_QUEUE');
 
 // Helper to add jobs
 export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {
-    console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}`);
+    console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}, File: ${originalName}`);
     return await ocrQueue.add('process-ocr', {
         docId,
         filePath,
