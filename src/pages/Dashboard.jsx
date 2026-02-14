@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock, Eye, Info, MessageSquare, BookOpen, FileCheck, ClipboardCheck, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
@@ -59,10 +58,8 @@ export default function Dashboard({
                     ...item,
                     title: item.name,
                     uploadDate: item.date,
-                    // If invoice, show amount as size/info
                     size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
                     folderName: item.matchType === 'invoice' ? 'Finance' : 'General',
-                    // Ensure ID and other props are passed
                 }));
                 setSearchResults(mapped);
             }
@@ -83,7 +80,6 @@ export default function Dashboard({
         setExpandedLogId(expandedLogId === id ? null : id);
     };
 
-    // --- GREETING LOGIC ---
     const getGreeting = () => {
         const hour = new Date().getHours();
         if (hour < 11) return 'Selamat Pagi';
@@ -101,7 +97,6 @@ export default function Dashboard({
             "Cek kapasitas gudang, mungkin ada slot yang bisa dioptimalkan.",
             "Review log aktivitas hari ini untuk memastikan semua aman."
         ];
-        // Gunakan tanggal hari ini sebagai index agar saran tetap sama seharian
         const dayIndex = new Date().getDate() % suggestions.length;
         return suggestions[dayIndex];
     };
@@ -403,6 +398,7 @@ export default function Dashboard({
                     colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
                 />
             </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <Card>
                     <h3 className="font-bold mb-4 text-gray-900 dark:text-white flex items-center gap-2">
@@ -443,6 +439,7 @@ export default function Dashboard({
                     </div>
                 </Card>
             </div>
+
             <Card className="max-h-[400px] overflow-y-auto relative p-0">
                 <div className="sticky top-0 bg-white dark:bg-slate-900 z-10 p-6 pb-2 border-b border-slate-100 dark:border-slate-800">
                     <h3 className="font-bold text-gray-900 dark:text-white flex items-center gap-2">
@@ -471,7 +468,6 @@ export default function Dashboard({
                                 </div>
                             </div>
 
-                            {/* Expanded Audit Details */}
                             {expandedLogId === log.id && (log.oldValue || log.newValue) && (
                                 <div className="mt-2 text-xs bg-slate-50 dark:bg-slate-900/50 p-3 rounded-lg border border-slate-200 dark:border-slate-700 font-mono animate-in slide-in-from-top-1">
                                     <div className="grid grid-cols-1 gap-2">

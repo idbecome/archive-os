@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
@@ -81,6 +81,8 @@ import DocumentApproval from './pages/DocumentApproval';
 import Pustaka from './pages/Pustaka';
 import { useToast, ToastContainer } from './components/ui/Toast';
 import PdfViewer from './components/ui/PdfViewer';
+import AiChatAssistant from './components/AiChatAssistant';
+
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
 const API_URL = 'http://localhost:5000/api';
@@ -187,7 +189,7 @@ const InitialLandingPage = ({ onClose }) => (
           { icon: HelpCircle, title: "User Guide", desc: "Panduan lengkap seluruh proses pekerjaan.", color: "bg-purple-50 text-purple-600" },
           { icon: FolderOpen, title: "Digital Filing", desc: "Manajemen arsip digital yang terstruktur.", color: "bg-indigo-50 text-indigo-600" },
           { icon: ScanLine, title: "Teknologi OCR", desc: "Ekstraksi teks otomatis dari dokumen fisik.", color: "bg-rose-50 text-rose-600" },
-          { icon: Search, title: "Semantic Search", desc: "Pencarian cerdas berbasis makna konten.", color: "bg-teal-50 text-teal-600" },
+          { icon: Sparkles, title: "Semantic Search", desc: "Pencarian berbasis AI yang memahami konteks.", color: "bg-cyan-50 text-cyan-600" },
           { icon: Zap, title: "Efisiensi", desc: "Meningkatkan produktivitas tim secara masif.", color: "bg-orange-50 text-orange-600" }
         ].map((feature, i) => (
           <motion.div
@@ -400,39 +402,8 @@ export default function App() {
   // --- OCR GLOBAL POLLING ---
   const [ocrStats, setOcrStats] = useState({ counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
 
-  // --- AI SEARCH STATE ---
-  const [isAiSearchOpen, setIsAiSearchOpen] = useState(false);
-  const [aiSearchQuery, setAiSearchQuery] = useState('');
-  const [aiSearchResults, setAiSearchResults] = useState([]);
-  const [aiSearchIntent, setAiSearchIntent] = useState(null);
-  const [isAiSearching, setIsAiSearching] = useState(false);
 
-  const handleAiSearch = async (e) => {
-    e?.preventDefault();
-    if (!aiSearchQuery.trim()) return;
 
-    setIsAiSearching(true);
-    setAiSearchResults([]);
-    setAiSearchIntent(null);
-
-    try {
-      const response = await fetch(`${API_URL}/search/ai`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: aiSearchQuery })
-      });
-      const data = await response.json();
-      if (data.results) {
-        setAiSearchResults(data.results);
-        setAiSearchIntent(data.intent);
-      }
-    } catch (error) {
-      console.error("AI Search Failed:", error);
-      toast.error("Gagal melakukan pencarian AI");
-    } finally {
-      setIsAiSearching(false);
-    }
-  };
   const lastOcrCompletedRef = useRef(0);
 
   useEffect(() => {
@@ -2641,7 +2612,7 @@ export default function App() {
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
                 {activeTab === 'dashboard' ? 'Dashboard' :
-                  activeTab === 'inventory' ? 'Gudang Arsip Utama • Lantai 1' :
+                  activeTab === 'inventory' ? 'Gudang Arsip Utama â€¢ Lantai 1' :
                     activeTab === 'documents' ? 'Secure Digital Storage' :
                       activeTab === 'tax-monitoring' ? 'Sistem Monitoring Pemeriksaan Pajak' :
                         activeTab === 'tax-summary' ? 'Ringkasan Kepatuhan & Pembayaran' :
@@ -2652,16 +2623,6 @@ export default function App() {
               </p>
             </div>
 
-            <button
-              onClick={() => setIsAiSearchOpen(true)}
-              className="flex items-center gap-2 px-5 py-3 bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 rounded-2xl shadow-sm border border-indigo-100 dark:border-indigo-900/50 hover:shadow-lg hover:shadow-indigo-500/10 hover:-translate-y-0.5 transition-all font-black text-sm group"
-            >
-              <div className="p-1.5 bg-indigo-50 dark:bg-indigo-900/30 rounded-lg group-hover:bg-indigo-600 group-hover:text-white transition-colors">
-                <Sparkles size={16} />
-              </div>
-              <span>Smart Search</span>
-              <span className="hidden md:inline px-2 py-0.5 bg-indigo-50 dark:bg-indigo-900/50 rounded-md text-[10px] ml-1 border border-indigo-100 dark:border-indigo-800">AI</span>
-            </button>
           </div>
 
 
@@ -3160,7 +3121,7 @@ export default function App() {
                         <div key={idx} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700">
                           <div>
                             <div className="text-xs font-bold text-slate-700 dark:text-slate-300">Versi {new Date(ver.timestamp).toLocaleString()}</div>
-                            <div className="text-[10px] text-slate-500">Oleh: {ver.user} • {ver.size} • {ver.title}</div>
+                            <div className="text-[10px] text-slate-500">Oleh: {ver.user} â€¢ {ver.size} â€¢ {ver.title}</div>
                           </div>
                           <button
                             onClick={() => handleRestoreVersion(viewDocData.id, ver.timestamp)}
@@ -3676,7 +3637,7 @@ export default function App() {
                       value={userForm.password}
                       onChange={e => setUserForm({ ...userForm, password: e.target.value })}
                       className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner placeholder:text-slate-400"
-                      placeholder={userForm.id ? "••••••••" : "Password login"}
+                      placeholder={userForm.id ? "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" : "Password login"}
                     />
                   </div>
                 </div>
@@ -4183,109 +4144,22 @@ export default function App() {
         </div>
       </Modal>
 
+
       {/* Toast Notification System */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
 
-      {/* AI SEARCH OVERLAY */}
-      <AnimatePresence>
-        {isAiSearchOpen && (
-          <div className="fixed inset-0 z-[100] flex items-start justify-center pt-24 px-4 font-sans">
-            <motion.div
-              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-              onClick={() => setIsAiSearchOpen(false)}
-              className="absolute inset-0 bg-slate-900/60 backdrop-blur-md"
-            />
-
-            <motion.div
-              initial={{ opacity: 0, scale: 0.95, y: -20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: -20 }}
-              className="relative w-full max-w-2xl bg-white dark:bg-slate-900 rounded-[2rem] shadow-2xl border border-white/10 overflow-hidden flex flex-col max-h-[70vh]"
-            >
-              <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex items-center gap-4">
-                <div className="w-12 h-12 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-600/20 shrink-0">
-                  {isAiSearching ? <RefreshCw className="animate-spin" size={24} /> : <Sparkles size={24} />}
-                </div>
-                <input
-                  autoFocus
-                  className="flex-1 bg-transparent border-0 text-lg font-black text-slate-800 dark:text-white placeholder:text-slate-400 focus:ring-0 outline-none h-full"
-                  placeholder="Cari... (Contoh: Invoice dari PT Maju Jaya > 5 juta)"
-                  value={aiSearchQuery}
-                  onChange={e => setAiSearchQuery(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleAiSearch(e)}
-                />
-                <button onClick={() => setIsAiSearchOpen(false)} className="p-2 text-slate-400 hover:text-slate-600 dark:hover:text-white transition-colors">
-                  <X size={24} />
-                </button>
-              </div>
-
-              {/* INTENT FEEDBACK */}
-              {aiSearchIntent && (
-                <div className="px-6 py-2 bg-indigo-50 dark:bg-indigo-900/20 border-b border-indigo-100 dark:border-indigo-800/50 flex gap-2 overflow-x-auto">
-                  {aiSearchIntent.vendor && <span className="text-[10px] font-black uppercase px-2 py-1 bg-white dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 rounded-lg shadow-sm border border-indigo-100 dark:border-indigo-800">Vendor: {aiSearchIntent.vendor}</span>}
-                  {aiSearchIntent.minAmount && <span className="text-[10px] font-black uppercase px-2 py-1 bg-white dark:bg-emerald-900/50 text-emerald-600 dark:text-emerald-300 rounded-lg shadow-sm border border-emerald-100 dark:border-emerald-800">Min: {aiSearchIntent.minAmount.toLocaleString('id-ID')}</span>}
-                  {aiSearchIntent.maxAmount && <span className="text-[10px] font-black uppercase px-2 py-1 bg-white dark:bg-red-900/50 text-red-600 dark:text-red-300 rounded-lg shadow-sm border border-red-100 dark:border-red-800">Max: {aiSearchIntent.maxAmount.toLocaleString('id-ID')}</span>}
-                </div>
-              )}
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-                {aiSearchResults.length === 0 && !isAiSearching && aiSearchQuery && (
-                  <div className="text-center py-12 text-slate-400">
-                    <Search size={48} className="mx-auto mb-4 opacity-20" />
-                    <p className="font-bold">Tidak ditemukan hasil yang cocok.</p>
-                  </div>
-                )}
-                {aiSearchResults.map(item => (
-                  <div key={`${item.matchType}-${item.id}`} onClick={() => {
-                    if (item.matchType === 'invoice') {
-                      // Open Invoice Modal
-                      const inv = { ...item, invoiceNo: item.invoice_no || item.name.split(' - ')[1], paymentDate: item.date, fileName: item.url ? item.url.split('/').pop() : 'File' };
-                      setSelectedInvoice(inv);
-                      setModalTab('invoice-detail');
-                      setIsModalOpen(true);
-                    } else {
-                      // Open Doc Modal
-                      handleViewDoc(item);
-                    }
-                    setIsAiSearchOpen(false);
-                  }} className="p-4 rounded-xl hover:bg-slate-50 dark:hover:bg-slate-800/50 cursor-pointer transition-colors group border border-transparent hover:border-slate-200 dark:hover:border-slate-700 flex justify-between items-center">
-                    <div className="flex items-center gap-4">
-                      <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${item.matchType === 'invoice' ? 'bg-amber-100 text-amber-600' : 'bg-blue-100 text-blue-600'}`}>
-                        {item.matchType === 'invoice' ? <FileSpreadsheet size={20} /> : <FileText size={20} />}
-                      </div>
-                      <div>
-                        <h4 className="font-bold text-slate-800 dark:text-white text-sm line-clamp-1">{item.name}</h4>
-                        <div className="flex gap-2 text-[10px] uppercase font-bold text-slate-400 mt-1">
-                          <span className={item.matchType === 'invoice' ? 'text-amber-500' : 'text-blue-500'}>{item.matchType}</span>
-                          <span>•</span>
-                          <span>{item.date ? new Date(item.date).toLocaleDateString() : '-'}</span>
-                          {item.amount && (
-                            <>
-                              <span>•</span>
-                              <span className="text-emerald-500">Rp {item.amount.toLocaleString('id-ID')}</span>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    {item.score > 0.6 && (
-                      <div className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-black rounded-lg uppercase tracking-wider">
-                        {(item.score * 100).toFixed(0)}% Match
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="p-3 bg-slate-50 dark:bg-slate-950 border-t border-slate-100 dark:border-slate-800 text-[10px] font-bold text-slate-400 flex justify-between uppercase tracking-wider">
-                <span>Tekan Enter untuk mencari</span>
-                <span>ESC untuk tutup</span>
-              </div>
-
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div >
+      {/* Floating AI Chat Assistant */}
+      {currentUser && activeTab !== 'pustaka' && (
+        <AiChatAssistant
+          isDarkMode={isDarkMode}
+          onNavigateToDoc={handleViewDoc}
+          onNavigateToInvoice={handleViewDoc}
+          handleNavigateToFolder={handleNavigateToFolder}
+          setActiveTab={setActiveTab}
+          setActiveInvTab={setActiveInvTab}
+        />
+      )}
+    </div>
   );
 }
+

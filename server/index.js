@@ -2590,7 +2590,7 @@ app.post('/api/search/ai', async (req, res) => {
     if (!query) return res.json({ results: [] });
 
     try {
-        const intent = parseIntent(query);
+        const intent = await parseIntent(query);
         const queryVector = await generateEmbedding(query);
 
         // 1. Build Dynamic SQL for hard filters
@@ -2655,6 +2655,302 @@ app.post('/api/search/ai', async (req, res) => {
     } catch (error) {
         console.error("[AI Search Error]", error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// --- AI CHAT ASSISTANT ---
+app.post('/api/chat', async (req, res) => {
+    const { message, history } = req.body;
+    if (!message) return res.json({ reply: 'Silakan ketik pertanyaan Anda.', results: [] });
+
+    try {
+        const queryVector = await generateEmbedding(message);
+        const intent = await parseIntent(message, queryVector);
+        const query = message.toLowerCase();
+        const term = `%${query}%`;
+
+        // Helper for DB queries as promises
+        const dbAll = (sql, params) => new Promise((resolve) => {
+            db.all(sql, params, (err, rows) => resolve(err ? [] : (rows || [])));
+        });
+
+        // --- 1. KEYWORD SEARCH (Full-Text) ---
+        // Search documents by title and OCR content
+        const docKeyword = await dbAll(
+            `SELECT id, title, type, size, url, uploadDate, ocrContent, folderId, department, owner
+             FROM documents
+             WHERE title LIKE ? OR ocrContent LIKE ?
+             LIMIT 30`,
+            [term, term]
+        );
+
+        // Search invoices with intent filters
+        let invFilters = ["(invoice_no LIKE ? OR vendor LIKE ? OR ocr_content LIKE ?)"];
+        let invParams = [term, term, term];
+
+        if (intent.vendor) {
+            invFilters.push("vendor LIKE ?");
+            invParams.push(`%${intent.vendor}%`);
+        }
+        if (intent.minAmount) {
+            invFilters.push("amount >= ?");
+            invParams.push(intent.minAmount);
+        }
+        if (intent.maxAmount) {
+            invFilters.push("amount <= ?");
+            invParams.push(intent.maxAmount);
+        }
+
+        const invKeyword = await dbAll(
+            `SELECT i.id, i.invoice_no, i.vendor, i.amount, i.date as payment_date,
+                    i.file_url, i.ocr_content, i.box_id, i.ordner_id, i.inventory_id,
+                    inv.box_data
+             FROM inventory_items i
+             LEFT JOIN inventory inv ON i.inventory_id = inv.id
+             WHERE ${invFilters.join(' AND ')}
+             LIMIT 30`,
+            invParams
+        );
+
+        // Search external items
+        const extKeyword = await dbAll(
+            `SELECT * FROM external_items WHERE boxId LIKE ? OR destination LIKE ? OR sender LIKE ? LIMIT 10`,
+            [term, term, term]
+        );
+
+        // --- 2. VECTOR SEARCH (Semantic) ---
+        let vectorResults = [];
+        try {
+            const docsWithVectors = await dbAll(
+                `SELECT id, title, type, url, uploadDate, ocrContent, vector FROM documents WHERE vector IS NOT NULL LIMIT 100`, []
+            );
+
+            vectorResults = docsWithVectors
+                .map(doc => {
+                    try {
+                        const docVector = JSON.parse(doc.vector);
+                        const similarity = cosineSimilarity(queryVector, docVector);
+                        return { ...doc, vector: undefined, similarity };
+                    } catch { return null; }
+                })
+                .filter(d => d && d.similarity > 0.3)
+                .sort((a, b) => b.similarity - a.similarity)
+                .slice(0, 10);
+        } catch (embErr) {
+            console.warn("[Chat] Vector search skipped:", embErr.message);
+        }
+
+        // --- 3. MERGE & DEDUPLICATE ---
+        const resultMap = new Map();
+
+        // Process keyword document results
+        docKeyword.forEach(doc => {
+            if (!resultMap.has(doc.id)) {
+                resultMap.set(doc.id, {
+                    id: doc.id,
+                    title: doc.title,
+                    type: 'document',
+                    fileType: doc.type,
+                    url: doc.url,
+                    date: doc.uploadDate,
+                    snippet: doc.ocrContent ? doc.ocrContent.substring(0, 150) + '...' : '',
+                    score: 0.5,
+                    folderId: doc.folderId, // FIXED: added folderId
+                    department: doc.department,
+                    owner: doc.owner
+                });
+            }
+        });
+
+        // Boost with vector similarity scores
+        vectorResults.forEach(doc => {
+            if (resultMap.has(doc.id)) {
+                resultMap.get(doc.id).score += doc.similarity;
+            } else {
+                resultMap.set(doc.id, {
+                    id: doc.id,
+                    title: doc.title,
+                    type: 'document',
+                    fileType: doc.type,
+                    url: doc.url,
+                    date: doc.uploadDate,
+                    snippet: doc.ocrContent ? doc.ocrContent.substring(0, 150) + '...' : '',
+                    score: doc.similarity,
+                    folderId: doc.folderId, // FIXED: added folderId
+                    semantic: true
+                });
+            }
+        });
+
+        // Process invoice results
+        invKeyword.forEach(inv => {
+            const key = `inv-${inv.id}`;
+            if (!resultMap.has(key)) {
+                let score = 0.5;
+                if (intent.vendor && inv.vendor && inv.vendor.toLowerCase().includes(intent.vendor)) score += 0.3;
+                if (intent.minAmount && inv.amount >= intent.minAmount) score += 0.2;
+
+                resultMap.set(key, {
+                    id: key,
+                    title: `Invoice: ${inv.invoice_no}`,
+                    type: 'invoice',
+                    vendor: inv.vendor,
+                    amount: inv.amount,
+                    date: inv.payment_date,
+                    url: inv.file_url,
+                    boxId: inv.box_id,
+                    slotId: inv.inventory_id,
+                    score
+                });
+            }
+        });
+
+        // Process external items
+        extKeyword.forEach(ext => {
+            const key = `ext-${ext.id}`;
+            resultMap.set(key, {
+                id: key,
+                title: `Box Eksternal: ${ext.boxId}`,
+                type: 'external',
+                destination: ext.destination,
+                sender: ext.sender,
+                date: ext.sentDate,
+                score: 0.4
+            });
+        });
+
+        // --- 3.5 SPECIALIZED ANALYTICS HANDLERS ---
+        let analyticsResponse = '';
+        const allResults = Array.from(resultMap.values())
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 15);
+
+        if (intent.type === 'aggregation') {
+            const months = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+            let sql = "SELECT * FROM tax_summaries WHERE 1=1";
+            let params = [];
+
+            if (intent.month) {
+                sql += " AND month = ?";
+                params.push(months[intent.month]);
+            }
+            if (intent.year) {
+                sql += " AND year = ?";
+                params.push(intent.year);
+            }
+            if (intent.taxType) {
+                sql += " AND type = ?";
+                params.push(intent.taxType);
+            }
+
+            const summaries = await new Promise(res => db.all(sql, params, (err, rows) => res(rows || [])));
+
+            if (summaries.length > 0) {
+                let totalAmount = 0;
+                summaries.forEach(s => {
+                    const data = typeof s.data === 'string' ? JSON.parse(s.data || '{}') : (s.data || {});
+                    if (intent.taxType === 'PPH') {
+                        if (data.pph) Object.values(data.pph).forEach(v => totalAmount += (Number(v) || 0));
+                    } else if (intent.taxType === 'PPN') {
+                        let inTotal = 0;
+                        let outTotal = 0;
+                        if (data.ppnIn) Object.values(data.ppnIn).forEach(v => inTotal += (Number(v) || 0));
+                        if (data.ppnOut) Object.values(data.ppnOut).forEach(v => outTotal += (Number(v) || 0));
+                        totalAmount += (outTotal - inTotal);
+                    }
+                });
+
+                const periodStr = (intent.month ? months[intent.month] + ' ' : '') + (intent.year || '');
+                analyticsResponse = `Berdasarkan data laporan ${intent.taxType}, total ${intent.taxType} untuk periode ${periodStr || 'keseluruhan'} adalah **Rp ${totalAmount.toLocaleString('id-ID')}**.`;
+            } else {
+                // --- OCR DATA MINING FALLBACK ---
+                let minedTotal = 0;
+                let foundAny = false;
+                const searchItems = [...docKeyword, ...invKeyword];
+
+                // Regex patterns for tax extraction
+                const patterns = {
+                    PPH: [/pph\s*(?:21|23|4|22)?\s*[:=]?\s*rp\.?\s*([\d.,]+)/i, /total\s*pph\s*[:=]?\s*rp\.?\s*([\d.,]+)/i],
+                    PPN: [/ppn\s*[:=]?\s*rp\.?\s*([\d.,]+)/i, /pajak\s*pertambahan\s*nilai\s*[:=]?\s*rp\.?\s*([\d.,]+)/i]
+                };
+
+                const activePatterns = patterns[intent.taxType] || [];
+
+                searchItems.forEach(item => {
+                    const text = (item.ocrContent || item.ocr_content || '').toLowerCase();
+                    activePatterns.forEach(pattern => {
+                        const match = text.match(pattern);
+                        if (match) {
+                            const val = parseFloat(match[1].replace(/[.,]/g, (m) => m === ',' ? '.' : ''));
+                            if (!isNaN(val)) {
+                                minedTotal += val;
+                                foundAny = true;
+                            }
+                        }
+                    });
+                });
+
+                if (foundAny) {
+                    analyticsResponse = `Saya tidak menemukan data di tabel ringkasan, namun berdasarkan **mining data OCR** dari dokumen yang relevan, estimasi total ${intent.taxType} adalah **Rp ${minedTotal.toLocaleString('id-ID')}**.`;
+                } else {
+                    analyticsResponse = `Saya tidak menemukan data laporan ${intent.taxType} di tabel ringkasan maupun di konten dokumen untuk periode tersebut.`;
+                }
+            }
+        } else if (intent.type === 'audit_status') {
+            const audits = await new Promise(res => db.all("SELECT * FROM tax_audits ORDER BY startDate DESC LIMIT 5", [], (err, rows) => res(rows || [])));
+            if (audits.length > 0) {
+                analyticsResponse = `Berikut adalah status pemeriksaan pajak terakhir:\n` + audits.map(a =>
+                    `- **${a.title}**: Status ${a.status} (Langkah ${a.currentStep}). No Surat: ${a.letterNumber || '-'}`
+                ).join('\n');
+            } else {
+                analyticsResponse = `Tidak ada data pemeriksaan pajak (tax audit) yang tercatat saat ini.`;
+            }
+        }
+
+        // --- 4. GENERATE CONVERSATIONAL RESPONSE ---
+        const docCount = allResults.filter(r => r.type === 'document').length;
+        const invCount = allResults.filter(r => r.type === 'invoice').length;
+        const extCount = allResults.filter(r => r.type === 'external').length;
+        const total = allResults.length;
+
+        let reply = '';
+        if (analyticsResponse) {
+            reply = analyticsResponse;
+            if (total > 0) {
+                reply += `\n\nSaya juga menemukan ${total} dokumen/item yang relevan:`;
+            }
+        } else if (total === 0) {
+            reply = `Maaf, saya tidak menemukan hasil untuk "${message}". Coba kata kunci lain atau pertanyaan yang lebih spesifik.`;
+        } else {
+            // Build natural language response
+            const parts = [];
+            if (docCount > 0) parts.push(`${docCount} dokumen`);
+            if (invCount > 0) parts.push(`${invCount} invoice`);
+            if (extCount > 0) parts.push(`${extCount} item eksternal`);
+
+            reply = `Saya menemukan ${total} hasil (${parts.join(', ')})`;
+
+            // Add intent context
+            if (intent.vendor) reply += ` dari "${intent.vendor}"`;
+            if (intent.minAmount) reply += ` dengan nilai ≥ Rp ${intent.minAmount.toLocaleString('id-ID')}`;
+            if (intent.maxAmount) reply += ` dengan nilai ≤ Rp ${intent.maxAmount.toLocaleString('id-ID')}`;
+            if (intent.month || intent.year) {
+                const monthNames = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+                if (intent.month) reply += ` bulan ${monthNames[intent.month]}`;
+                if (intent.year) reply += ` tahun ${intent.year}`;
+            }
+            reply += ':';
+        }
+
+        res.json({ reply, results: allResults, intent });
+
+    } catch (error) {
+        console.error("[Chat Error]", error);
+        res.json({
+            reply: `Maaf, terjadi kesalahan saat memproses pertanyaan Anda: ${error.message}`,
+            results: [],
+            error: true
+        });
     }
 });
 

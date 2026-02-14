@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { 
-    BookOpen, ChevronRight, ChevronLeft, Play, 
+import {
+    BookOpen, ChevronRight, ChevronLeft, Play,
     Lightbulb, Target, Rocket, HelpCircle, X,
     Sparkles, Info, CheckCircle2, ArrowRight, Plus, Trash2, Save, Image as ImageIcon, Layout, Upload, RefreshCw, Edit3, Copy, Search, ZoomIn, Lock, Users, Building, User
     , FileText, ShieldCheck, Zap, Globe, Award, AlertCircle
@@ -10,14 +10,14 @@ import { SummaryCard } from '../components/ui/Card';
 import { db as api } from '../services/database';
 
 const GuideAssistant = ({ message, isExplaining, onClick }) => (
-    <motion.div 
+    <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="fixed bottom-8 right-8 z-[100] flex flex-col items-end gap-3 pointer-events-none"
     >
         <AnimatePresence mode="wait">
             {message && (
-                <motion.div 
+                <motion.div
                     key={message}
                     initial={{ opacity: 0, scale: 0.8, x: 20 }}
                     animate={{ opacity: 1, scale: 1, x: 0 }}
@@ -32,7 +32,7 @@ const GuideAssistant = ({ message, isExplaining, onClick }) => (
             )}
         </AnimatePresence>
 
-        <motion.div 
+        <motion.div
             animate={isExplaining ? {
                 y: [0, -10, 0],
                 rotate: [0, -5, 5, 0]
@@ -46,8 +46,9 @@ const GuideAssistant = ({ message, isExplaining, onClick }) => (
     </motion.div>
 );
 
+
 const PustakaLandingPage = ({ onClose }) => (
-    <motion.div 
+    <motion.div
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -55,7 +56,7 @@ const PustakaLandingPage = ({ onClose }) => (
     >
         <div className="max-w-5xl mx-auto">
             <div className="flex justify-end mb-8">
-                <button 
+                <button
                     onClick={onClose}
                     className="p-3 bg-white dark:bg-slate-800 rounded-2xl shadow-lg text-slate-400 hover:text-red-500 transition-all hover:scale-110"
                 >
@@ -73,7 +74,7 @@ const PustakaLandingPage = ({ onClose }) => (
                     <Sparkles size={16} />
                     <span>The Vision</span>
                 </motion.div>
-                <motion.h1 
+                <motion.h1
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.2 }}
@@ -82,7 +83,7 @@ const PustakaLandingPage = ({ onClose }) => (
                     Latar Belakang <br />
                     <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">Pustaka Pengetahuan</span>
                 </motion.h1>
-                <motion.p 
+                <motion.p
                     initial={{ y: 20, opacity: 0 }}
                     animate={{ y: 0, opacity: 1 }}
                     transition={{ delay: 0.3 }}
@@ -93,7 +94,7 @@ const PustakaLandingPage = ({ onClose }) => (
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
-                <motion.div 
+                <motion.div
                     initial={{ x: -50, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     transition={{ delay: 0.4 }}
@@ -116,7 +117,7 @@ const PustakaLandingPage = ({ onClose }) => (
                     </div>
                 </motion.div>
 
-                <motion.div 
+                <motion.div
                     initial={{ x: 50, opacity: 0 }}
                     animate={{ x: 0, opacity: 1 }}
                     transition={{ delay: 0.5 }}
@@ -189,13 +190,13 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
     const progress = ((currentIdx + 1) / slides.length) * 100;
 
     return (
-        <motion.div 
+        <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-[300] bg-slate-950/95 backdrop-blur-2xl flex items-center justify-center p-4 md:p-10"
         >
             {/* Top Progress Bar */}
             <div className="absolute top-0 left-0 w-full h-1.5 bg-slate-800">
-                <motion.div 
+                <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${progress}%` }}
                     className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 shadow-[0_0_20px_rgba(99,102,241,0.6)]"
@@ -212,11 +213,11 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
                         <div>
                             <h2 className="text-2xl font-black text-white tracking-tight">{guide.title}</h2>
                             <p className="text-xs font-bold text-indigo-400 uppercase tracking-[0.2em]">
-                                Langkah {currentIdx + 1} dari {slides.length} • {guide.category}
+                                Langkah {currentIdx + 1} dari {slides.length} â€¢ {guide.category}
                             </p>
                         </div>
                     </div>
-                    <button 
+                    <button
                         onClick={onClose}
                         className="p-4 bg-white/5 hover:bg-red-500/20 text-white hover:text-red-500 rounded-2xl transition-all hover:scale-110 border border-white/10"
                     >
@@ -226,7 +227,7 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
 
                 {/* Main Content Area */}
                 <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-12 items-center min-h-0">
-                    <motion.div 
+                    <motion.div
                         key={`text-${currentIdx}`}
                         initial={{ opacity: 0, x: -30 }}
                         animate={{ opacity: 1, x: 0 }}
@@ -243,19 +244,19 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
                         </p>
                     </motion.div>
 
-                    <motion.div 
+                    <motion.div
                         key={`img-${currentIdx}`}
                         initial={{ opacity: 0, scale: 0.9 }}
                         animate={{ opacity: 1, scale: 1 }}
                         className="relative group h-full min-h-[300px] lg:min-h-0"
                     >
                         <div className="absolute inset-0 bg-indigo-500/20 blur-[120px] rounded-full opacity-20 group-hover:opacity-40 transition-opacity"></div>
-                        <div 
+                        <div
                             onClick={() => currentSlide?.image && setZoomedImage(getFullUrl(currentSlide.image))}
                             className="relative h-full w-full rounded-[4rem] overflow-hidden border-4 border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] cursor-zoom-in group"
                         >
-                            <img 
-                                src={getFullUrl(currentSlide?.image)} 
+                            <img
+                                src={getFullUrl(currentSlide?.image)}
                                 className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110"
                                 alt="Step Illustration"
                             />
@@ -270,14 +271,14 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
 
                 {/* Footer Controls */}
                 <div className="flex justify-between items-center mt-8 pt-8 border-t border-white/5">
-                    <button 
+                    <button
                         disabled={currentIdx === 0}
                         onClick={onPrev}
                         className="flex items-center gap-3 px-10 py-5 bg-white/5 hover:bg-white/10 text-white rounded-2xl font-black uppercase text-xs tracking-widest transition-all disabled:opacity-10 disabled:cursor-not-allowed border border-white/5"
                     >
                         <ChevronLeft size={20} /> Sebelumnya
                     </button>
-                    <button 
+                    <button
                         onClick={onNext}
                         className="flex items-center gap-3 px-14 py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-2xl shadow-indigo-500/40 transition-all hover:scale-105 active:scale-95"
                     >
@@ -366,7 +367,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
         setIsCreating(false);
         setCurrentSlideIdx(0);
         setAssistantMsg(`Bagus! Mari kita pelajari tentang ${guide.title}.`);
-        
+
         const data = await api.getGuideSlides(guide.id);
         if (data.length === 0) {
             // Mock slides
@@ -408,10 +409,10 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
 
     const handleImageAction = async (file, index) => {
         if (!file || !file.type.startsWith('image/')) return;
-        
+
         setIsUploading(index);
         setAssistantMsg("Wah, gambar yang bagus! Sedang saya simpan ya...");
-        
+
         try {
             const res = await api.uploadFile(file);
             if (res.success) {
@@ -453,7 +454,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
         setIsCreating(true);
         setEditingGuideId(guide.id);
         setSelectedGuide(null);
-        
+
         const guideSlides = await api.getGuideSlides(guide.id);
         setNewGuide({
             title: guide.title,
@@ -488,7 +489,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
 
         try {
             let guideId = editingGuideId;
-            
+
             if (editingGuideId) {
                 await api.updatePustakaGuide(editingGuideId, {
                     title: newGuide.title,
@@ -515,7 +516,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
             }
 
             if (guideId) {
-                const slidePromises = newGuide.slides.map((slide, idx) => 
+                const slidePromises = newGuide.slides.map((slide, idx) =>
                     api.createPustakaSlide({
                         guide_id: guideId,
                         title: slide.title,
@@ -525,7 +526,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                     })
                 );
                 await Promise.all(slidePromises);
-                
+
                 setAssistantMsg(editingGuideId ? "Perubahan berhasil disimpan!" : "Hore! Panduan baru berhasil diterbitkan.");
                 setIsCreating(false);
                 setEditingGuideId(null);
@@ -567,45 +568,37 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
         <div className="relative min-h-[80vh] pb-20">
             {/* Header Stats */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                <SummaryCard 
-                    title="Total Panduan" 
-                    value={stats.total} 
-                    icon={BookOpen} 
-                    colorClass="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400" 
+                <SummaryCard
+                    title="Total Panduan"
+                    value={stats.total}
+                    icon={BookOpen}
+                    colorClass="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400"
                 />
-                <SummaryCard 
-                    title="Kategori" 
-                    value={stats.categories} 
-                    icon={Layout} 
-                    colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400" 
+                <SummaryCard
+                    title="Kategori"
+                    value={stats.categories}
+                    icon={Layout}
+                    colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
                 />
-                <SummaryCard 
-                    title="Panduan Saya" 
-                    value={stats.myGuides} 
-                    icon={User} 
-                    colorClass="bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400" 
+                <SummaryCard
+                    title="Panduan Saya"
+                    value={stats.myGuides}
+                    icon={User}
+                    colorClass="bg-blue-100 text-blue-600 dark:bg-blue-900/20 dark:text-blue-400"
                 />
-                <SummaryCard 
-                    title="Akses Publik" 
-                    value={stats.public} 
-                    icon={Globe} 
-                    colorClass="bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400" 
+                <SummaryCard
+                    title="Akses Publik"
+                    value={stats.public}
+                    icon={Globe}
+                    colorClass="bg-emerald-100 text-emerald-600 dark:bg-emerald-900/20 dark:text-emerald-400"
                 />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {/* Sidebar List Panduan */}
                 <div className="space-y-4">
-                    {/* Search Bar */}
-                    <div className="relative">
-                        <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                        <input 
-                            className="w-full pl-12 pr-4 py-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white text-sm font-bold shadow-sm"
-                            placeholder="Cari panduan atau isi konten..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                        />
-                    </div>
+                    {/* Search removed - using AI Chat Assistant */}
+
 
                     {/* Modern Category Dropdown Filter */}
                     <div className="relative">
@@ -668,7 +661,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                     </div>
 
                     {hasPermission('pustaka', 'create') && (
-                            <button 
+                        <button
                             onClick={() => {
                                 setIsCreating(true);
                                 setEditingGuideId(null);
@@ -686,15 +679,13 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                 });
                                 setAssistantMsg("Wah, Anda ingin membuat panduan baru? Saya siap membantu!");
                             }}
-                            className={`w-full p-5 rounded-[2rem] border-2 border-dashed transition-all flex items-center gap-4 group ${
-                                isCreating 
-                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-xl' 
+                            className={`w-full p-5 rounded-[2rem] border-2 border-dashed transition-all flex items-center gap-4 group ${isCreating
+                                ? 'bg-indigo-600 border-indigo-600 text-white shadow-xl'
                                 : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500 hover:border-indigo-400 hover:text-indigo-500'
-                            }`}
+                                }`}
                         >
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 ${
-                                isCreating ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800'
-                            }`}>
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-110 ${isCreating ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800'
+                                }`}>
                                 <Plus size={24} />
                             </div>
                             <span className="font-black uppercase tracking-widest text-xs">Tambah Panduan</span>
@@ -702,21 +693,19 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                     )}
 
                     {filteredGuides.map(guide => (
-                        <motion.div 
+                        <motion.div
                             key={guide.id}
                             initial={{ opacity: 0, x: -20 }}
                             animate={{ opacity: 1, x: 0 }}
                             onClick={() => startGuide(guide)}
-                            className={`p-5 rounded-[2rem] border cursor-pointer transition-all group ${
-                                selectedGuide?.id === guide.id 
-                                ? 'bg-indigo-600 border-indigo-500 shadow-xl text-white' 
+                            className={`p-5 rounded-[2rem] border cursor-pointer transition-all group ${selectedGuide?.id === guide.id
+                                ? 'bg-indigo-600 border-indigo-500 shadow-xl text-white'
                                 : 'bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 hover:border-indigo-300 text-slate-800 dark:text-white shadow-sm hover:shadow-md'
-                            }`}
+                                }`}
                         >
                             <div className="flex items-center gap-4">
-                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${
-                                    selectedGuide?.id === guide.id ? 'bg-white/20' : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600'
-                                }`}>
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${selectedGuide?.id === guide.id ? 'bg-white/20' : 'bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600'
+                                    }`}>
                                     <BookOpen size={24} />
                                 </div>
                                 <div className="flex-1 min-w-0">
@@ -752,7 +741,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                 <div className="md:col-span-2">
                     <AnimatePresence mode="wait">
                         {isCreating ? (
-                            <motion.div 
+                            <motion.div
                                 key="form"
                                 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}
                                 className="bg-white dark:bg-slate-900 rounded-[3rem] shadow-2xl border border-slate-100 dark:border-slate-800 overflow-hidden flex flex-col h-full"
@@ -777,20 +766,20 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Judul Panduan</label>
-                                            <input 
+                                            <input
                                                 className="w-full px-6 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-bold"
                                                 placeholder="Contoh: Cara Menggunakan Scanner"
                                                 value={newGuide.title}
-                                                onChange={e => setNewGuide({...newGuide, title: e.target.value})}
+                                                onChange={e => setNewGuide({ ...newGuide, title: e.target.value })}
                                             />
                                         </div>
                                         <div className="space-y-2">
                                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Kategori</label>
                                             <div className="flex gap-2">
-                                                <select 
+                                                <select
                                                     className="flex-1 px-6 py-4 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-bold appearance-none"
                                                     value={newGuide.category}
-                                                    onChange={e => setNewGuide({...newGuide, category: e.target.value})}
+                                                    onChange={e => setNewGuide({ ...newGuide, category: e.target.value })}
                                                 >
                                                     {categories.map(cat => (
                                                         <option key={cat.id} value={cat.name}>{cat.name}</option>
@@ -816,11 +805,10 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                                 <button
                                                     key={type.id}
                                                     onClick={() => setNewGuide({ ...newGuide, privacy: type.id })}
-                                                    className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${
-                                                        newGuide.privacy === type.id 
-                                                        ? 'bg-indigo-50 border-indigo-500 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400' 
+                                                    className={`p-3 rounded-xl border flex flex-col items-center gap-2 transition-all ${newGuide.privacy === type.id
+                                                        ? 'bg-indigo-50 border-indigo-500 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400'
                                                         : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-slate-500 hover:border-indigo-300'
-                                                    }`}
+                                                        }`}
                                                 >
                                                     <type.icon size={16} />
                                                     <span className="text-[10px] font-bold uppercase">{type.label}</span>
@@ -832,11 +820,11 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 max-h-32 overflow-y-auto custom-scrollbar">
                                                 {departments.map(dept => (
                                                     <label key={dept.id} className="flex items-center gap-2 p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg cursor-pointer">
-                                                        <input 
-                                                            type="checkbox" 
+                                                        <input
+                                                            type="checkbox"
                                                             checked={newGuide.allowed_depts.includes(dept.name)}
                                                             onChange={(e) => {
-                                                                const newDepts = e.target.checked 
+                                                                const newDepts = e.target.checked
                                                                     ? [...newGuide.allowed_depts, dept.name]
                                                                     : newGuide.allowed_depts.filter(d => d !== dept.name);
                                                                 setNewGuide({ ...newGuide, allowed_depts: newDepts });
@@ -853,11 +841,11 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                             <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-200 dark:border-slate-700 max-h-32 overflow-y-auto custom-scrollbar">
                                                 {users.filter(u => u.username !== currentUser?.username).map(user => (
                                                     <label key={user.id} className="flex items-center gap-2 p-2 hover:bg-white dark:hover:bg-slate-800 rounded-lg cursor-pointer">
-                                                        <input 
-                                                            type="checkbox" 
+                                                        <input
+                                                            type="checkbox"
                                                             checked={newGuide.allowed_users.includes(user.username)}
                                                             onChange={(e) => {
-                                                                const newUsers = e.target.checked 
+                                                                const newUsers = e.target.checked
                                                                     ? [...newGuide.allowed_users, user.username]
                                                                     : newGuide.allowed_users.filter(u => u !== user.username);
                                                                 setNewGuide({ ...newGuide, allowed_users: newUsers });
@@ -882,7 +870,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                                 <Plus size={16} /> TAMBAH SLIDE
                                             </button>
                                         </div>
-                                        
+
                                         <div className="space-y-6">
                                             {newGuide.slides.map((slide, idx) => (
                                                 <div key={idx} onPaste={(e) => handlePaste(e, idx)} className="p-6 bg-slate-50 dark:bg-slate-800/50 rounded-[2rem] border border-slate-100 dark:border-slate-800 relative group/slide">
@@ -899,24 +887,24 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                                     </div>
                                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                                         <div className="md:col-span-2 space-y-4">
-                                                            <input 
+                                                            <input
                                                                 className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none dark:text-white font-bold text-sm"
                                                                 placeholder="Judul Langkah..."
                                                                 value={slide.title}
                                                                 onChange={e => {
                                                                     const updated = [...newGuide.slides];
                                                                     updated[idx].title = e.target.value;
-                                                                    setNewGuide({...newGuide, slides: updated});
+                                                                    setNewGuide({ ...newGuide, slides: updated });
                                                                 }}
                                                             />
-                                                            <textarea 
+                                                            <textarea
                                                                 className="w-full px-4 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none dark:text-white text-xs min-h-[80px] resize-none"
                                                                 placeholder="Penjelasan detail langkah kerja..."
                                                                 value={slide.content}
                                                                 onChange={e => {
                                                                     const updated = [...newGuide.slides];
                                                                     updated[idx].content = e.target.value;
-                                                                    setNewGuide({...newGuide, slides: updated});
+                                                                    setNewGuide({ ...newGuide, slides: updated });
                                                                 }}
                                                             />
                                                         </div>
@@ -932,21 +920,21 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                                                         <span className="text-[8px] font-black uppercase">Upload / Paste</span>
                                                                     </>
                                                                 )}
-                                                                <input 
-                                                                    type="file" 
-                                                                    className="hidden" 
+                                                                <input
+                                                                    type="file"
+                                                                    className="hidden"
                                                                     accept="image/*"
-                                                                    onChange={(e) => handleImageAction(e.target.files[0], idx)} 
+                                                                    onChange={(e) => handleImageAction(e.target.files[0], idx)}
                                                                 />
                                                             </label>
-                                                            <input 
+                                                            <input
                                                                 className="w-full px-3 py-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg outline-none dark:text-white text-[10px]"
                                                                 placeholder="https://..."
                                                                 value={slide.image}
                                                                 onChange={e => {
                                                                     const updated = [...newGuide.slides];
                                                                     updated[idx].image = e.target.value;
-                                                                    setNewGuide({...newGuide, slides: updated});
+                                                                    setNewGuide({ ...newGuide, slides: updated });
                                                                 }}
                                                             />
                                                         </div>
@@ -958,13 +946,13 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                 </div>
 
                                 <div className="p-8 bg-slate-50 dark:bg-slate-800/50 border-t border-slate-100 dark:border-slate-800 flex justify-end gap-4">
-                                    <button 
+                                    <button
                                         onClick={() => setIsCreating(false)}
                                         className="px-8 py-4 text-slate-500 font-black uppercase text-xs tracking-widest hover:text-slate-800 transition-colors"
                                     >
                                         Batalkan
                                     </button>
-                                    <button 
+                                    <button
                                         onClick={handleSaveGuide}
                                         disabled={isSaving}
                                         className="px-12 py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-indigo-500/20 hover:bg-indigo-500 transition-all active:scale-95 flex items-center gap-3 disabled:opacity-50"
@@ -975,7 +963,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                 </div>
                             </motion.div>
                         ) : !selectedGuide ? (
-                            <motion.div 
+                            <motion.div
                                 key="empty"
                                 initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                                 className="h-full flex flex-col items-center justify-center text-center p-12 bg-white/40 dark:bg-slate-900/40 backdrop-blur-xl rounded-[3rem] border-2 border-dashed border-slate-200 dark:border-slate-800"
@@ -1000,7 +988,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
             {/* Slide Viewer Modal Overlay */}
             <AnimatePresence>
                 {selectedGuide && !isCreating && (
-                    <SlideViewer 
+                    <SlideViewer
                         guide={selectedGuide}
                         slides={slides}
                         currentIdx={currentSlideIdx}
@@ -1014,23 +1002,23 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
             </AnimatePresence>
 
             {/* Animated Assistant */}
-            <GuideAssistant 
-                message={assistantMsg} 
-                isExplaining={!!selectedGuide} 
+            <GuideAssistant
+                message={assistantMsg}
+                isExplaining={!!selectedGuide}
                 onClick={() => setShowAbout(true)}
             />
 
             {/* Image Zoom Modal */}
             <AnimatePresence>
                 {zoomedImage && (
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         className="fixed inset-0 z-[400] bg-white/90 dark:bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4 md:p-12"
                         onClick={() => setZoomedImage(null)}
                     >
-                        <motion.img 
+                        <motion.img
                             initial={{ scale: 0.8 }} animate={{ scale: 1 }} exit={{ scale: 0.8 }}
-                            src={zoomedImage} 
+                            src={zoomedImage}
                             className="max-w-full max-h-full rounded-3xl shadow-2xl border-4 border-white dark:border-slate-800 object-contain"
                             onClick={(e) => e.stopPropagation()} // Prevent close on image click
                         />
