@@ -107,12 +107,76 @@ const TypingIndicator = ({ isDarkMode }) => (
     </div>
 );
 
+// Simple Markdown component to handle basic formatting, alerts, and tables
+const MarkdownRenderer = ({ content, isDarkMode }) => {
+    if (!content) return null;
+
+    const lines = content.split('\n');
+    let inTable = false;
+    let tableRows = [];
+
+    const renderLine = (line, index) => {
+        // Handle Alerts
+        if (line.startsWith('> [!')) {
+            const match = line.match(/> \[!(\w+)\]/);
+            const type = match ? match[1] : 'NOTE';
+            const colors = {
+                NOTE: 'blue',
+                TIP: 'emerald',
+                IMPORTANT: 'indigo',
+                WARNING: 'amber',
+                CAUTION: 'red'
+            };
+            const color = colors[type] || 'blue';
+            return (
+                <div key={index} className={`my-2 p-2 rounded-lg border-l-4 text-[11px] ${isDarkMode
+                    ? `bg-${color}-500/10 border-${color}-500 text-${color}-300`
+                    : `bg-${color}-50 border-${color}-500 text-${color}-700`
+                    }`}>
+                    <span className="font-bold uppercase tracking-tight mr-1">{type}:</span>
+                    {line.replace(/> \[!\w+\]\s*/, '').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}
+                </div>
+            );
+        }
+
+        // Handle Headers
+        if (line.startsWith('### ')) {
+            return <h3 key={index} className="text-sm font-bold mt-3 mb-1 text-indigo-500">{line.replace('### ', '')}</h3>;
+        }
+
+        // Handle Bold
+        let formattedLine = line.split('**').map((part, i) => i % 2 === 1 ? <b key={i} className="font-bold text-indigo-400">{part}</b> : part);
+
+        // Handle Lists
+        if (line.trim().startsWith('- ')) {
+            return <div key={index} className="flex gap-2 pl-1 my-0.5"><span className="text-indigo-500">•</span><div>{formattedLine}</div></div>;
+        }
+
+        // Handle Tables (Minimalist)
+        if (line.includes('|')) {
+            const cells = line.split('|').filter(c => c.trim() !== '').map(c => c.trim());
+            if (cells.length > 0 && !line.includes('---')) {
+                return (
+                    <div key={index} className={`grid grid-cols-${cells.length} gap-2 py-1 px-2 text-[10px] border-b ${isDarkMode ? 'border-white/5' : 'border-slate-100'}`}>
+                        {cells.map((c, i) => <div key={i} className={index === 0 ? "font-bold text-indigo-400" : ""}>{c}</div>)}
+                    </div>
+                );
+            }
+            return null;
+        }
+
+        return <p key={index} className="mb-1">{formattedLine}</p>;
+    };
+
+    return <div className="markdown-content">{lines.map((line, i) => renderLine(line, i))}</div>;
+};
+
 // Quick action suggestions
 const quickActions = [
-    "Cari invoice terbaru",
-    "Dokumen dari bulan ini",
-    "Invoice di atas 5 juta",
-    "Box yang dipinjam",
+    "Bandingkan PPH Jan vs Feb 2024",
+    "Analisa trend PPN depan",
+    "Status pemeriksaan pajak",
+    "Cari invoice > 5jt",
 ];
 
 export default function AiChatAssistant({
@@ -310,7 +374,7 @@ export default function AiChatAssistant({
                                                 ? 'bg-white/8 text-white/90 rounded-bl-lg border border-white/5'
                                                 : 'bg-slate-100 text-slate-700 rounded-bl-lg'
                                             }`}>
-                                            {msg.text}
+                                            <MarkdownRenderer content={msg.text} isDarkMode={isDarkMode} />
                                         </div>
 
                                         {/* Intent badges */}

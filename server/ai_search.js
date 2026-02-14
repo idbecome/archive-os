@@ -56,6 +56,28 @@ const ANCHOR_QUERIES = {
         "surat permintaan penjelasan data",
         "pemeriksaan lapangan sampai tahap apa",
         "daftar pending audit"
+    ],
+    comparison: [
+        "bandingkan pph januari dan februari",
+        "perbandingan ppn bulan maret vs april",
+        "selisih pajak bulan ini dengan bulan lalu",
+        "perkembangan pph dari januari sampai maret",
+        "tampilkan perbedaan pembetulan 0 dan 1"
+    ],
+    trend_analysis: [
+        "analisa trend pajak bulan depan",
+        "prediksi pph untuk maret 2024",
+        "proyeksi ppn dari trend bulan lalu",
+        "perkiraan jumlah pajak kedepannya",
+        "bagaimana trend pembayaran pph kita"
+    ],
+    tax_lookup: [
+        "apa itu jasa konstruksi",
+        "tarif pph 23 untuk sewa",
+        "berapa rate pajak royalti",
+        "kode objek pajak jasa teknik",
+        "penjelasan mengenai pph pasal 4 ayat 2",
+        "daftar objek pajak pph 21"
     ]
 };
 
@@ -88,7 +110,7 @@ export async function classifyIntentSemantically(queryVector) {
         }
     }
 
-    return { intent: maxSim > 0.6 ? bestIntent : null, score: maxSim };
+    return { intent: maxSim > 0.55 ? bestIntent : null, score: maxSim };
 }
 
 /**
@@ -107,13 +129,27 @@ export async function parseIntent(query, queryVector = null) {
         vendor: null,
         month: null,
         year: null,
+        months: [], // For comparison
+        years: [],  // For comparison
         type: null,
         taxType: null,
+        pembetulan: null,
         semanticConfidence: 0
     };
 
-    // 1. Semantic Classification (If vector provided)
-    if (queryVector) {
+    // 1. Keyword Overrides (Strong indicators)
+    if (q.includes('banding') || q.includes('vs') || q.includes('perbandingan') || q.includes('selisih')) {
+        intent.type = 'comparison';
+    } else if (q.includes('trend') || q.includes('proyeksi') || q.includes('prediksi') || q.includes('depan')) {
+        intent.type = 'trend_analysis';
+    } else if (q.includes('pemeriksaan') || q.includes('audit')) {
+        intent.type = 'audit_status';
+    } else if (q.includes('apa itu') || q.includes('tarif') || q.includes('rate') || q.includes('kode') || q.includes('objek pajak')) {
+        intent.type = 'tax_lookup';
+    }
+
+    // 2. Semantic Classification (Fallback or refinement)
+    if (!intent.type && queryVector) {
         const semantic = await classifyIntentSemantically(queryVector);
         if (semantic.intent) {
             intent.type = semantic.intent;
@@ -121,49 +157,62 @@ export async function parseIntent(query, queryVector = null) {
         }
     }
 
-    // 2. Parse Amount (jt/juta/rb/ribu)
-    const amountMatch = q.match(/(>|<|diatas|dibawah|di atas|di bawah)?\s*(\d+(?:\.\d+)?)\s*(jt|juta|rb|ribu|k)?/i);
+    // 2. Parse Amount (jt/juta/rb/ribu) - Improved to ignore years
+    const amountMatch = q.match(/(>|<|diatas|dibawah|di atas|di bawah)?\s*(\b\d{5,}\b|\b\d+(?:\.\d+)?\s*(jt|juta|rb|ribu|k)\b)/i);
     if (amountMatch) {
-        let value = parseFloat(amountMatch[2]);
+        let valueStr = amountMatch[2];
+        let value = parseFloat(valueStr);
         const unit = amountMatch[3]?.toLowerCase();
         if (unit === 'jt' || unit === 'juta') value *= 1000000;
-        if (unit === 'rb' || unit === 'ribu' || unit === 'k') value *= 1000;
+        else if (unit === 'rb' || unit === 'ribu' || unit === 'k') value *= 1000;
+        else if (valueStr.length < 5) value = null; // Ignore small numbers like 2024
 
-        const modifier = amountMatch[1];
-        if (modifier?.includes('>') || modifier?.includes('atas')) intent.minAmount = value;
-        else if (modifier?.includes('<') || modifier?.includes('bawah')) intent.maxAmount = value;
-        else intent.minAmount = value;
-    }
-
-    // 3. Parse Date/Month
-    const months = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus', 'september', 'oktober', 'november', 'desember',
-        'jan', 'feb', 'mar', 'apr', 'mei', 'jun', 'jul', 'agt', 'sep', 'okt', 'nov', 'des'];
-    for (let i = 0; i < months.length; i++) {
-        if (q.includes(months[i])) {
-            intent.month = (i % 12) + 1;
-            break;
+        if (value !== null) {
+            const modifier = amountMatch[1];
+            if (modifier?.includes('>') || modifier?.includes('atas')) intent.minAmount = value;
+            else if (modifier?.includes('<') || modifier?.includes('bawah')) intent.maxAmount = value;
+            else intent.minAmount = value;
         }
     }
 
-    const yearMatch = q.match(/\b(20\d{2})\b/);
-    if (yearMatch) intent.year = parseInt(yearMatch[1]);
+    // 3. Parse Date/Month (Improved for Multi-entity)
+    const monthPatterns = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus', 'september', 'oktober', 'november', 'desember',
+        'jan', 'feb', 'mar', 'apr', 'mei', 'jun', 'jul', 'agt', 'sep', 'okt', 'nov', 'des'];
+
+    // Find all month occurrences
+    monthPatterns.forEach((m, idx) => {
+        const regex = new RegExp(`\\b${m}\\b`, 'gi');
+        if (q.match(regex)) {
+            const mVal = (idx % 12) + 1;
+            if (!intent.months.includes(mVal)) intent.months.push(mVal);
+        }
+    });
+    if (intent.months.length > 0) intent.month = intent.months[0];
+
+    // Find all years
+    const yearMatches = q.match(/\b(20\d{2})\b/g);
+    if (yearMatches) {
+        intent.years = yearMatches.map(y => parseInt(y));
+        intent.year = intent.years[0];
+    }
 
     // 4. Extract Vendor
-    const vendorMatch = q.match(/dari\s+([^>|<|bulan|tahun|diatas|dibawah]+)/);
+    const vendorMatch = q.match(/dari\s+([^>|<|bulan|tahun|diatas|dibawah|dan|vs]+)/);
     if (vendorMatch) {
         intent.vendor = vendorMatch[1].trim();
     }
 
-    // 5. Keyword fallbacks/adjustments (Override semantic if very clear keywords exist)
+    // 5. Special Keywords (Already handled in Step 1, but keep specific entity overrides)
     if (q.includes('pph')) intent.taxType = 'PPH';
     else if (q.includes('ppn')) intent.taxType = 'PPN';
 
+    const pembetulanMatch = q.match(/pembetulan\s*(\d+)/i);
+    if (pembetulanMatch) intent.pembetulan = parseInt(pembetulanMatch[1]);
+
+    // 6. Final check for aggregation if no other intent found
     if (!intent.type) {
         if (q.includes('total') || q.includes('berapa') || q.includes('jumlah')) {
             if (intent.taxType) intent.type = 'aggregation';
-        }
-        if (q.includes('pemeriksaan') || q.includes('audit')) {
-            intent.type = 'audit_status';
         }
     }
 

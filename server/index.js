@@ -2097,11 +2097,36 @@ app.get('/api/tax-summaries', (req, res) => {
 
 app.post('/api/tax-summaries', (req, res) => {
     const { id, type, month, year, pembetulan, data } = req.body;
-    db.run("INSERT INTO tax_summaries (id, type, month, year, pembetulan, data) VALUES (?, ?, ?, ?, ?, ?)",
-        [id || Date.now().toString(), type, month, year, pembetulan || 0, JSON.stringify(data)],
-        function (err) {
+    const finalPembetulan = pembetulan || 0;
+
+    // Logic: Upsert based on Type, Month, Year, and Pembetulan
+    db.get(
+        "SELECT id FROM tax_summaries WHERE type = ? AND month = ? AND year = ? AND pembetulan = ?",
+        [type, month, year, finalPembetulan],
+        (err, existing) => {
             if (err) return res.status(500).json({ error: err.message });
-            res.json({ id: this.lastID });
+
+            if (existing) {
+                // Update existing record
+                db.run(
+                    "UPDATE tax_summaries SET data = ? WHERE id = ?",
+                    [JSON.stringify(data), existing.id],
+                    (updateErr) => {
+                        if (updateErr) return res.status(500).json({ error: updateErr.message });
+                        res.json({ id: existing.id, action: 'updated' });
+                    }
+                );
+            } else {
+                // Insert new record
+                db.run(
+                    "INSERT INTO tax_summaries (id, type, month, year, pembetulan, data) VALUES (?, ?, ?, ?, ?, ?)",
+                    [id || Date.now().toString(), type, month, year, finalPembetulan, JSON.stringify(data)],
+                    function (insertErr) {
+                        if (insertErr) return res.status(500).json({ error: insertErr.message });
+                        res.json({ id: this.lastID, action: 'inserted' });
+                    }
+                );
+            }
         }
     );
 });
@@ -2896,11 +2921,136 @@ app.post('/api/chat', async (req, res) => {
                     analyticsResponse = `Saya tidak menemukan data laporan ${intent.taxType} di tabel ringkasan maupun di konten dokumen untuk periode tersebut.`;
                 }
             }
+        } else if (intent.type === 'comparison') {
+            const months = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+            const targetMonths = intent.months.length > 0 ? intent.months.map(m => months[m]) : [months[intent.month]];
+            const taxType = intent.taxType || 'PPH';
+
+            let sql = "SELECT * FROM tax_summaries WHERE type = ? AND LOWER(month) IN (" + targetMonths.map(() => 'LOWER(?)').join(',') + ")";
+            let params = [taxType, ...targetMonths];
+            if (intent.year) {
+                sql += " AND year = ?";
+                params.push(intent.year);
+            }
+
+            const summaries = await dbAll(sql, params);
+            if (summaries.length > 0) {
+                let table = `| Bulan | Total ${taxType} | Pembetulan | Status |\n| :--- | :--- | :--- | :--- |\n`;
+                const dataPoints = summaries.map(s => {
+                    const data = typeof s.data === 'string' ? JSON.parse(s.data || '{}') : (s.data || {});
+                    let amount = 0;
+                    if (taxType === 'PPH' && data.pph) Object.values(data.pph).forEach(v => amount += (Number(v) || 0));
+                    else if (taxType === 'PPN') {
+                        let inT = 0, outT = 0;
+                        if (data.ppnIn) Object.values(data.ppnIn).forEach(v => inT += (Number(v) || 0));
+                        if (data.ppnOut) Object.values(data.ppnOut).forEach(v => outT += (Number(v) || 0));
+                        amount = outT - inT;
+                    }
+                    table += `| ${s.month} ${s.year} | Rp ${amount.toLocaleString('id-ID')} | P-${s.pembetulan} | Terarsip |\n`;
+                    return { month: s.month, amount };
+                });
+
+                analyticsResponse = `### Perbandingan Laporan ${taxType}\n\n${table}\n`;
+
+                if (dataPoints.length >= 2) {
+                    const diff = dataPoints[1].amount - dataPoints[0].amount;
+                    const percent = ((diff / dataPoints[0].amount) * 100).toFixed(1);
+                    const direction = diff >= 0 ? 'kenaikan' : 'penurunan';
+                    analyticsResponse += `\n**Analisa:** Terjadi ${direction} sebesar **Rp ${Math.abs(diff).toLocaleString('id-ID')}** (${Math.abs(percent)}%) dari ${dataPoints[0].month} ke ${dataPoints[1].month}.`;
+                }
+            } else {
+                analyticsResponse = `Maaf, saya tidak menemukan data laporan yang cukup untuk melakukan perbandingan ${taxType}.`;
+            }
+
+        } else if (intent.type === 'trend_analysis') {
+            const taxType = intent.taxType || 'PPH';
+            const summaries = await dbAll("SELECT * FROM tax_summaries WHERE type = ? ORDER BY year DESC, FIELD(month, 'Desember', 'November', 'Oktober', 'September', 'Agustus', 'Juli', 'Juni', 'Mei', 'April', 'Maret', 'Februari', 'Januari') LIMIT 6", [taxType]);
+
+            if (summaries.length >= 2) {
+                const dataPoints = summaries.reverse().map(s => {
+                    const data = typeof s.data === 'string' ? JSON.parse(s.data || '{}') : (s.data || {});
+                    let amount = 0;
+                    if (taxType === 'PPH' && data.pph) Object.values(data.pph).forEach(v => amount += (Number(v) || 0));
+                    else if (taxType === 'PPN') {
+                        let inT = 0, outT = 0;
+                        if (data.ppnIn) Object.values(data.ppnIn).forEach(v => inT += (Number(v) || 0));
+                        if (data.ppnOut) Object.values(data.ppnOut).forEach(v => outT += (Number(v) || 0));
+                        amount = outT - inT;
+                    }
+                    return amount;
+                });
+
+                const lastVal = dataPoints[dataPoints.length - 1];
+                const prevVal = dataPoints[dataPoints.length - 2];
+                const avgGrowth = (lastVal - dataPoints[0]) / (dataPoints.length - 1);
+                const projectedVal = Math.max(0, lastVal + avgGrowth);
+
+                analyticsResponse = `### Analisa Trend & Proyeksi ${taxType}\n\n`;
+                analyticsResponse += `Berdasarkan data ${dataPoints.length} bulan terakhir, trend pembayaran ${taxType} Anda cenderung **${avgGrowth >= 0 ? 'meningkat' : 'menurun'}**.\n\n`;
+                analyticsResponse += `- **Rata-rata perubahan:** Rp ${avgGrowth.toLocaleString('id-ID')} / bulan\n`;
+                analyticsResponse += `- **Proyeksi bulan depan:** **Rp ${projectedVal.toLocaleString('id-ID')}**\n\n`;
+                analyticsResponse += `> [!NOTE]\n> Proyeksi ini bersifat estimatif berdasarkan rata-rata historis. Pastikan untuk memvalidasi dengan transaksi riil bulan berjalan.`;
+            } else {
+                analyticsResponse = `Data historis tidak cukup untuk melakukan analisa trend ${taxType}. Minimal diperlukan data 2 bulan.`;
+            }
+
+        } else if (intent.type === 'tax_lookup') {
+            const term = `%${message.toLowerCase()}%`;
+            const taxObjects = await dbAll(
+                `SELECT * FROM master_tax_objects 
+                 WHERE name LIKE ? OR code LIKE ? OR Note LIKE ? OR tax_type LIKE ?
+                 LIMIT 10`,
+                [term, term, term, term]
+            );
+
+            // Also try semantic search if queryVector exists
+            let semanticTax = [];
+            if (queryVector) {
+                const allTax = await dbAll("SELECT id, name, code, note, tax_type, rate, vector FROM master_tax_objects WHERE vector IS NOT NULL", []);
+                semanticTax = allTax.map(t => {
+                    try {
+                        const v = JSON.parse(t.vector);
+                        const sim = cosineSimilarity(queryVector, v);
+                        return { ...t, similarity: sim };
+                    } catch { return null; }
+                })
+                    .filter(t => t && t.similarity > 0.45)
+                    .sort((a, b) => b.similarity - a.similarity)
+                    .slice(0, 5);
+            }
+
+            // Merge results
+            const taxMap = new Map();
+            taxObjects.forEach(t => taxMap.set(t.id, { ...t, score: 0.5 }));
+            semanticTax.forEach(t => {
+                if (taxMap.has(t.id)) taxMap.get(t.id).score += t.similarity;
+                else taxMap.set(t.id, { ...t, score: t.similarity });
+            });
+
+            const finalTax = Array.from(taxMap.values()).sort((a, b) => b.score - a.score);
+
+            if (finalTax.length > 0) {
+                const top = finalTax[0];
+                analyticsResponse = `### Informasi Objek Pajak: ${top.name}\n\n`;
+                analyticsResponse += `- **Kode**: \`${top.code}\`\n`;
+                analyticsResponse += `- **Jenis**: ${top.tax_type}\n`;
+                analyticsResponse += `- **Tarif**: ${top.rate || 0}%\n`;
+                if (top.note) analyticsResponse += `- **Keterangan**: ${top.note}\n`;
+
+                if (finalTax.length > 1) {
+                    analyticsResponse += `\n**Hasil lainnya:**\n`;
+                    finalTax.slice(1, 4).forEach(t => {
+                        analyticsResponse += `- **${t.name}** (${t.tax_type}): Tarif ${t.rate}%\n`;
+                    });
+                }
+            } else {
+                analyticsResponse = `Maaf, saya tidak menemukan informasi detail mengenai "${message}" di database objek pajak kami.`;
+            }
         } else if (intent.type === 'audit_status') {
-            const audits = await new Promise(res => db.all("SELECT * FROM tax_audits ORDER BY startDate DESC LIMIT 5", [], (err, rows) => res(rows || [])));
+            const audits = await dbAll("SELECT * FROM tax_audits ORDER BY startDate DESC LIMIT 5", []);
             if (audits.length > 0) {
-                analyticsResponse = `Berikut adalah status pemeriksaan pajak terakhir:\n` + audits.map(a =>
-                    `- **${a.title}**: Status ${a.status} (Langkah ${a.currentStep}). No Surat: ${a.letterNumber || '-'}`
+                analyticsResponse = `### Status Pemeriksaan Pajak\n\n` + audits.map(a =>
+                    `- **${a.title}**: ${a.status} (Langkah ${a.currentStep}). No Surat: \`${a.letterNumber || '-'}\``
                 ).join('\n');
             } else {
                 analyticsResponse = `Tidak ada data pemeriksaan pajak (tax audit) yang tercatat saat ini.`;

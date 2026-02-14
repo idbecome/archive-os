@@ -233,6 +233,7 @@ function initDb() {
             name VARCHAR(255),
             note TEXT,
             rate DECIMAL(5, 2),
+            vector LONGTEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )`,
         `CREATE TABLE IF NOT EXISTS job_queue (
@@ -422,31 +423,29 @@ function initDb() {
         db.all("SHOW COLUMNS FROM inventory LIKE 'box_data'", [], (err, rows) => {
             if (!err && rows.length === 0) {
                 console.log("Migrating inventory table: Adding box_data (LONGTEXT) column...");
-                db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT", [], () => {
-                    // Copy data from boxData to box_data
-                    db.run("UPDATE inventory SET box_data = boxData WHERE box_data IS NULL AND boxData IS NOT NULL", [], () => {
-                        console.log("Copied boxData → box_data for existing rows.");
-                    });
-                });
-            } else if (!err && rows.length > 0) {
-                // Column exists — consolidate any remaining boxData data
-                db.all("SHOW COLUMNS FROM inventory LIKE 'boxData'", [], (err2, rows2) => {
-                    if (!err2 && rows2.length > 0) {
-                        // Legacy column still exists, consolidate and drop
-                        db.run("UPDATE inventory SET box_data = boxData WHERE (box_data IS NULL OR box_data = '') AND boxData IS NOT NULL AND boxData != ''", [], (updErr) => {
-                            if (!updErr) {
-                                console.log("Consolidated boxData → box_data. Dropping legacy boxData column...");
-                                db.run("ALTER TABLE inventory DROP COLUMN boxData", [], (dropErr) => {
-                                    if (dropErr) {
-                                        console.error("Could not drop boxData column (may already be dropped):", dropErr.message);
-                                    } else {
-                                        console.log("Legacy boxData column dropped successfully.");
-                                    }
-                                });
-                            }
+                db.run("ALTER TABLE inventory ADD COLUMN box_data LONGTEXT");
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM inventory LIKE 'boxData'", [], (err2, rows2) => {
+            if (!err2 && rows2.length > 0) {
+                console.log("Legacy boxData detected. Consolidating...");
+                db.run("UPDATE inventory SET box_data = boxData WHERE (box_data IS NULL OR box_data = '') AND boxData IS NOT NULL AND boxData != ''", [], (updErr) => {
+                    if (!updErr) {
+                        console.log("Consolidated boxData → box_data. Dropping legacy boxData column...");
+                        db.run("ALTER TABLE inventory DROP COLUMN boxData", [], (dropErr) => {
+                            if (dropErr) console.error("Could not drop boxData column:", dropErr.message);
+                            else console.log("Legacy boxData column dropped successfully.");
                         });
                     }
                 });
+            }
+        });
+
+        db.all("SHOW COLUMNS FROM master_tax_objects LIKE 'vector'", [], (err, rows) => {
+            if (!err && rows.length === 0) {
+                console.log("Migrating master_tax_objects table: Adding vector (LONGTEXT) column...");
+                db.run("ALTER TABLE master_tax_objects ADD COLUMN vector LONGTEXT");
             }
         });
 
