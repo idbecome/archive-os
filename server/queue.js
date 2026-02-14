@@ -60,8 +60,29 @@ class DbQueue {
 
 export const ocrQueue = new DbQueue('OCR_QUEUE');
 
-// Helper to add jobs
+// Helper to add jobs (with deduplication)
 export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {
+    // DEDUP CHECK: Skip if a job for this docId is already waiting or active
+    const existing = await new Promise((resolve, reject) => {
+        db.all("SELECT id, data FROM job_queue WHERE status IN ('waiting', 'active')", [], (err, rows) => {
+            if (err) return resolve(null); // On error, proceed with insertion
+            if (!rows || rows.length === 0) return resolve(null);
+
+            const match = rows.find(row => {
+                try {
+                    const jobData = JSON.parse(row.data);
+                    return jobData.docId === docId;
+                } catch (e) { return false; }
+            });
+            resolve(match || null);
+        });
+    });
+
+    if (existing) {
+        console.log(`[Queue] DEDUP: Job for DocID ${docId} already in queue (Job #${existing.id}). Skipping.`);
+        return { id: existing.id, name: 'process-ocr', data: JSON.parse(existing.data), deduplicated: true };
+    }
+
     console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}, File: ${originalName}`);
     return await ocrQueue.add('process-ocr', {
         docId,

@@ -814,12 +814,25 @@ app.post('/api/login', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
-        // Check password (support both bcrypt and legacy plaintext for safety during migration)
+        // Check password (bcrypt hash check, with auto-migration for legacy plaintext)
         let match = false;
         if (user.password.startsWith('$2b$') || user.password.startsWith('$2a$')) {
             match = await bcrypt.compare(password, user.password);
         } else {
-            match = (user.password === password); // Legacy fallback (should actally trigger migration if possible, but keep simple)
+            // Legacy plaintext: compare directly, then auto-hash for security
+            match = (user.password === password);
+            if (match) {
+                // Auto-migrate: hash the plaintext password in DB
+                try {
+                    const hashedPassword = await bcrypt.hash(password, 10);
+                    db.run("UPDATE users SET password = ? WHERE id = ?", [hashedPassword, user.id], (hashErr) => {
+                        if (hashErr) console.error("[Auth] Auto-hash migration failed:", hashErr.message);
+                        else console.log(`[Auth] Auto-migrated password for user: ${user.username}`);
+                    });
+                } catch (hashErr) {
+                    console.error("[Auth] Auto-hash migration error:", hashErr);
+                }
+            }
         }
 
         if (match) {
@@ -1663,21 +1676,18 @@ app.post('/api/documents', async (req, res) => {
 
             // Archive current version
             let archivedUrl = existingDoc.url;
-            let archivedFileData = null;
             if (existingDoc.fileData && existingDoc.fileData.startsWith('data:')) {
                 const ext = existingDoc.title.split('.').pop() || 'bin';
                 const archivedPath = saveBase64ToFile(existingDoc.fileData, `ARCHIVE-${existingDoc.id}-${Date.now()}`, ext);
                 if (archivedPath) archivedUrl = archivedPath;
-                else archivedFileData = existingDoc.fileData;
-            } else {
-                archivedFileData = existingDoc.fileData;
+                else console.error(`[FileData] Failed to archive base64 for doc ${existingDoc.id}`);
             }
 
             versionsHistory.push({
                 timestamp: existingDoc.uploadDate || new Date().toISOString(),
                 size: existingDoc.size,
                 type: existingDoc.type,
-                fileData: archivedFileData,
+                fileData: null,
                 url: archivedUrl,
                 title: existingDoc.title,
                 user: existingDoc.owner || 'System'
@@ -1687,7 +1697,6 @@ app.post('/api/documents', async (req, res) => {
             let fileUrl = url;
             let savedPath = null;
             let absoluteFilePath = null;
-            let finalFileData = null;
 
             if (content) {
                 const ext = title.split('.').pop() || 'bin';
@@ -1696,9 +1705,8 @@ app.post('/api/documents', async (req, res) => {
                     fileUrl = savedUrl;
                     savedPath = savedUrl;
                     absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
-                    finalFileData = null;
                 } else {
-                    finalFileData = content;
+                    console.error(`[FileData] Failed to save base64 to disk for revision of doc ${existingDoc.id}`);
                 }
             } else if (url && url.startsWith('/uploads/')) {
                 absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
@@ -1707,8 +1715,8 @@ app.post('/api/documents', async (req, res) => {
             const initialOcr = req.body.ocrContent || '';
             const status = initialOcr ? 'done' : 'processing';
 
-            db.run("UPDATE documents SET type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-                [type, size, uploadDate, fileUrl, initialOcr, finalFileData, JSON.stringify(versionsHistory), status, existingDoc.id],
+            db.run("UPDATE documents SET type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = NULL, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [type, size, uploadDate, fileUrl, initialOcr, JSON.stringify(versionsHistory), status, existingDoc.id],
                 async (updateErr) => {
                     if (updateErr) return res.status(500).json({ error: "Revision update failed: " + updateErr.message });
 
@@ -1729,9 +1737,8 @@ app.post('/api/documents', async (req, res) => {
         let fileUrl = url;
         let savedPath = null;
         let absoluteFilePath = null;
-        let finalFileData = null;
 
-        // 1. Save File (Base64 -> Disk)
+        // 1. Save File (Base64 -> Disk) — NEVER store base64 in DB
         if (content) {
             const ext = title.split('.').pop() || 'bin';
             const savedUrl = saveBase64ToFile(content, id, ext);
@@ -1740,9 +1747,8 @@ app.post('/api/documents', async (req, res) => {
                 fileUrl = savedUrl;
                 savedPath = savedUrl;
                 absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
-                finalFileData = null;
             } else {
-                finalFileData = content;
+                console.error(`[FileData] Failed to save base64 to disk for doc ${id}`);
             }
         } else if (url && url.startsWith('/uploads/')) {
             absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
@@ -1751,8 +1757,8 @@ app.post('/api/documents', async (req, res) => {
         const initialOcr = req.body.ocrContent || '';
         const status = initialOcr ? 'done' : 'processing';
 
-        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, finalFileData, status],
+        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
+            [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, status],
             async (err) => {
                 if (err) {
                     console.error("DB INSERT ERROR:", err.message);
@@ -1801,23 +1807,20 @@ app.put('/api/documents/:id', (req, res) => {
             try { versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : []; } catch (e) { }
 
             if (oldDoc) {
-                // ... (archiving logic)
+                // Archive current version
                 let archivedUrl = oldDoc.url;
-                let archivedFileData = null;
                 if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
                     const ext = oldDoc.title.split('.').pop() || 'bin';
                     const archivedPath = saveBase64ToFile(oldDoc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
                     if (archivedPath) archivedUrl = archivedPath;
-                    else archivedFileData = oldDoc.fileData;
-                } else {
-                    archivedFileData = oldDoc.fileData;
+                    else console.error(`[FileData] Failed to archive base64 for doc ${req.params.id}`);
                 }
 
                 versionsHistory.push({
                     timestamp: oldDoc.uploadDate || new Date().toISOString(),
                     size: oldDoc.size,
                     type: oldDoc.type,
-                    fileData: archivedFileData,
+                    fileData: null,
                     url: archivedUrl,
                     title: oldDoc.title,
                     user: oldDoc.owner || 'System'
@@ -1827,7 +1830,6 @@ app.put('/api/documents/:id', (req, res) => {
             const ext = title.split('.').pop() || 'bin';
             const newSavedUrl = saveBase64ToFile(content, req.params.id, ext);
             const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
-            const finalFileData = newSavedUrl ? null : content;
 
             // Tentukan status dan OCR content baru
             let newStatus = oldDoc.status;
@@ -1839,8 +1841,8 @@ app.put('/api/documents/:id', (req, res) => {
                 newOcrContent = ''; // Clear old OCR content for new file
             }
 
-            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-                [title, folderId, department, newOcrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), newStatus, req.params.id],
+            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = NULL, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [title, folderId, department, newOcrContent, finalUrl, JSON.stringify(versionsHistory), newStatus, req.params.id],
                 async (err) => {
                     if (err) return res.status(500).json({ error: err.message });
 
@@ -1876,8 +1878,8 @@ app.post('/api/documents/copy', (req, res) => {
         if (err || !doc) return res.status(500).json({ error: err ? err.message : "Document not found" });
         const newId = String(Date.now()) + "_" + Math.floor(Math.random() * 1000);
         const newDoc = { ...doc, id: newId, folderId: targetFolderId, title: "Copy of " + doc.title, uploadDate: new Date().toISOString() };
-        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            [newDoc.id, newDoc.title, newDoc.type, newDoc.size, newDoc.uploadDate, newDoc.url, newDoc.folderId, newDoc.department, newDoc.owner, newDoc.ocrContent, newDoc.auditId, newDoc.stepIndex, doc.fileData],
+        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            [newDoc.id, newDoc.title, newDoc.type, newDoc.size, newDoc.uploadDate, newDoc.url, newDoc.folderId, newDoc.department, newDoc.owner, newDoc.ocrContent, newDoc.auditId, newDoc.stepIndex],
             async (err2) => {
                 if (err2) return res.status(500).json({ error: err2.message });
                 await systemLog(newDoc.owner, "Copy", `Salin file: "${doc.title}" ke folder: ${targetFolderId || 'Root'}`);
@@ -2003,16 +2005,14 @@ app.post('/api/documents/:id/restore', (req, res) => {
             const ext = doc.title.split('.').pop() || 'bin';
             const archivedPath = saveBase64ToFile(doc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
             if (archivedPath) currentArchivedUrl = archivedPath;
-            else currentArchivedData = doc.fileData;
-        } else {
-            currentArchivedData = doc.fileData;
+            else console.error(`[FileData] Failed to archive base64 for restore of doc ${req.params.id}`);
         }
 
         versions.push({
             timestamp: doc.uploadDate || new Date().toISOString(),
             size: doc.size,
             type: doc.type,
-            fileData: currentArchivedData,
+            fileData: null,
             url: currentArchivedUrl,
             title: doc.title,
             user: doc.owner || 'System',
@@ -2023,14 +2023,14 @@ app.post('/api/documents/:id/restore', (req, res) => {
         // If restoring a BLOB version, we could migrate it now, but respecting the history format is safer.
         // If restoring a File version, fileData is null, url is set.
         const newUrl = versionToRestore.url || doc.url; // Use restored URL or keep current if undefined (legacy)
-        const newFileData = versionToRestore.fileData || null;
+        const newFileData = null; // Never restore base64 into DB
 
         const absoluteFilePath = newUrl && newUrl.startsWith('/uploads/')
             ? path.join(UPLOADS_DIR, path.basename(newUrl))
             : null;
 
-        db.run("UPDATE documents SET fileData = ?, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ?, ocrContent = '' WHERE id = ?",
-            [newFileData, newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), absoluteFilePath ? 'processing' : 'ready', req.params.id],
+        db.run("UPDATE documents SET fileData = NULL, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ?, ocrContent = '' WHERE id = ?",
+            [newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), absoluteFilePath ? 'processing' : 'ready', req.params.id],
             async (err) => {
                 if (err) return res.status(500).json({ error: err.message });
 
@@ -2528,7 +2528,7 @@ app.post('/api/documents/:id/promote-comment-attachment', (req, res) => {
                 timestamp: doc.uploadDate || new Date().toISOString(),
                 size: doc.size,
                 type: doc.type,
-                fileData: doc.fileData,
+                fileData: null, // Never store base64 in version history
                 url: doc.url,
                 title: doc.title,
                 user: doc.owner || 'System'

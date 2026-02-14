@@ -450,6 +450,46 @@ function initDb() {
             }
         });
 
+        // MIGRATION: Drop legacy duplicate column 'last_updated' from inventory (keep 'lastUpdated')
+        db.all("SHOW COLUMNS FROM inventory LIKE 'last_updated'", [], (err, rows) => {
+            if (!err && rows.length > 0) {
+                // Consolidate data first, then drop
+                db.run("UPDATE inventory SET lastUpdated = last_updated WHERE lastUpdated IS NULL AND last_updated IS NOT NULL", [], () => {
+                    db.run("ALTER TABLE inventory DROP COLUMN last_updated", [], (dropErr) => {
+                        if (dropErr) console.error("Could not drop inventory.last_updated:", dropErr.message);
+                        else console.log("Dropped legacy inventory.last_updated column.");
+                    });
+                });
+            }
+        });
+
+        // MIGRATION: Drop legacy duplicate columns from documents (upload_date, ocr_content)
+        db.all("SHOW COLUMNS FROM documents LIKE 'upload_date'", [], (err, rows) => {
+            if (!err && rows.length > 0) {
+                db.run("UPDATE documents SET uploadDate = upload_date WHERE uploadDate IS NULL AND upload_date IS NOT NULL", [], () => {
+                    db.run("ALTER TABLE documents DROP COLUMN upload_date", [], (dropErr) => {
+                        if (dropErr) console.error("Could not drop documents.upload_date:", dropErr.message);
+                        else console.log("Dropped legacy documents.upload_date column.");
+                    });
+                });
+            }
+        });
+        db.all("SHOW COLUMNS FROM documents LIKE 'ocr_content'", [], (err, rows) => {
+            if (!err && rows.length > 0) {
+                db.run("UPDATE documents SET ocrContent = ocr_content WHERE ocrContent IS NULL AND ocr_content IS NOT NULL", [], () => {
+                    db.run("ALTER TABLE documents DROP COLUMN ocr_content", [], (dropErr) => {
+                        if (dropErr) console.error("Could not drop documents.ocr_content:", dropErr.message);
+                        else console.log("Dropped legacy documents.ocr_content column.");
+                    });
+                });
+            }
+        });
+
+        // MIGRATION: Clear any existing base64 fileData from documents (files should be in uploads/)
+        db.run("UPDATE documents SET fileData = NULL WHERE fileData IS NOT NULL AND fileData != '' AND url IS NOT NULL AND url != ''", [], (err) => {
+            if (!err) console.log("[Migration] Cleared base64 fileData from documents (files already saved to disk via url).");
+        });
+
         // MIGRATION: Populate relational tables (boxes, ordners, invoices) from JSON
         db.all("SELECT count(*) as count FROM boxes", [], (err, rows) => {
             if (err) return; // Table might not exist yet on first run
@@ -553,12 +593,14 @@ function initDb() {
 
 
         // Seed Data
+        // Seed users with bcrypt-hashed passwords (hash of '123', salt rounds=10)
+        const DEFAULT_HASHED_PASSWORD = '$2b$10$TfDni0li9j0Iw3EenMzvv.Gx671emuXkgs5L80mFzI0vqj77ungqO';
         db.all("SELECT count(*) as count FROM users", [], (err, rows) => {
             if (!err && rows[0].count === 0) {
-                console.log("Seeding initial data...");
-                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('admin', '123', 'Administrator', 'admin', 'IT')");
-                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('staff', '123', 'Staff Gudang', 'staff', 'Warehouse')");
-                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('viewer', '123', 'Tamu', 'viewer', 'General')");
+                console.log("Seeding initial data (with hashed passwords)...");
+                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('admin', ?, 'Administrator', 'admin', 'IT')", [DEFAULT_HASHED_PASSWORD]);
+                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('staff', ?, 'Staff Gudang', 'staff', 'Warehouse')", [DEFAULT_HASHED_PASSWORD]);
+                db.run("INSERT INTO users (username, password, name, role, department) VALUES ('viewer', ?, 'Tamu', 'viewer', 'General')", [DEFAULT_HASHED_PASSWORD]);
             }
         });
 
