@@ -44,9 +44,28 @@ export default function Dashboard({
         setIsSearching(true);
         setCurrentPage(1);
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/search?q=${encodeURIComponent(semanticQuery)}`);
+            // Use the new AI Search Endpoint
+            const API_URL = `http://${window.location.hostname}:5000/api`;
+            const res = await fetch(`${API_URL}/search/ai`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: semanticQuery })
+            });
             const data = await res.json();
-            setSearchResults(data);
+
+            if (data.results) {
+                // Map API results to Dashboard Card format
+                const mapped = data.results.map(item => ({
+                    ...item,
+                    title: item.name,
+                    uploadDate: item.date,
+                    // If invoice, show amount as size/info
+                    size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
+                    folderName: item.matchType === 'invoice' ? 'Finance' : 'General',
+                    // Ensure ID and other props are passed
+                }));
+                setSearchResults(mapped);
+            }
         } catch (err) {
             console.error("Search failed:", err);
         } finally {
@@ -93,7 +112,7 @@ export default function Dashboard({
             <div className="relative overflow-hidden bg-white dark:bg-slate-900 rounded-[2.5rem] p-8 border border-white/40 dark:border-white/5 shadow-2xl shadow-indigo-500/10 group">
                 <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl group-hover:bg-indigo-500/20 transition-all duration-700 pointer-events-none"></div>
                 <div className="absolute bottom-0 left-0 -ml-16 -mb-16 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl group-hover:bg-purple-500/20 transition-all duration-700 pointer-events-none"></div>
-                
+
                 <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
                     <div className="space-y-2">
                         <div className="flex flex-wrap items-center gap-4">
@@ -101,7 +120,7 @@ export default function Dashboard({
                                 <Clock size={14} />
                                 <span>{new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
                             </div>
-                            <button 
+                            <button
                                 onClick={onOpenLanding}
                                 className="group relative flex items-center gap-2 px-5 py-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-full text-[11px] font-black uppercase tracking-widest transition-all hover:scale-110 hover:shadow-[0_0_20px_rgba(79,70,229,0.4)] active:scale-95 ring-4 ring-indigo-500/10 overflow-hidden"
                             >
@@ -118,7 +137,7 @@ export default function Dashboard({
                             Selamat datang kembali di <span className="font-bold text-indigo-500">Pustaka</span>. Mari buat Pekerjaan hari ini lebih produktif!
                         </p>
                     </div>
-                    
+
                     <div className="bg-indigo-50/50 dark:bg-indigo-900/20 backdrop-blur-md border border-indigo-100 dark:border-indigo-800/50 p-6 rounded-[2rem] md:max-w-xs w-full transform hover:scale-[1.02] transition-all duration-300">
                         <div className="flex items-center gap-3 mb-3">
                             <div className="p-2 bg-indigo-600 rounded-xl text-white shadow-lg shadow-indigo-500/30">
@@ -204,10 +223,10 @@ export default function Dashboard({
                                                                             'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'}`}>
                                             {doc.matchType === 'invoice' ? <Package size={20} /> :
                                                 doc.matchType === 'external_item' ? <Truck size={20} /> :
-                                                    doc.matchType === 'tax_summary' ? <FileBarChart size={20} /> : 
+                                                    doc.matchType === 'tax_summary' ? <FileBarChart size={20} /> :
                                                         doc.matchType === 'tax_monitoring' ? <ClipboardCheck size={20} /> : doc.matchType === 'approval' ? <FileCheck size={20} /> : doc.matchType === 'pustaka' ? <BookOpen size={20} /> : doc.matchType === 'note' ? <MessageSquare size={20} /> :
-                                                        doc.matchType === 'tax_object' ? <User size={20} /> :
-                                                        (doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />)}
+                                                            doc.matchType === 'tax_object' ? <User size={20} /> :
+                                                                (doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />)}
                                         </div>
                                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${doc.score > 0.3 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}`}>
                                             {(doc.score * 100).toFixed(0)}% Match
@@ -289,8 +308,8 @@ export default function Dashboard({
                                                             doc.matchType === 'tax_monitoring' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 hover:bg-orange-100' :
                                                                 doc.matchType === 'approval' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 hover:bg-rose-100' :
                                                                     doc.matchType === 'pustaka' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-100' :
-                                                                    doc.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400' :
-                                                                        'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
+                                                                        doc.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400' :
+                                                                            'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
                                         >
                                             {doc.matchType === 'invoice' ? `📦 ${doc.folderName}` :
                                                 doc.matchType === 'external_item' ? `🚚 ${doc.folderName}` :
@@ -318,7 +337,7 @@ export default function Dashboard({
                                 >
                                     <ChevronLeft size={20} />
                                 </button>
-                                
+
                                 <div className="flex items-center gap-1">
                                     {Array.from({ length: Math.ceil(searchResults.length / resultsPerPage) }).map((_, i) => {
                                         const page = i + 1;

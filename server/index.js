@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import bcrypt from 'bcrypt';
 import { addOCRJob, ocrQueue } from './queue.js'; // NEW
+import { generateEmbedding, parseIntent, cosineSimilarity } from './ai_search.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -399,7 +400,7 @@ app.delete('/api/approval-flows/:id', (req, res) => {
 // Helper: Save Base64 to File
 function saveBase64ToFile(base64Data, id, extension = 'bin') {
     try {
-        const matches = base64Data.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+        const matches = base64Data.match(/^data:([A-Za-z0-9-+\/.]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
             return null;
         }
@@ -1075,18 +1076,19 @@ app.delete('/api/roles/:id', (req, res) => {
 app.get('/api/ocr/status', async (req, res) => {
     try {
         const counts = await ocrQueue.getJobCounts('active', 'waiting', 'completed', 'failed');
-        const activeJobs = await ocrQueue.getJobs(['active'], 0, 10, true); // Get first 10 active jobs
+        const queue = await ocrQueue.getJobs(['active', 'waiting'], 0, 20, true); // Get top 20 active/waiting jobs
 
-        const activeDetails = activeJobs.map(job => ({
+        const activeDetails = queue.map(job => ({
             id: job.id,
             filename: job.data.originalName || 'Unknown File',
+            status: job.status,
             progress: job.progress || 0,
             type: job.data.context?.type === 'inventory' ? 'Inventory' : 'Document'
         }));
 
         res.json({
             counts,
-            activeJobs: activeDetails
+            activeJobs: activeDetails // Keep key 'activeJobs' for frontend compatibility, but it now includes waiting
         });
     } catch (error) {
         console.error("OCR Status Error:", error);
@@ -1827,8 +1829,18 @@ app.put('/api/documents/:id', (req, res) => {
             const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
             const finalFileData = newSavedUrl ? null : content;
 
+            // Tentukan status dan OCR content baru
+            let newStatus = oldDoc.status;
+            let newOcrContent = ocrContent; // Default keep existing if only meta update
+
+            // Jika ada file baru yang diupload, reset status dan kosongkan OCR lama
+            if (newSavedUrl) {
+                newStatus = 'processing';
+                newOcrContent = ''; // Clear old OCR content for new file
+            }
+
             db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = ?, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-                [title, folderId, department, ocrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), ocrContent ? 'done' : 'processing', req.params.id],
+                [title, folderId, department, newOcrContent, finalFileData, finalUrl, JSON.stringify(versionsHistory), newStatus, req.params.id],
                 async (err) => {
                     if (err) return res.status(500).json({ error: err.message });
 
@@ -2570,6 +2582,80 @@ app.post('/api/tax-audits/:auditId/steps/:stepIndex/notes', upload.single('attac
             res.json({ success: true, id: this.lastID });
         }
     );
+});
+
+// --- AI POWERED SMART SEARCH ---
+app.post('/api/search/ai', async (req, res) => {
+    const { query } = req.body;
+    if (!query) return res.json({ results: [] });
+
+    try {
+        const intent = parseIntent(query);
+        const queryVector = await generateEmbedding(query);
+
+        // 1. Build Dynamic SQL for hard filters
+        let filters = [];
+        let params = [];
+
+        if (intent.vendor) {
+            filters.push("vendor LIKE ?");
+            params.push(`%${intent.vendor}%`);
+        }
+        if (intent.minAmount) {
+            filters.push("amount >= ?");
+            params.push(intent.minAmount);
+        }
+        if (intent.maxAmount) {
+            filters.push("amount <= ?");
+            params.push(intent.maxAmount);
+        }
+
+        const filterClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : "";
+
+        // 2. Fetch all candidates (limited to 100 for performance)
+        // We'll search in BOTH documents and invoices for a unified experience
+        const docSql = `SELECT id, title as name, 'document' as matchType, vector, url, type, uploadDate as date FROM documents ${filters.length > 0 ? 'WHERE ' + filters.map(f => f.replace('vendor', 'title').replace('amount', 'size')).join(' AND ') : ''} LIMIT 50`;
+        const invSql = `SELECT id, invoice_no, 'invoice' as matchType, vector, file_url as url, vendor, amount, payment_date as date FROM invoices ${filterClause} LIMIT 50`;
+
+        const getResults = (sql, p) => new Promise(res => db.all(sql, p, (err, rows) => res(rows || [])));
+
+        const [docs, invs] = await Promise.all([
+            getResults(docSql, params.map(p => typeof p === 'string' ? p : 0)), // Title instead of Vendor for docs
+            getResults(invSql, params)
+        ]);
+
+        // Fix invoice name mapping
+        const formattedInvs = invs.map(inv => ({
+            ...inv,
+            name: `${inv.vendor} - ${inv.invoice_no}`
+        }));
+
+        const allCandidates = [...docs, ...formattedInvs];
+
+        // 3. Rerank using Semantic Similarity
+        const ranked = allCandidates.map(item => {
+            let score = 0.5; // Base score
+            if (item.vector) {
+                try {
+                    const itemVector = JSON.parse(item.vector);
+                    // Boost score if keyword match
+                    if (intent.vendor && item.name.toLowerCase().includes(intent.vendor.toLowerCase())) {
+                        score += 0.3;
+                    }
+                    score += cosineSimilarity(queryVector, itemVector);
+                } catch (e) { /* ignore vector error */ }
+            }
+            return { ...item, score, vector: undefined }; // Don't return long vectors to client
+        });
+
+        // 4. Sort and return
+        ranked.sort((a, b) => b.score - a.score);
+        res.json({ results: ranked.slice(0, 20), intent });
+
+    } catch (error) {
+        console.error("[AI Search Error]", error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 app.listen(PORT, '0.0.0.0', () => {

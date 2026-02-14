@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import db from './db.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { generateEmbedding } from './ai_search.js';
 
 import { pathToFileURL } from 'url';
 
@@ -269,6 +270,49 @@ async function processOCRJob(job) {
             extractedText = `[WORD]\n${result.value}`;
         }
         else if (
+            fileType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+            (originalName && (originalName.endsWith('.pptx')))
+        ) {
+            console.log(`[Worker] Starting PPTX extraction for: ${filePath}`);
+            try {
+                const data = fs.readFileSync(filePath);
+                const zip = await JSZip.loadAsync(data);
+                let slideText = "";
+
+                // Find all slide files
+                const slideFiles = Object.keys(zip.files).filter(name => name.startsWith('ppt/slides/slide') && name.endsWith('.xml'));
+
+                // Sort by slide number (slide1, slide2, etc.)
+                slideFiles.sort((a, b) => {
+                    const numA = parseInt(a.match(/slide(\d+)\.xml/)[1]);
+                    const numB = parseInt(b.match(/slide(\d+)\.xml/)[1]);
+                    return numA - numB;
+                });
+
+                for (const fileName of slideFiles) {
+                    const slideXml = await zip.file(fileName).async('string');
+                    // Simple regex to strip XML tags and find text content
+                    // PPTX text is usually in <a:t>...</a:t>
+                    const matches = slideXml.match(/<a:t>([^<]*)<\/a:t>/g);
+                    if (matches) {
+                        const text = matches.map(tag => tag.replace(/<\/?a:t>/g, '')).join(' ');
+                        slideText += `--- Slide ${fileName.match(/slide(\d+)\.xml/)[1]} ---\n${text}\n\n`;
+                    }
+                }
+                extractedText = `[POWERPOINT]\n${slideText}`;
+            } catch (pptxErr) {
+                console.error("[Worker] PPTX Extraction Failed:", pptxErr);
+                extractedText = `[PPTX-ERROR] ${pptxErr.message}`;
+            }
+        }
+        else if (
+            fileType === 'text/plain' ||
+            (originalName && originalName.endsWith('.txt'))
+        ) {
+            const text = fs.readFileSync(filePath, 'utf-8');
+            extractedText = `[TEXT-FILE]\n${text}`;
+        }
+        else if (
             fileType.includes('spreadsheet') ||
             fileType.includes('excel') ||
             (originalName && (originalName.endsWith('.xlsx') || originalName.endsWith('.xls')))
@@ -357,18 +401,39 @@ async function processOCRJob(job) {
                 );
             });
         } else {
-            // Standard Document Update
-            const currentDoc = await db.getDocumentById(docId);
-            if (currentDoc) {
-                // Merge OCR and set status to 'done' (or just update content)
-                const newDoc = { ...currentDoc, ocrContent: extractedText, status: 'done' };
-                await db.updateDocument(docId, newDoc);
-                console.log(`[Worker] Document OCR Completed: ${docId}`);
-            } else {
-                console.error(`[Worker] Document ${docId} not found in DB.`);
-            }
+            // Standard Document Logic
+            await new Promise((resolve, reject) => {
+                db.run("UPDATE documents SET ocrContent = ?, status = 'done' WHERE id = ?",
+                    [extractedText, docId],
+                    (err) => {
+                        if (err) reject(new Error(`[Worker] Failed to update document ${docId} with OCR: ${err.message}`));
+                        else {
+                            console.log(`[Worker] Document OCR Completed & Saved: ${docId}`);
+                            resolve();
+                        }
+                    }
+                );
+            });
         }
 
+        // 4. Generate & Save AI Embedding (Background)
+        if (extractedText && extractedText.length > 10) {
+            try {
+                const vector = await generateEmbedding(extractedText);
+                const vectorJson = JSON.stringify(vector);
+
+                if (isInventory) {
+                    // Update vector in the relational 'invoices' table
+                    db.run("UPDATE invoices SET vector = ? WHERE invoice_no = ? AND ordner_ref_id IN (SELECT id FROM ordners WHERE box_ref_id IN (SELECT id FROM boxes WHERE inventory_id = ?))",
+                        [vectorJson, context.invoiceId, context.slotId]);
+                } else {
+                    db.run("UPDATE documents SET vector = ? WHERE id = ?", [vectorJson, docId]);
+                }
+                console.log(`[Worker] AI Embedding Generated for: ${docId}`);
+            } catch (vErr) {
+                console.warn(`[Worker] AI Search Indexing Failed: ${vErr.message}`);
+            }
+        }
     } catch (err) {
         console.error(`[Worker] Job ${job.id} Failed:`, err);
         throw err;
@@ -408,13 +473,19 @@ async function startPolling() {
                         };
 
                         try {
-                            await processOCRJob(job);
+                            // Race against timeout (3 minutes)
+                            await Promise.race([
+                                processOCRJob(job),
+                                new Promise((_, reject) => setTimeout(() => reject(new Error("Job Timeout (3m)")), 180000))
+                            ]);
+
                             // 3. Mark Completed
                             db.run("UPDATE job_queue SET status = 'completed', finished_at = NOW(), progress = 100 WHERE id = ?", [row.id], () => {
                                 setTimeout(poll, 100); // Process next immediately
                             });
                         } catch (e) {
                             // 4. Mark Failed
+                            console.error(`[Worker] Job ${row.id} Failed or Timed Out:`, e.message);
                             db.run("UPDATE job_queue SET status = 'failed', finished_at = NOW(), error = ? WHERE id = ?", [e.message, row.id], () => {
                                 setTimeout(poll, 1000);
                             });

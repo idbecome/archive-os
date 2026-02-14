@@ -744,6 +744,39 @@ export default function Documents({
                                 return (
                                     <div key={doc.id} style={{ animationDelay: `${(folders.length + idx) * 20}ms` }}
                                         className={`group relative flex flex-col p-4 glass-card rounded-2xl transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both h-full hover:scale-105 hover:shadow-2xl ${selectedDocIds.has(doc.id) ? 'ring-2 ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20' : ''} ${activeMenuId === doc.id ? 'z-[120] ring-2 ring-indigo-500 shadow-2xl scale-[1.02]' : 'z-10'}`}>
+
+                                        {/* Realtime OCR Overlay */}
+                                        {(() => {
+                                            const activeJob = ocrStats?.activeJobs?.find(j => {
+                                                // Match by docId in job data (preferred) or filename fallback
+                                                try {
+                                                    const data = j.data || {};
+                                                    return String(data.docId) === String(doc.id);
+                                                } catch (e) { return false; }
+                                            });
+
+                                            const isWaiting = ocrStats?.counts?.waiting > 0 && doc.status === 'processing' && !activeJob;
+
+                                            if (activeJob) {
+                                                return (
+                                                    <div className="absolute inset-x-0 top-0 h-1 bg-gray-100 dark:bg-gray-700 overflow-hidden rounded-t-2xl z-20">
+                                                        <div
+                                                            className="h-full bg-gradient-to-r from-blue-500 to-indigo-600 transition-all duration-500 ease-out"
+                                                            style={{ width: `${activeJob.progress || 5}%` }}
+                                                        />
+                                                    </div>
+                                                );
+                                            }
+                                            if (isWaiting) {
+                                                return (
+                                                    <div className="absolute inset-x-0 top-0 h-1 bg-gray-100 dark:bg-gray-700 overflow-hidden rounded-t-2xl z-20">
+                                                        <div className="h-full bg-amber-400 w-full animate-pulse" />
+                                                    </div>
+                                                );
+                                            }
+                                            return null;
+                                        })()}
+
                                         {/* Selection Checkbox */}
                                         {hasPermission('documents', 'delete') && (
                                             <div className={`absolute top-3 left-3 z-30 ${selectedDocIds.has(doc.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
