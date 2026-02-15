@@ -239,12 +239,12 @@ app.get('/api/approvals', (req, res) => {
 });
 
 app.post('/api/approvals', (req, res) => {
-    const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, steps } = req.body;
+    const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, steps, flow_id } = req.body;
     const now = new Date().toISOString();
 
-    db.run(`INSERT INTO document_approvals (title, description, division, requester_name, requester_username, attachment_url, attachment_name, status, created_at, current_step_index) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 0)`,
-        [title, description, division, requester_name, requester_username, attachment_url, attachment_name, now],
+    db.run(`INSERT INTO document_approvals (title, description, division, requester_name, requester_username, attachment_url, attachment_name, status, created_at, current_step_index, flow_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 0, ?)`,
+        [title, description, division, requester_name, requester_username, attachment_url, attachment_name, now, flow_id || null],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
             const approvalId = this.lastID;
@@ -252,8 +252,8 @@ app.post('/api/approvals', (req, res) => {
             // Insert steps
             const stepPromises = steps.map((step, index) => {
                 return new Promise((resolve, reject) => {
-                    db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name) VALUES (?, ?, ?, ?)`,
-                        [approvalId, index, step.username, step.name],
+                    db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name, node_id) VALUES (?, ?, ?, ?, ?)`,
+                        [approvalId, index, step.username, step.name, step.nodeId || null],
                         (sErr) => sErr ? reject(sErr) : resolve()
                     );
                 });
@@ -391,8 +391,8 @@ app.put('/api/approvals/:id', (req, res) => {
 
                     const stepPromises = steps.map((step, index) => {
                         return new Promise((resolve, reject) => {
-                            db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name) VALUES (?, ?, ?, ?)`,
-                                [approvalId, index, step.username, step.name],
+                            db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name, node_id) VALUES (?, ?, ?, ?, ?)`,
+                                [approvalId, index, step.username, step.name, step.nodeId || null],
                                 (sErr) => sErr ? reject(sErr) : resolve()
                             );
                         });
@@ -423,17 +423,23 @@ app.get('/api/approval-flows', (req, res) => {
         }
         const safeRows = rows || [];
         const result = safeRows.map(r => {
-            try { return { ...r, steps: JSON.parse(r.steps || '[]') }; }
-            catch (e) { return { ...r, steps: [] }; }
+            try {
+                return {
+                    ...r,
+                    steps: JSON.parse(r.steps || '[]'),
+                    visual_config: r.visual_config ? JSON.parse(r.visual_config) : null
+                };
+            }
+            catch (e) { return { ...r, steps: [], visual_config: null }; }
         });
         res.json(result);
     });
 });
 
 app.post('/api/approval-flows', (req, res) => {
-    const { name, description, steps } = req.body;
-    db.run("INSERT INTO approval_flows (name, description, steps) VALUES (?, ?, ?)",
-        [name, description, JSON.stringify(steps || [])],
+    const { name, description, steps, visual_config } = req.body;
+    db.run("INSERT INTO approval_flows (name, description, steps, visual_config) VALUES (?, ?, ?, ?)",
+        [name, description, JSON.stringify(steps || []), JSON.stringify(visual_config || null)],
         function (err) {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true, id: this.lastID });
@@ -442,9 +448,9 @@ app.post('/api/approval-flows', (req, res) => {
 });
 
 app.put('/api/approval-flows/:id', (req, res) => {
-    const { name, description, steps } = req.body;
-    db.run("UPDATE approval_flows SET name = ?, description = ?, steps = ? WHERE id = ?",
-        [name, description, JSON.stringify(steps || []), req.params.id],
+    const { name, description, steps, visual_config } = req.body;
+    db.run("UPDATE approval_flows SET name = ?, description = ?, steps = ?, visual_config = ? WHERE id = ?",
+        [name, description, JSON.stringify(steps || []), JSON.stringify(visual_config || null), req.params.id],
         (err) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true });

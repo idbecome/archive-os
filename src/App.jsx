@@ -8,6 +8,7 @@ import { checkPermission, APP_MODULES } from './utils/permissions';
 import { performAdvancedOCR } from './utils/ocr';
 import Sidebar from './components/layout/Sidebar';
 import Modal from './components/common/Modal';
+import WorkflowDesigner from './components/workflow/WorkflowDesigner';
 
 import {
   Package,
@@ -393,7 +394,7 @@ export default function App() {
   const [flows, setFlows] = useState([]); // NEW: State for Master Flows
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false); // NEW: State for Flow Modal
   const [editingFlow, setEditingFlow] = useState(null); // NEW: State for editing flow
-  const [flowForm, setFlowForm] = useState({ name: '', description: '', steps: [] }); // NEW: State for flow form
+  const [flowForm, setFlowForm] = useState({ name: '', description: '', steps: [], visual_config: null }); // NEW: State for flow form
   const [departments, setDepartments] = useState([]);
 
   const [masterTab, setMasterTab] = useState('users');
@@ -1825,13 +1826,18 @@ export default function App() {
 
   const handleCreateFlow = () => {
     setEditingFlow(null);
-    setFlowForm({ name: '', description: '', steps: [] });
+    setFlowForm({ name: '', description: '', steps: [], visual_config: null });
     setIsFlowModalOpen(true);
   };
 
   const handleEditFlow = (flow) => {
     setEditingFlow(flow);
-    setFlowForm({ name: flow.name, description: flow.description, steps: flow.steps || [] });
+    setFlowForm({
+      name: flow.name,
+      description: flow.description,
+      steps: flow.steps || [],
+      visual_config: flow.visual_config || null
+    });
     setIsFlowModalOpen(true);
   };
 
@@ -1856,7 +1862,7 @@ export default function App() {
   };
 
   const handleSaveFlow = async () => {
-    if (!flowForm.name || flowForm.steps.length === 0) return alert("Nama alur dan minimal 1 step wajib diisi!");
+    if (!flowForm.name) return alert("Nama alur wajib diisi!");
     try {
       if (editingFlow) {
         await api.updateApprovalFlow(editingFlow.id, flowForm);
@@ -1866,6 +1872,21 @@ export default function App() {
       setFlows(await api.getApprovalFlows());
       setIsFlowModalOpen(false);
       addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow', flowForm.name);
+    } catch (e) { alert(e.message); }
+  };
+
+  const handleSaveVisualFlow = async (updatedPayload) => {
+    if (!updatedPayload.name) return alert("Nama alur wajib diisi!");
+    try {
+      if (editingFlow) {
+        await api.updateApprovalFlow(editingFlow.id, updatedPayload);
+      } else {
+        await api.createApprovalFlow(updatedPayload);
+      }
+      setFlows(await api.getApprovalFlows());
+      setIsFlowModalOpen(false);
+      addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow (Visual)', updatedPayload.name);
+      toast.success('Workflow berhasil disimpan');
     } catch (e) { alert(e.message); }
   };
 
@@ -4149,60 +4170,68 @@ export default function App() {
         </div>
       </Modal>
 
-      {/* MODAL: CREATE/EDIT APPROVAL FLOW */}
-      <Modal isOpen={isFlowModalOpen} onClose={() => setIsFlowModalOpen(false)} title={editingFlow ? "Edit Alur Persetujuan" : "Buat Alur Persetujuan Baru"} size="max-w-2xl">
-        <div className="space-y-6 pt-24 max-h-[80vh] overflow-y-auto custom-scrollbar px-1">
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nama Alur</label>
-            <input
-              className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-bold"
-              placeholder="Contoh: Alur Cuti Karyawan"
-              value={flowForm.name}
-              onChange={e => setFlowForm({ ...flowForm, name: e.target.value })}
-            />
-          </div>
-          <div className="space-y-2">
-            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Deskripsi</label>
-            <textarea
-              className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-medium resize-none"
-              rows="3"
-              placeholder="Jelaskan tujuan alur persetujuan ini..."
-              value={flowForm.description}
-              onChange={e => setFlowForm({ ...flowForm, description: e.target.value })}
-            />
+      {/* MODAL: VISUAL WORKFLOW DESIGNER */}
+      <Modal
+        isOpen={isFlowModalOpen}
+        onClose={() => setIsFlowModalOpen(false)}
+        title={editingFlow ? `Edit Alur: ${flowForm.name}` : "Desain Alur Baru"}
+        size="max-w-7xl"
+        noPadding
+      >
+        <div className="flex flex-col h-[85vh]">
+          {/* Header Controls (Name & Description) */}
+          <div className="p-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-6">
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Nama Alur Persetujuan</label>
+              <input
+                className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-black"
+                placeholder="Contoh: Alur Pengadaan Barang"
+                value={flowForm.name}
+                onChange={e => setFlowForm({ ...flowForm, name: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Deskripsi Singkat</label>
+              <input
+                className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-medium"
+                placeholder="Tujuan dari alur persetujuan ini..."
+                value={flowForm.description}
+                onChange={e => setFlowForm({ ...flowForm, description: e.target.value })}
+              />
+            </div>
           </div>
 
-          <div className="space-y-4 p-6 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-[2rem] border border-indigo-100 dark:border-indigo-800">
-            <h4 className="text-xs font-black text-indigo-600 uppercase tracking-widest flex items-center gap-2">
-              <ShieldCheck size={16} /> Tentukan Alur Persetujuan
-            </h4>
-            <div className="space-y-2">
-              {(flowForm.steps || []).map((step, idx) => (
-                <div key={idx} className="flex items-center gap-3 bg-white dark:bg-slate-900 p-3 rounded-2xl shadow-sm">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center text-xs font-black">{idx + 1}</div>
-                  <div className="flex-1">
-                    <p className="text-sm font-black text-slate-800 dark:text-white">{step.name}</p>
-                    <p className="text-[10px] text-slate-400 font-bold uppercase">{step.username}</p>
-                  </div>
-                  <button onClick={() => handleRemoveFlowStep(idx)} className="p-2 text-slate-300 hover:text-red-500"><Trash2 size={16} /></button>
-                </div>
-              ))}
-            </div>
-            <select
-              className="w-full px-5 py-3 bg-white dark:bg-slate-900 border-2 border-indigo-100 dark:border-indigo-800 rounded-2xl outline-none dark:text-white font-bold appearance-none"
-              onChange={(e) => {
-                const user = users.find(u => u.username === e.target.value);
-                if (user) handleAddFlowStep(user);
-                e.target.value = "";
+          <div className="flex-1 min-h-0">
+            <WorkflowDesigner
+              initialNodes={flowForm.visual_config?.nodes || []}
+              initialEdges={flowForm.visual_config?.edges || []}
+              users={users}
+              onClose={() => setIsFlowModalOpen(false)}
+              onSave={({ nodes, edges }) => {
+                // Convert nodes to sequential steps for legacy compatibility (and backend logic)
+                // Filter only 'approver' nodes and sort by graph position if needed
+                // For now, we take all approver nodes
+                const approverNodes = nodes.filter(n => n.type === 'approver');
+                const steps = approverNodes.map(n => ({
+                  username: n.data.username,
+                  name: n.data.label,
+                  nodeId: n.id
+                }));
+
+                const updatedForm = {
+                  ...flowForm,
+                  steps: steps,
+                  visual_config: { nodes, edges }
+                };
+
+                // Save to state first
+                setFlowForm(updatedForm);
+
+                // Immediately call save logic to persist to backend
+                // Wrap in a helper or call existing handleSaveFlow with the updated data
+                handleSaveVisualFlow(updatedForm);
               }}
-            >
-              <option value="">+ Tambah Approver</option>
-              {users.map(u => <option key={u.id} value={u.username}>{u.name} ({u.role})</option>)}
-            </select>
-          </div>
-          <div className="flex gap-3 pt-4">
-            <button onClick={() => setIsFlowModalOpen(false)} className="flex-1 py-4 text-slate-500 font-black uppercase text-xs tracking-widest">Batal</button>
-            <button onClick={handleSaveFlow} className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black uppercase text-xs tracking-widest shadow-xl shadow-indigo-500/20 hover:bg-indigo-500 transition-all active:scale-95">Simpan Flow</button>
+            />
           </div>
         </div>
       </Modal>
