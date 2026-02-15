@@ -2708,7 +2708,53 @@ app.post('/api/search/ai', async (req, res) => {
     }
 });
 
-// --- AI CHAT ASSISTANT ---
+
+// --- STATISTICS API ---
+app.get('/api/stats', (req, res) => {
+    const stats = { stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 };
+    db.all("SELECT status, COUNT(*) as count FROM documents GROUP BY status", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Basic document stats
+        const docCount = rows.reduce((acc, r) => acc + r.count, 0);
+        stats.stored = docCount;
+
+        // Inventory stats
+        db.all("SELECT COUNT(*) as count FROM inventory_items", [], (err, invRows) => {
+            if (!err && invRows.length > 0) stats.occupancy = invRows[0].count; // Simplified occupancy
+
+            // Tax Audit stats
+            db.all("SELECT COUNT(*) as count FROM tax_audits WHERE status = 'OPEN'", [], (err, auditRows) => {
+                if (!err && auditRows.length > 0) stats.audit = auditRows[0].count;
+                res.json(stats);
+            });
+        });
+    });
+});
+
+// --- FOLDER MANAGEMENT API ---
+app.get('/api/folders', (req, res) => {
+    // Return a list of distinct folderIds or a folders table if it existed.
+    // Since we only have folderId string in documents, we extract unique ones.
+    db.all("SELECT DISTINCT folderId FROM documents WHERE folderId IS NOT NULL", [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows.map(r => ({ id: r.folderId, name: r.folderId })));
+    });
+});
+
+// --- TAX SUMMARY API (Singular) ---
+// Note: Frontend might use tax-summary (singular) for dashboard, while tax-summaries (plural) is for CRUD.
+app.get('/api/tax-summary', (req, res) => {
+    const year = new Date().getFullYear();
+    db.all("SELECT * FROM tax_summaries WHERE year = ?", [year], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows.map(r => ({
+            ...r,
+            data: typeof r.data === 'string' ? JSON.parse(r.data || '{}') : (r.data || {})
+        })));
+    });
+});
+
 app.post('/api/chat', async (req, res) => {
     const { message, history } = req.body;
     if (!message) return res.json({ reply: 'Silakan ketik pertanyaan Anda.', results: [] });

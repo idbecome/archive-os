@@ -280,7 +280,7 @@ export default function AiChatAssistant({
             setActiveTab('inventory');
             setActiveInvTab('external');
             setIsOpen(false);
-        } else if (result.folderId && handleNavigateToFolder) {
+        } else if ((result.folderId || result.folderId === null) && handleNavigateToFolder) {
             console.log("Targeting folderId:", result.folderId);
             handleNavigateToFolder(result.folderId);
             setIsOpen(false);
