@@ -486,7 +486,7 @@ export default function Documents({
                                         // RESET TOTAL: Pastikan tidak ada sisa data dari edit sebelumnya
                                         setUploadForm({
                                             id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
-                                            previewUrl: null, fileData: null, fileBase64: null, isProcessing: false,
+                                            previewUrl: null, fileData: null, isProcessing: false,
                                             processingMessage: '', editMode: false, originalDoc: null
                                         });
                                         setModalTab('upload');

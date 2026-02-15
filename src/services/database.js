@@ -352,10 +352,22 @@ export const db = {
 
     async createDocument(doc) {
         try {
+            let body = doc;
+            if (!(doc instanceof FormData)) {
+                const formData = new FormData();
+                Object.keys(doc).forEach(key => {
+                    if (key === 'file' && doc[key] instanceof File) {
+                        formData.append('file', doc[key]);
+                    } else if (doc[key] !== null && doc[key] !== undefined) {
+                        formData.append(key, doc[key]);
+                    }
+                });
+                body = formData;
+            }
+
             const response = await fetch(`${API_URL}/documents`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(doc)
+                body: body
             });
             if (!response.ok) throw new Error('Gagal buat dokumen');
             return await response.json();
@@ -367,10 +379,22 @@ export const db = {
 
     async updateDocument(id, doc) {
         try {
+            let body = doc;
+            if (!(doc instanceof FormData)) {
+                const formData = new FormData();
+                Object.keys(doc).forEach(key => {
+                    if (key === 'file' && doc[key] instanceof File) {
+                        formData.append('file', doc[key]);
+                    } else if (doc[key] !== null && doc[key] !== undefined) {
+                        formData.append(key, doc[key]);
+                    }
+                });
+                body = formData;
+            }
+
             await fetch(`${API_URL}/documents/${id}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(doc)
+                body: body
             });
         } catch (e) { console.error("Gagal update dokumen", e); }
     },

@@ -374,32 +374,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 if (newAuditFile) {
                     const folderId = await syncAuditFolder(newAuditTitle, 'ACTIVE');
 
-                    let ocrText = ''; // OCR will be handled by background worker
-
-                    const base64 = await new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = (e) => resolve(e.target.result);
-                        reader.onerror = (error) => reject(error);
-                        reader.readAsDataURL(newAuditFile);
-                    });
-
-                    const doc = {
+                    const docPayload = {
                         id: String(Date.now() + 1),
                         title: newAuditFile.name,
                         type: newAuditFile.type,
-                        size: (newAuditFile.size / 1024).toFixed(1) + ' KB',
+                        size: (newAuditFile.size / 1024 / 1024).toFixed(2) + ' MB',
                         uploadDate: new Date().toISOString(),
                         auditId: currentAuditId,
                         stepIndex: 0,
-                        fileData: base64,
-                        file_data: base64,
-                        filedata: base64,
                         folderId: folderId,
                         department: 'Tax',
                         owner: currentUser?.name || 'Admin',
-                        ocrContent: '' // Will be handled by background worker
+                        ocrContent: '',
+                        file: newAuditFile
                     };
-                    await api.createDocument(doc);
+
+                    await api.createDocument(docPayload);
                 }
             }
 
@@ -499,27 +489,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             return;
         }
 
-        const reader = new FileReader();
-        reader.onload = (ev) => {
-            setUploadForm({
-                file: file,
-                fileData: ev.target.result,
-                fileName: file.name,
-                fileType: file.type,
-                fileSize: (file.size / 1024).toFixed(1) + ' KB',
-                title: file.name,
-                ocrContent: '',
-                isProcessing: false,
-                processingMessage: ''
-            });
-            setUploadModalOpen(true);
-        };
-        reader.readAsDataURL(file);
+        setUploadForm({
+            file: file,
+            fileName: file.name,
+            fileType: file.type,
+            fileSize: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+            title: file.name,
+            ocrContent: '',
+            isProcessing: false,
+            processingMessage: ''
+        });
+        setUploadModalOpen(true);
         e.target.value = null;
     };
 
     const handleConfirmUpload = async () => {
-        if (!selectedAudit || !uploadForm.fileData) return;
+        if (!selectedAudit || !uploadForm.file) return;
 
         // TUTUP MODAL SEGERA: Agar user bisa lanjut memantau audit lainnya
         setUploadModalOpen(false);
@@ -544,7 +529,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             }
 
             // Backend will handle OCR via Queue if client fails
-            const newDoc = {
+            const docPayload = {
                 id: String(Date.now()),
                 title: uploadForm.title || uploadForm.fileName,
                 type: uploadForm.fileType,
@@ -552,17 +537,15 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 uploadDate: new Date().toISOString(),
                 auditId: selectedAudit.id,
                 stepIndex: activeStep,
-                fileData: uploadForm.fileData,
-                file_data: uploadForm.fileData,
-                filedata: uploadForm.fileData,
                 folderId: folderId,
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team',
-                ocrContent: ocrResult // Use client-side OCR result
+                ocrContent: ocrResult,
+                file: uploadForm.file // File object
             };
 
-            await api.createDocument(newDoc);
-            updateToast(toastId, { message: `"${newDoc.title}" berhasil diupload`, type: 'success' });
+            await api.createDocument(docPayload);
+            updateToast(toastId, { message: `"${docPayload.title}" berhasil diupload`, type: 'success' });
 
             loadFiles(selectedAudit); // Reload list
             if (onRefresh) onRefresh();

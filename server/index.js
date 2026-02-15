@@ -413,25 +413,6 @@ app.delete('/api/approval-flows/:id', (req, res) => {
 });
 
 // Helper: Save Base64 to File
-function saveBase64ToFile(base64Data, id, extension = 'bin') {
-    try {
-        const matches = base64Data.match(/^data:([A-Za-z0-9-+\/.]+);base64,(.+)$/);
-        if (!matches || matches.length !== 3) {
-            return null;
-        }
-
-        const buffer = Buffer.from(matches[2], 'base64');
-        const filename = `DOC-${id}-${Date.now()}.${extension}`;
-        const filePath = path.join(UPLOADS_DIR, filename);
-
-        fs.writeFileSync(filePath, buffer);
-        console.log(`Saved file to disk: ${filename}`);
-        return `/uploads/${filename}`;
-    } catch (e) {
-        console.error("File save error:", e);
-        return null;
-    }
-}
 
 // --- UNIVERSAL SEARCH API (AI SEMANTIC) ---
 app.get('/api/search', (req, res) => {
@@ -761,22 +742,7 @@ function processInventoryFiles(dataObj, contextId) {
         if (ord.invoices && Array.isArray(ord.invoices)) {
             ord.invoices.forEach(inv => {
                 if (inv.file && typeof inv.file === 'string' && inv.file.startsWith('data:')) {
-                    const ext = (inv.fileName || 'bin').split('.').pop();
-                    const fileId = `INV-${String(contextId).replace(/[^a-zA-Z0-9-]/g, '')}-${inv.id || Date.now()}`;
-                    const savedUrl = saveBase64ToFile(inv.file, fileId, ext);
-                    if (savedUrl) {
-                        inv.file = savedUrl;
-                        console.log(`Inventory File Saved to Disk: ${savedUrl}`);
-
-                        // Queue OCR for this unique invoice
-                        const absolutePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
-                        addOCRJob(contextId, absolutePath, inv.fileType || 'application/pdf', inv.fileName, {
-                            type: 'inventory',
-                            slotId: contextId,
-                            ordnerId: ord.id,
-                            invoiceId: inv.id
-                        }).catch(e => console.error("Inventory OCR Queue Error:", e));
-                    }
+                    console.warn(`[Inventory] Legacy Base64 detected for invoice ${inv.id}, ignoring in processInventoryFiles (should be handled by Multer or pre-uploaded)`);
                 } else if (inv.file && (inv.file.startsWith('/uploads/') || inv.file.startsWith('http')) && (!inv.ocrContent || inv.ocrContent.length < 5)) {
                     // Extract relative path if it's a full URL
                     let relativePath = inv.file;
@@ -1569,9 +1535,14 @@ app.get('/api/documents', (req, res) => {
         whereClauses.push("auditId = ?");
         params.push(auditId);
     }
-    if (folderId) {
-        whereClauses.push("folderId = ?");
-        params.push(folderId);
+    const normalizedFolderId = (folderId === "null" || folderId === "") ? null : folderId;
+    if (folderId !== undefined) {
+        if (normalizedFolderId) {
+            whereClauses.push("folderId = ?");
+            params.push(normalizedFolderId);
+        } else {
+            whereClauses.push("folderId IS NULL");
+        }
     }
 
     if (whereClauses.length > 0) {
@@ -1665,16 +1636,28 @@ const extractTextFromFile = async (buffer, mimeType) => {
 
 // ... (existing code)
 
-app.post('/api/documents', async (req, res) => {
-    const { id, title, type, size, uploadDate, url, folderId, department, owner, auditId, stepIndex, fileData, file_data, filedata } = req.body;
-    // Support multiple casing for fileData
-    const content = fileData || file_data || filedata;
+app.post('/api/documents', upload.single('file'), async (req, res) => {
+    const { id, title, type, size, uploadDate, url, folderId, department, owner, auditId, stepIndex, ocrContent } = req.body;
+
+    let fileUrl = url;
+    let absoluteFilePath = null;
+    let finalType = type;
+    let finalSize = size;
+    let finalTitle = title;
+
+    if (req.file) {
+        fileUrl = `/uploads/${req.file.filename}`;
+        absoluteFilePath = req.file.path;
+        finalType = req.file.mimetype;
+        finalSize = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
+        if (!finalTitle) finalTitle = req.file.originalname;
+    }
 
     // --- AUTOMATIC REVISION CHECK ---
     // Check if a document with same name exists in the same folder
-    const normalizedFolderId = (folderId === "null" || folderId === "") ? null : folderId;
+    const normalizedFolderId = (folderId === "null" || folderId === "" || !folderId) ? null : folderId;
     const checkSql = "SELECT * FROM documents WHERE title = ? AND (" + (normalizedFolderId ? "folderId = ?" : "folderId IS NULL") + ")";
-    const checkParams = normalizedFolderId ? [title, normalizedFolderId] : [title];
+    const checkParams = normalizedFolderId ? [finalTitle, normalizedFolderId] : [finalTitle];
 
     db.get(checkSql, checkParams, async (err, existingDoc) => {
         if (err) {
@@ -1691,11 +1674,29 @@ app.post('/api/documents', async (req, res) => {
 
             // Archive current version
             let archivedUrl = existingDoc.url;
-            if (existingDoc.fileData && existingDoc.fileData.startsWith('data:')) {
+            if (existingDoc.url && existingDoc.url.startsWith('/uploads/')) {
                 const ext = existingDoc.title.split('.').pop() || 'bin';
-                const archivedPath = saveBase64ToFile(existingDoc.fileData, `ARCHIVE-${existingDoc.id}-${Date.now()}`, ext);
-                if (archivedPath) archivedUrl = archivedPath;
-                else console.error(`[FileData] Failed to archive base64 for doc ${existingDoc.id}`);
+                const filename = `ARCHIVE-${existingDoc.id}-${Date.now()}.${ext}`;
+                const newFilePath = path.join(UPLOADS_DIR, filename);
+                const oldFilePath = path.join(UPLOADS_DIR, path.basename(existingDoc.url));
+                try {
+                    if (fs.existsSync(oldFilePath)) {
+                        fs.copyFileSync(oldFilePath, newFilePath);
+                        archivedUrl = `/uploads/${filename}`;
+                    }
+                } catch (e) { console.error("Archiving failed:", e); }
+            } else if (existingDoc.fileData && existingDoc.fileData.startsWith('data:')) {
+                const ext = (existingDoc.title || '').split('.').pop() || 'bin';
+                try {
+                    const matches = existingDoc.fileData.match(/^data:([A-Za-z0-9-+\/.]+);base64,(.+)$/);
+                    if (matches && matches.length === 3) {
+                        const buffer = Buffer.from(matches[2], 'base64');
+                        const filename = `ARCHIVE-${existingDoc.id}-${Date.now()}.${ext}`;
+                        const filePath = path.join(UPLOADS_DIR, filename);
+                        fs.writeFileSync(filePath, buffer);
+                        archivedUrl = `/uploads/${filename}`;
+                    }
+                } catch (e) { console.error("Legacy archiving failed:", e); }
             }
 
             versionsHistory.push({
@@ -1708,21 +1709,9 @@ app.post('/api/documents', async (req, res) => {
                 user: existingDoc.owner || 'System'
             });
 
-            // Save new file
-            let fileUrl = url;
-            let savedPath = null;
-            let absoluteFilePath = null;
-
-            if (content) {
-                const ext = title.split('.').pop() || 'bin';
-                const savedUrl = saveBase64ToFile(content, existingDoc.id, ext);
-                if (savedUrl) {
-                    fileUrl = savedUrl;
-                    savedPath = savedUrl;
-                    absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
-                } else {
-                    console.error(`[FileData] Failed to save base64 to disk for revision of doc ${existingDoc.id}`);
-                }
+            // 1. File Handling (Multer req.file is already on disk)
+            if (req.file) {
+                // fileUrl and absoluteFilePath are already set at the top of the function
             } else if (url && url.startsWith('/uploads/')) {
                 absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
             }
@@ -1730,18 +1719,18 @@ app.post('/api/documents', async (req, res) => {
             const initialOcr = req.body.ocrContent || '';
             const status = initialOcr ? 'done' : 'processing';
 
-            db.run("UPDATE documents SET type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = NULL, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-                [type, size, uploadDate, fileUrl, initialOcr, JSON.stringify(versionsHistory), status, existingDoc.id],
+            db.run("UPDATE documents SET title = ?, type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = NULL, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+                [finalTitle, finalType, finalSize, uploadDate, fileUrl, initialOcr, JSON.stringify(versionsHistory), status, existingDoc.id],
                 async (updateErr) => {
                     if (updateErr) return res.status(500).json({ error: "Revision update failed: " + updateErr.message });
 
                     if (absoluteFilePath) {
                         try {
-                            await addOCRJob(existingDoc.id, absoluteFilePath, type || 'application/octet-stream', title);
+                            await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', finalTitle);
                         } catch (qErr) { console.error("Queue Error:", qErr); }
                     }
 
-                    await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${title}" v${existingDoc.version + 1}`);
+                    await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${finalTitle}" v${existingDoc.version + 1}`);
                     res.json({ success: true, id: existingDoc.id, version: existingDoc.version + 1, isRevision: true });
                 }
             );
@@ -1749,31 +1738,27 @@ app.post('/api/documents', async (req, res) => {
         }
 
         // --- ORIGINAL INSERT LOGIC ---
-        let fileUrl = url;
-        let savedPath = null;
-        let absoluteFilePath = null;
-
-        // 1. Save File (Base64 -> Disk) — NEVER store base64 in DB
-        if (content) {
-            const ext = title.split('.').pop() || 'bin';
-            const savedUrl = saveBase64ToFile(content, id, ext);
-
-            if (savedUrl) {
-                fileUrl = savedUrl;
-                savedPath = savedUrl;
-                absoluteFilePath = path.join(UPLOADS_DIR, path.basename(savedUrl));
-            } else {
-                console.error(`[FileData] Failed to save base64 to disk for doc ${id}`);
-            }
+        // 1. File Handling (Multer req.file is already on disk)
+        if (req.file) {
+            // fileUrl and absoluteFilePath are already set at the top of the function
         } else if (url && url.startsWith('/uploads/')) {
             absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
         }
+
+        // Sanitize for DB (Knex doesn't allow undefined)
+        const dbId = id || String(Date.now());
+        const dbUploadDate = uploadDate || new Date().toISOString();
+        const dbFolderId = normalizedFolderId;
+        const dbDepartment = department || null;
+        const dbOwner = owner || 'System';
+        const dbAuditId = auditId || null;
+        const dbStepIndex = stepIndex || null;
 
         const initialOcr = req.body.ocrContent || '';
         const status = initialOcr ? 'done' : 'processing';
 
         db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
-            [id, title, type, size, uploadDate, fileUrl, folderId, department, owner, initialOcr, auditId, stepIndex, status],
+            [dbId, finalTitle, finalType, finalSize, dbUploadDate, fileUrl, dbFolderId, dbDepartment, dbOwner, initialOcr, dbAuditId, dbStepIndex, status],
             async (err) => {
                 if (err) {
                     console.error("DB INSERT ERROR:", err.message);
@@ -1782,7 +1767,7 @@ app.post('/api/documents', async (req, res) => {
 
                 if (absoluteFilePath) {
                     try {
-                        await addOCRJob(id, absoluteFilePath, type || 'application/octet-stream', title);
+                        await addOCRJob(dbId, absoluteFilePath, finalType || 'application/octet-stream', finalTitle);
                     } catch (qErr) {
                         console.error("Queue Error:", qErr);
                     }
@@ -1799,9 +1784,8 @@ app.post('/api/documents', async (req, res) => {
     });
 });
 
-app.put('/api/documents/:id', (req, res) => {
-    const { title, folderId, department, ocrContent, fileData, file_data, filedata } = req.body;
-    const content = fileData || file_data || filedata;
+app.put('/api/documents/:id', upload.single('file'), (req, res) => {
+    const { title, folderId, department, ocrContent, size, type, uploadDate, owner } = req.body;
 
     // Generate Embedding (Async)
     const textToEmbed = (title + " " + (ocrContent || "")).substring(0, 1000);
@@ -1813,76 +1797,86 @@ app.put('/api/documents/:id', (req, res) => {
         }
     });
 
-    if (content) {
-        // ... (rest of the PUT logic remains similar, see context)
-        db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, oldDoc) => {
-            if (err) return res.status(500).json({ error: err.message });
+    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, oldDoc) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (!oldDoc) return res.status(404).json({ error: "Document not found" });
 
-            let versionsHistory = [];
-            try { versionsHistory = oldDoc && oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : []; } catch (e) { }
+        let versionsHistory = [];
+        try { versionsHistory = oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : []; } catch (e) { }
 
-            if (oldDoc) {
-                // Archive current version
-                let archivedUrl = oldDoc.url;
-                if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
-                    const ext = oldDoc.title.split('.').pop() || 'bin';
-                    const archivedPath = saveBase64ToFile(oldDoc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
-                    if (archivedPath) archivedUrl = archivedPath;
-                    else console.error(`[FileData] Failed to archive base64 for doc ${req.params.id}`);
-                }
+        let fileUrl = oldDoc.url;
+        let absoluteFilePath = null;
+        let finalType = type || oldDoc.type;
+        let finalSize = size || oldDoc.size;
 
-                versionsHistory.push({
-                    timestamp: oldDoc.uploadDate || new Date().toISOString(),
-                    size: oldDoc.size,
-                    type: oldDoc.type,
-                    fileData: null,
-                    url: archivedUrl,
-                    title: oldDoc.title,
-                    user: oldDoc.owner || 'System'
-                });
-            }
-
-            const ext = title.split('.').pop() || 'bin';
-            const newSavedUrl = saveBase64ToFile(content, req.params.id, ext);
-            const finalUrl = newSavedUrl || req.body.url || oldDoc.url;
-
-            // Tentukan status dan OCR content baru
-            let newStatus = oldDoc.status;
-            let newOcrContent = ocrContent; // Default keep existing if only meta update
-
-            // Jika ada file baru yang diupload, gunakan OCR dari client jika ada
-            if (newSavedUrl) {
-                newOcrContent = ocrContent || '';
-                newStatus = newOcrContent ? 'done' : 'processing';
-            }
-
-            db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = NULL, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-                [title, folderId, department, newOcrContent, finalUrl, JSON.stringify(versionsHistory), newStatus, req.params.id],
-                async (err) => {
-                    if (err) return res.status(500).json({ error: err.message });
-
-                    // Add Job for revision
-                    if (newSavedUrl) {
-                        const absolutePath = path.join(UPLOADS_DIR, path.basename(newSavedUrl));
-                        addOCRJob(req.params.id, absolutePath, req.body.type || 'application/octet-stream', title);
+        if (req.file) {
+            // Archive current version only if new file is uploaded
+            let archivedUrl = oldDoc.url;
+            if (oldDoc.url && oldDoc.url.startsWith('/uploads/')) {
+                const ext = (oldDoc.title || '').split('.').pop() || 'bin';
+                const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
+                const newFilePath = path.join(UPLOADS_DIR, filename);
+                const oldFilePath = path.join(UPLOADS_DIR, path.basename(oldDoc.url));
+                try {
+                    if (fs.existsSync(oldFilePath)) {
+                        fs.copyFileSync(oldFilePath, newFilePath);
+                        archivedUrl = `/uploads/${filename}`;
                     }
+                } catch (e) { console.error("Archiving failed:", e); }
+            } else if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
+                const ext = (oldDoc.title || '').split('.').pop() || 'bin';
+                try {
+                    const matches = oldDoc.fileData.match(/^data:([A-Za-z0-9-+\\/.]+);base64,(.+)$/);
+                    if (matches && matches.length === 3) {
+                        const buffer = Buffer.from(matches[2], 'base64');
+                        const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
+                        const filePath = path.join(UPLOADS_DIR, filename);
+                        fs.writeFileSync(filePath, buffer);
+                        archivedUrl = `/uploads/${filename}`;
+                    }
+                } catch (e) { console.error("Legacy archiving failed:", e); }
+            }
 
-                    await systemLog(null, "Update/Version", `Update file & save version: "${title}"`);
-                    res.json({ success: true });
-                }
-            );
-        });
-    } else {
-        // Metadata only update
-        db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ? WHERE id = ?",
-            [title, folderId, department, ocrContent, req.params.id],
+            versionsHistory.push({
+                timestamp: oldDoc.uploadDate || new Date().toISOString(),
+                size: oldDoc.size,
+                type: oldDoc.type,
+                fileData: null,
+                url: archivedUrl,
+                title: oldDoc.title,
+                user: oldDoc.owner || 'System'
+            });
+
+            fileUrl = `/uploads/${req.file.filename}`;
+            absoluteFilePath = req.file.path;
+            finalType = req.file.mimetype;
+            finalSize = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
+        }
+
+        let newStatus = oldDoc.status;
+        let newOcrContent = ocrContent !== undefined ? ocrContent : oldDoc.ocrContent;
+
+        if (req.file) {
+            newOcrContent = ocrContent || '';
+            newStatus = newOcrContent ? 'done' : 'processing';
+        }
+
+        db.run("UPDATE documents SET title = ?, type = ?, size = ?, folderId = ?, department = ?, ocrContent = ?, fileData = NULL, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
+            [title || oldDoc.title, finalType, finalSize, folderId !== undefined ? (folderId === "null" ? null : folderId) : oldDoc.folderId, department || oldDoc.department, newOcrContent, fileUrl, JSON.stringify(versionsHistory), newStatus, req.params.id],
             async (err) => {
                 if (err) return res.status(500).json({ error: err.message });
-                await systemLog(null, "Rename", `Ganti nama/meta file: "${title}"`);
-                res.json({ success: true });
+
+                if (absoluteFilePath) {
+                    try {
+                        await addOCRJob(req.params.id, absoluteFilePath, finalType || 'application/octet-stream', title || oldDoc.title);
+                    } catch (qErr) { console.error("Queue Error:", qErr); }
+                }
+
+                await systemLog(owner || oldDoc.owner, "Update Documentation", `Update/Revisi dokumen: "${title || oldDoc.title}"`);
+                res.json({ success: true, id: req.params.id });
             }
         );
-    }
+    });
 });
 
 
@@ -2013,14 +2007,30 @@ app.post('/api/documents/:id/restore', (req, res) => {
 
         // Backup current before restore
         let currentArchivedUrl = doc.url;
-        let currentArchivedData = null;
-
-        if (doc.fileData && doc.fileData.startsWith('data:')) {
+        if (doc.url && doc.url.startsWith('/uploads/')) {
+            const ext = (doc.title || '').split('.').pop() || 'bin';
+            const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
+            const newFilePath = path.join(UPLOADS_DIR, filename);
+            const oldFilePath = path.join(UPLOADS_DIR, path.basename(doc.url));
+            try {
+                if (fs.existsSync(oldFilePath)) {
+                    fs.copyFileSync(oldFilePath, newFilePath);
+                    currentArchivedUrl = `/uploads/${filename}`;
+                }
+            } catch (e) { console.error("Archiving failed:", e); }
+        } else if (doc.fileData && doc.fileData.startsWith('data:')) {
             // If current is BLOB, migrate to disk before archiving
-            const ext = doc.title.split('.').pop() || 'bin';
-            const archivedPath = saveBase64ToFile(doc.fileData, `ARCHIVE-${req.params.id}-${Date.now()}`, ext);
-            if (archivedPath) currentArchivedUrl = archivedPath;
-            else console.error(`[FileData] Failed to archive base64 for restore of doc ${req.params.id}`);
+            const ext = (doc.title || '').split('.').pop() || 'bin';
+            try {
+                const matches = doc.fileData.match(/^data:([A-Za-z0-9-+\\/.]+);base64,(.+)$/);
+                if (matches && matches.length === 3) {
+                    const buffer = Buffer.from(matches[2], 'base64');
+                    const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
+                    const filePath = path.join(UPLOADS_DIR, filename);
+                    fs.writeFileSync(filePath, buffer);
+                    currentArchivedUrl = `/uploads/${filename}`;
+                }
+            } catch (e) { console.error("Legacy archiving failed:", e); }
         }
 
         versions.push({

@@ -1883,115 +1883,91 @@ export default function App() {
 
     const fileSize = (file.size / 1024 / 1024).toFixed(2) + ' MB';
 
-    // WARN: Peringatan jika file terlalu besar (> 5MB) untuk mencegah timeout/payload error
     if (file.size > 10 * 1024 * 1024) {
       alert("Peringatan: Ukuran file cukup besar (> 10MB). Pastikan koneksi stabil agar upload berhasil.");
     }
 
-    // Read Base64
-    const fileBase64 = await new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = (e) => resolve(e.target.result);
-      reader.onerror = () => resolve(null);
-      reader.readAsDataURL(file);
-    });
+    // Only read Base64 for Image Previews (UI only)
+    let previewUrl = null;
+    if (file.type.startsWith('image/')) {
+      previewUrl = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(file);
+      });
+    }
 
     setUploadForm(prev => ({
       ...prev,
       title: file.name,
       fileType: file.type || 'application/octet-stream',
       fileSize,
-      fileData: file,
-      fileBase64: fileBase64,
-      isProcessing: false, // Don't block yet
-      processingMessage: '',
-      previewUrl: file.type.includes('image') ? fileBase64 : null,
-      ocrContent: ''
+      fileData: file, // Store raw File object
+      previewUrl: previewUrl,
+      ocrContent: '',
+      isProcessing: false
     }));
   };
 
   const handleProcessDoc = async () => {
-    // 1. Prioritaskan file baru yang diupload (fileBase64)
-    // 2. Jika edit dan tidak ada file baru, gunakan file lama
-    let fileContent = uploadForm.fileBase64;
-    const capturedForm = { ...uploadForm }; // Tangkap state form sebelum modal ditutup
+    const capturedForm = { ...uploadForm };
+    const file = capturedForm.fileData; // Raw File object
 
-    if (!fileContent && uploadForm.editMode && uploadForm.originalDoc) {
-      fileContent = uploadForm.originalDoc?.fileData || uploadForm.originalDoc?.file_data;
-    }
-
-    // DEBUG: Cek ukuran data sebelum dikirim
-    console.log("Persiapan Upload - Ukuran File Base64:", fileContent ? fileContent.length : 0);
-
-    if (fileContent && fileContent.length < 100) {
-      if (!window.confirm("PERINGATAN: Data file tampaknya kosong atau sangat kecil. File asli mungkin tidak akan tersimpan. Lanjutkan?")) return;
-    }
-
-    if (!fileContent && !uploadForm.editMode) {
-      toast.warning("File belum dipilih atau gagal terbaca. Pastikan file PDF/Gambar valid.");
+    if (!file && !capturedForm.editMode) {
+      toast.warning("File belum dipilih.");
       return;
     }
 
-    // Deteksi file duplikat
     if (!capturedForm.editMode && docList && docList.length > 0) {
-      const isDuplicate = docList.some(d => d.title === capturedForm.title && (String(d.folderId) === String(currentFolderId) || ((!d.folderId || d.folderId === 'null') && (currentFolderId === null || currentFolderId === 'null'))));
+      const isDuplicate = docList.some(d => d.title === capturedForm.title && (String(d.folderId) === String(currentFolderId) || (!d.folderId && !currentFolderId)));
       if (isDuplicate) {
-        toast.warning(`File "${capturedForm.title}" sudah ada di folder ini. Upload tetap dilanjutkan.`);
+        toast.warning(`File "${capturedForm.title}" sudah ada. Melanjutkan...`);
       }
     }
 
-    // TUTUP MODAL SEGERA: Agar user bisa lanjut bekerja sementara upload/OCR berjalan di latar
     setIsModalOpen(false);
-
-    // Show loading toast
     const toastId = toast.loading(capturedForm.editMode ? `Memperbarui "${capturedForm.title}"...` : `Mengupload "${capturedForm.title}"...`);
 
-    // --- CLIENT-SIDE OCR INTEGRATION ---
     let ocrResult = capturedForm.ocrContent || '';
-    if (capturedForm.fileData instanceof File) {
+    if (file instanceof File) {
       try {
         updateToast(toastId, { message: `Menjalankan OCR: ${capturedForm.title}...`, type: 'loading' });
-        ocrResult = await performAdvancedOCR(capturedForm.fileData, (msg, progress) => {
+        ocrResult = await performAdvancedOCR(file, (msg) => {
           updateToast(toastId, { message: msg, type: 'loading' });
         });
       } catch (ocrErr) {
-        console.warn("Client-side OCR failed, will fallback to server:", ocrErr);
+        console.warn("OCR failed:", ocrErr);
       }
     }
 
-    const newDoc = {
-      // Gunakan ID lama jika edit, atau buat ID baru jika upload baru
+    const docPayload = {
       id: capturedForm.editMode ? capturedForm.id : String(Date.now()),
       title: capturedForm.title,
       uploadDate: new Date().toISOString(),
       ocrContent: ocrResult,
       size: capturedForm.fileSize,
       type: capturedForm.fileType,
-      previewUrl: capturedForm.previewUrl,
-      fileData: fileContent, // Format camelCase (Default)
-      file_data: fileContent, // RESTORED: Backend mungkin menggunakan snake_case
-      filedata: fileContent, // RESTORED: Backend mungkin menggunakan lowercase (Wajib ada jika backend minta ini)
-      uploader: currentUser?.name || 'Admin',
+      owner: currentUser?.name || 'Admin',
       folderId: currentFolderId,
-      version: 1,
-      versionsHistory: capturedForm.editMode ? (capturedForm.originalDoc?.versionsHistory || []) : [],
-      locked: false
+      department: capturedForm.department || '',
+      file: file // File object
     };
 
     try {
-      if (capturedForm.editMode && capturedForm.id) {
-        await api.updateDocument(capturedForm.id, newDoc);
-        addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${newDoc.title}`);
-        updateToast(toastId, { message: `"${newDoc.title}" berhasil diperbarui`, type: 'success' });
+      if (capturedForm.editMode) {
+        await api.updateDocument(capturedForm.id, docPayload);
+        addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${docPayload.title}`);
+        updateToast(toastId, { message: `"${docPayload.title}" diperbarui`, type: 'success' });
       } else {
-        await api.createDocument(newDoc);
-        addLog(currentUser?.name, 'Upload Dokumen', `Dokumen baru ${newDoc.title}`);
-        updateToast(toastId, { message: `"${newDoc.title}" berhasil diupload`, type: 'success' });
+        await api.createDocument(docPayload);
+        addLog(currentUser?.name, 'Upload Dokumen', `Upload ${docPayload.title}`);
+        updateToast(toastId, { message: `"${docPayload.title}" diupload`, type: 'success' });
       }
       await fetchDocs();
       await fetchLogs();
     } catch (e) {
-      console.error("Background Upload Failed:", e);
+      console.error("Upload failed:", e);
       updateToast(toastId, { message: `Gagal: ${e.message}`, type: 'error' });
     }
   };
@@ -2016,8 +1992,8 @@ export default function App() {
       ocrContent: fullDoc.ocrContent,
       fileType: fullDoc.type,
       fileSize: fullDoc.size,
-      previewUrl: fullDoc.previewUrl,
-      fileBase64: fullDoc.fileData || fullDoc.file_data || fullDoc.filedata,
+      previewUrl: (fullDoc.type || '').startsWith('image/') ? (fullDoc.fileData || fullDoc.file_data || fullDoc.filedata) : null,
+      fileData: null, // No new file selected yet
       isProcessing: false,
       processingMessage: '',
       editMode: true,
