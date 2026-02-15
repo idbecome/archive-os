@@ -3,10 +3,8 @@ import { ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Loader2 } from 'lucide-reac
 
 // PDF.js worker setup
 import * as pdfjsLib from 'pdfjs-dist';
-pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-    'pdfjs-dist/build/pdf.worker.mjs',
-    import.meta.url
-).toString();
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export default function PdfViewer({ src, className = '' }) {
     const containerRef = useRef(null);

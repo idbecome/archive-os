@@ -85,7 +85,14 @@ import AiChatAssistant from './components/AiChatAssistant';
 
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
-const API_URL = 'http://localhost:5000/api';
+const getApiUrl = () => {
+  const { hostname, port, protocol } = window.location;
+  if (port === '5173' || port === '3000' || hostname === 'localhost') {
+    return `${protocol}//${hostname}:5000/api`;
+  }
+  return '/api';
+};
+const API_URL = getApiUrl();
 // The `db` object definition is removed here as it is imported.
 // The `// --- DATABASE ADAPTER (LAYER DATA) ---` block is removed.
 
@@ -296,9 +303,29 @@ export default function App() {
   };
 
   const getFullUrl = (url) => {
-    if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
-    const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
-    return isDev ? `http://${window.location.hostname}:5000${url}` : url;
+    if (typeof url !== 'string') return url;
+    if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+
+    const { hostname, port, protocol } = window.location;
+    const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+
+    let cleanUrl = url;
+    // Fix missing leading slash for uploads
+    if (url.startsWith('uploads/')) {
+      cleanUrl = '/' + url;
+    }
+
+    // Handle relative uploads path
+    if (cleanUrl.startsWith('/uploads/')) {
+      return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
+    }
+
+    // Handle hardcoded localhost:5000 URLs (e.g., from old database entries)
+    if (cleanUrl.includes('localhost:5000')) {
+      return cleanUrl.replace('localhost', hostname);
+    }
+
+    return cleanUrl;
   };
 
   const [selectedSlotId, setSelectedSlotId] = useState(null);
@@ -1027,112 +1054,140 @@ export default function App() {
       return;
     }
 
-    // --- SYNC FOLDER (Get or Create Box Folder) ---
-    const oldBoxId = currentSlot.boxData?.id;
-    const boxFolderId = await syncBoxFolder(boxForm.boxId, 'STORED', oldBoxId);
-    // --- END SYNC FOLDER ---
+    // --- BACKGROUND BACKGROUND PROCESS START ---
+    const runBackgroundSave = async (slotId, currentSlot, capturedBoxForm, capturedCurrentUser) => {
+      const boxId = capturedBoxForm.boxId;
+      const mainToastId = toast.loading(`Menyimpan Kardus ${boxId}...`);
 
-    // --- BATCH UPLOAD START ---
-    let updatedOrdners = [...boxForm.ordners];
-    let uploadCount = 0;
+      try {
+        // --- SYNC FOLDER (Get or Create Box Folder) ---
+        const oldBoxId = currentSlot.boxData?.id;
+        const boxFolderId = await syncBoxFolder(boxId, 'STORED', oldBoxId);
+        // --- END SYNC FOLDER ---
 
-    // We need to traverse and upload any invoice that has a rawFile
-    // Use for...of loop for async/await
-    try {
-      for (let oIdx = 0; oIdx < updatedOrdners.length; oIdx++) {
-        let ordner = updatedOrdners[oIdx];
-        if (ordner.invoices && ordner.invoices.length > 0) {
-          let updatedInvoices = [...ordner.invoices];
+        // --- BATCH UPLOAD START ---
+        let updatedOrdners = [...capturedBoxForm.ordners];
+        let uploadCount = 0;
 
-          for (let iIdx = 0; iIdx < updatedInvoices.length; iIdx++) {
-            let inv = updatedInvoices[iIdx];
+        for (let oIdx = 0; oIdx < updatedOrdners.length; oIdx++) {
+          let ordner = updatedOrdners[oIdx];
+          if (ordner.invoices && ordner.invoices.length > 0) {
+            let updatedInvoices = [...ordner.invoices];
 
-            // FIX: Better file type detection using fileName as fallback
-            let fileType = 'image/jpeg';
-            const nameCheck = (inv.fileName || inv.file || '').toLowerCase();
-            if (nameCheck.includes('.pdf') || nameCheck.includes('application/pdf')) {
-              fileType = 'application/pdf';
-            }
+            for (let iIdx = 0; iIdx < updatedInvoices.length; iIdx++) {
+              let inv = updatedInvoices[iIdx];
 
-            let fileSize = '0 KB';
+              if (inv.rawFile) {
+                // --- CLIENT-SIDE OCR FOR INVOICE ---
+                const invToastId = toast.loading(`Memproses OCR: ${inv.invoiceNo || inv.fileName || 'Invoice'}...`);
+                let invOcr = '';
+                try {
+                  invOcr = await performAdvancedOCR(inv.rawFile, (msg) => {
+                    updateToast(invToastId, { message: msg, type: 'loading' });
+                  });
+                  updateToast(invToastId, { message: `OCR Berhasil: ${inv.invoiceNo || inv.fileName}`, type: 'success' });
+                } catch (oErr) {
+                  console.warn("Invoice OCR failed:", oErr);
+                  updateToast(invToastId, { message: `OCR Terlewati: ${oErr.message}`, type: 'info' });
+                }
 
-            if (inv.rawFile) {
-              // Show loading state manually if needed, or use a toast
-              console.log(`Uploading invoice ${inv.invoiceNo}...`);
-              fileType = inv.rawFile.type;
-              fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
-              const uploadRes = await api.uploadFile(inv.rawFile);
+                const fileType = inv.rawFile.type;
+                const fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
+                const uploadRes = await api.uploadFile(inv.rawFile);
 
-              if (uploadRes && uploadRes.success) {
-                // Update invoice with real URL
-                updatedInvoices[iIdx] = {
-                  ...inv,
-                  file: uploadRes.url,
-                  rawFile: undefined // Clear raw file
-                };
-                inv = updatedInvoices[iIdx]; // Update local reference for next step
-                uploadCount++;
-              } else {
-                throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
+                if (uploadRes && uploadRes.success) {
+                  // Update invoice with real URL and OCR content
+                  updatedInvoices[iIdx] = {
+                    ...inv,
+                    file: uploadRes.url,
+                    ocrContent: invOcr,
+                    rawFile: undefined // Clear raw file
+                  };
+                  inv = updatedInvoices[iIdx]; // Update local reference for next step
+                  uploadCount++;
+
+                  // Sinkronisasi lampiran invoice ke tabel documents
+                  if (boxFolderId) {
+                    const docPayload = {
+                      id: `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+                      title: inv.fileName || `Invoice ${inv.invoiceNo}`,
+                      type: fileType,
+                      size: fileSize,
+                      uploadDate: new Date().toISOString(),
+                      folderId: String(boxFolderId),
+                      uploader: capturedCurrentUser?.name || 'Admin',
+                      ocrContent: inv.ocrContent || '',
+                      url: uploadRes.url,
+                      fileData: null
+                    };
+                    await api.createDocument(docPayload);
+                  }
+                } else {
+                  throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
+                }
               }
             }
-
-            // Sinkronisasi lampiran invoice ke tabel documents agar muncul di Documents.jsx
-            if (inv.file && boxFolderId) {
-              const isUrl = typeof inv.file === 'string' && (inv.file.startsWith('http') || inv.file.startsWith('/uploads/'));
-              const docPayload = {
-                id: `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                title: inv.fileName || `Invoice ${inv.invoiceNo}`,
-                type: fileType,
-                size: fileSize,
-                uploadDate: new Date().toISOString(),
-                folderId: String(boxFolderId),
-                uploader: currentUser?.name || 'Admin',
-                ocrContent: inv.ocrContent || '',
-                url: isUrl ? inv.file : null,
-                fileData: isUrl ? null : inv.file
-              };
-              // Server handles duplicate check by title + folderId
-              await api.createDocument(docPayload);
-            }
+            updatedOrdners[oIdx] = { ...ordner, invoices: updatedInvoices };
           }
-          updatedOrdners[oIdx] = { ...ordner, invoices: updatedInvoices };
         }
+
+        if (uploadCount > 0) {
+          console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
+          await fetchDocs();
+        }
+        // --- BATCH UPLOAD END ---
+
+        const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
+        let newHistory = isNew
+          ? [createHistoryItem('CREATED', `Kardus baru: ${boxId}`), createHistoryItem('STORED', `Masuk Slot #${slotId}`)]
+          : [createHistoryItem('UPDATED', oldBoxId !== boxId ? `Rename: ${oldBoxId} -> ${boxId}` : `Update data ${boxId}`)];
+
+        const finalSlot = {
+          ...currentSlot,
+          status: (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY' ? 'STORED' : currentSlot.status.toUpperCase(),
+          lastUpdated: new Date().toISOString(),
+          history: [...(currentSlot.history || []), ...newHistory],
+          boxData: { id: boxId, ordners: updatedOrdners }
+        };
+
+        await api.updateInventory(slotId, finalSlot);
+        await fetchInventory();
+        addLog(capturedCurrentUser?.name || 'Admin', isNew ? 'Masuk Barang' : 'Update Barang', `Kardus ${boxId} di Slot #${slotId}`);
+        updateToast(mainToastId, { message: isNew ? `Box ${boxId} berhasil disimpan!` : `Box ${boxId} berhasil diperbarui!`, type: 'success' });
+
+      } catch (perr) {
+        console.error("Background Save Error:", perr);
+        updateToast(mainToastId, { message: `Gagal menyimpan box ${boxId}: ${perr.message}`, type: 'error' });
       }
-    } catch (err) {
-      console.error("Batch Upload Failed:", err);
-      alert("Gagal menyimpan: Error saat upload foto/dokumen. " + err.message);
-      return;
-    }
+    };
 
-    if (uploadCount > 0) {
-      console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
-      await fetchDocs();
-    }
-    // --- BATCH UPLOAD END ---
-
-    const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
-
-    let newHistory = isNew
-      ? [createHistoryItem('CREATED', `Kardus baru: ${boxForm.boxId}`), createHistoryItem('STORED', `Masuk Slot #${selectedSlotId}`)]
-      : [createHistoryItem('UPDATED', oldBoxId !== boxForm.boxId ? `Rename: ${oldBoxId} -> ${boxForm.boxId}` : `Update data ${boxForm.boxId}`)];
-
-    const updatedSlot = {
+    // 1. Jalankan Simpan Metadata Awal (Skeleton) & Tutup Modal
+    const isNewInitial = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
+    const skeletonSlot = {
       ...currentSlot,
-      status: (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY' ? 'STORED' : currentSlot.status.toUpperCase(),
-      lastUpdated: new Date().toISOString(),
-      history: [...(currentSlot.history || []), ...newHistory],
-      boxData: { id: boxForm.boxId, ordners: updatedOrdners }
+      status: isNewInitial ? 'STORED' : currentSlot.status.toUpperCase(),
+      boxData: {
+        id: boxForm.boxId,
+        ordners: boxForm.ordners.map(o => ({
+          ...o,
+          invoices: o.invoices.map(i => ({ ...i, rawFile: undefined })) // Don't store Blobs
+        }))
+      }
     };
 
     try {
-      await api.updateInventory(selectedSlotId, updatedSlot);
+      // Reserved the slot immediately so UI reflects the new Box ID
+      await api.updateInventory(selectedSlotId, skeletonSlot);
       await fetchInventory();
-      addLog(currentUser?.name || 'Admin', isNew ? 'Masuk Barang' : 'Update Barang', `Kardus ${boxForm.boxId} di Slot #${selectedSlotId}`);
-      toast.success(isNew ? "Berhasil menyimpan box baru." : "Data box berhasil diperbarui.");
+
+      // Tutup modal agar user bisa lanjut kerja
       setIsModalOpen(false);
-    } catch (error) {
-      toast.error("Gagal menyimpan: " + error.message);
+
+      // Jalankan proses berat di latar belakang
+      runBackgroundSave(selectedSlotId, currentSlot, { ...boxForm }, { ...currentUser });
+
+    } catch (err) {
+      toast.error("Gagal inisialisasi penyimpanan: " + err.message);
     }
   };
 
@@ -1525,12 +1580,20 @@ export default function App() {
     const name = String(inv.fileName || '').toLowerCase();
     const isPdf = type.includes('pdf') || name.endsWith('.pdf') || (typeof content === 'string' && (content.match(/\.pdf$/i) || content.startsWith('data:application/pdf')));
 
+    console.log('[Preview] handleViewInvoice:', { type, name, isPdf, hasContent: !!content });
+
     if (content && typeof content === 'string') {
       try {
         let buffer;
-        if (content.startsWith('http') || content.startsWith('/uploads/') || content.startsWith('blob:')) {
-          const response = await fetch(getFullUrl(content));
+        const normalizedUrl = getFullUrl(content);
+        console.log('[Preview] Normalized URL:', normalizedUrl);
+
+        if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
+          console.log('[Preview] Fetching buffer from URL...');
+          const response = await fetch(normalizedUrl);
+          if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
           buffer = await response.arrayBuffer();
+          console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
         } else if (content.includes('base64,') || content.length > 200) {
           let base64 = content;
           if (base64.includes('base64,')) base64 = base64.split('base64,')[1];
@@ -1883,12 +1946,25 @@ export default function App() {
     // Show loading toast
     const toastId = toast.loading(capturedForm.editMode ? `Memperbarui "${capturedForm.title}"...` : `Mengupload "${capturedForm.title}"...`);
 
+    // --- CLIENT-SIDE OCR INTEGRATION ---
+    let ocrResult = capturedForm.ocrContent || '';
+    if (capturedForm.fileData instanceof File) {
+      try {
+        updateToast(toastId, { message: `Menjalankan OCR: ${capturedForm.title}...`, type: 'loading' });
+        ocrResult = await performAdvancedOCR(capturedForm.fileData, (msg, progress) => {
+          updateToast(toastId, { message: msg, type: 'loading' });
+        });
+      } catch (ocrErr) {
+        console.warn("Client-side OCR failed, will fallback to server:", ocrErr);
+      }
+    }
+
     const newDoc = {
       // Gunakan ID lama jika edit, atau buat ID baru jika upload baru
       id: capturedForm.editMode ? capturedForm.id : String(Date.now()),
       title: capturedForm.title,
       uploadDate: new Date().toISOString(),
-      ocrContent: capturedForm.ocrContent,
+      ocrContent: ocrResult,
       size: capturedForm.fileSize,
       type: capturedForm.fileType,
       previewUrl: capturedForm.previewUrl,
@@ -2036,12 +2112,24 @@ export default function App() {
 
     // 3. Generate Preview for Office Files (Support URL fallback for disk storage)
     const content = fullDoc?.fileData || fullDoc?.file_data || fullDoc?.filedata || fullDoc?.url;
+    const type = String(fullDoc?.type || '').toLowerCase();
+    const name = String(fullDoc?.title || '').toLowerCase();
+    const isPdf = type.includes('pdf') || name.endsWith('.pdf') || (typeof content === 'string' && (content.match(/\.pdf$/i) || content.startsWith('data:application/pdf')));
+
+    console.log('[Preview] handleViewDoc:', { type, name, isPdf, hasContent: !!content });
+
     if (content && typeof content === 'string') {
       try {
         let buffer;
-        if (content.startsWith('http') || content.startsWith('/uploads/') || content.startsWith('blob:')) {
-          const response = await fetch(getFullUrl(content));
+        const normalizedUrl = getFullUrl(content);
+        console.log('[Preview] Normalized URL:', normalizedUrl);
+
+        if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
+          console.log('[Preview] Fetching buffer from URL...');
+          const response = await fetch(normalizedUrl);
+          if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
           buffer = await response.arrayBuffer();
+          console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
         } else if (content.includes('base64,') || content.length > 1000) {
           let base64 = content;
           if (base64.includes('base64,')) base64 = base64.split('base64,')[1];
@@ -2056,10 +2144,7 @@ export default function App() {
           }
         }
 
-        const type = String(fullDoc?.type || '').toLowerCase();
-        const name = String(fullDoc?.title || '').toLowerCase();
-
-        if (buffer && (type.includes('pdf') || name.endsWith('.pdf'))) {
+        if (buffer && isPdf) {
           setPdfBlobUrl(buffer);
         } else if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
           const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
@@ -3583,7 +3668,7 @@ export default function App() {
                             <p className="text-[10px] font-bold text-slate-500 animate-pulse uppercase tracking-widest text-center">Menyiapkan Preview...</p>
                           </div>
                         ) : (typeof selectedInvoice.file === 'string' && (selectedInvoice.file.match(/\.(jpg|jpeg|png|webp)$/i) || selectedInvoice.file.startsWith('data:image'))) ? (
-                          <img src={selectedInvoice.file} alt="Invoice Preview" className="max-w-full mx-auto" />
+                          <img src={getFullUrl(selectedInvoice.file)} alt="Invoice Preview" className="max-w-full mx-auto" />
                         ) : (pdfBlobUrl) ? (
                           <PdfViewer src={pdfBlobUrl} className="w-full h-full" />
                         ) : (previewHtml) ? (

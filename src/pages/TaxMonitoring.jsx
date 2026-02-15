@@ -4,6 +4,7 @@ import { db as api } from '../services/database';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
+import { useToast, ToastContainer } from '../components/ui/Toast';
 
 // ... (code)
 
@@ -19,6 +20,7 @@ const AUDIT_STEPS = [
 ];
 
 export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, onRefresh, syncAuditFolder }) {
+    const { toasts, toast, removeToast, updateToast } = useToast();
     const [selectedAudit, setSelectedAudit] = useState(null);
     const [activeStep, setActiveStep] = useState(1);
     const [auditFiles, setAuditFiles] = useState([]);
@@ -147,7 +149,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const handlePostNote = async () => {
         if (!newNoteText.trim() && !noteAttachment) return;
         setIsPostingNote(true);
-        
+
         const formData = new FormData();
         formData.append('user', currentUser?.name || 'Anonymous');
         formData.append('text', newNoteText);
@@ -210,9 +212,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     };
 
     const getFullUrl = (url) => {
-        if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
-        const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
-        return isDev ? `http://${window.location.hostname}:5000${url}` : url;
+        if (typeof url !== 'string') return url;
+        if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+
+        const { hostname, port, protocol } = window.location;
+        const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+
+        let cleanUrl = url;
+        if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+
+        if (cleanUrl.startsWith('/uploads/')) {
+            return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
+        }
+        if (cleanUrl.includes('localhost:5000')) {
+            return cleanUrl.replace('localhost', hostname);
+        }
+        return cleanUrl;
     };
 
     const handleSecureDownload = async (file) => {
@@ -240,35 +255,35 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             if (typeof base64Content === 'string' && base64Content.length > 50) {
                 if (base64Content.includes('base64,') || !base64Content.startsWith('/')) {
                     try {
-                    let mime = file.type || 'application/pdf';
+                        let mime = file.type || 'application/pdf';
 
-                    // Deteksi dan bersihkan prefix Data URI
-                    if (base64Content.includes('base64,')) {
-                        const parts = base64Content.split('base64,');
-                        if (parts.length > 1) {
-                            const header = parts[0];
-                            const mimeMatch = header.match(/data:(.*);/);
-                            if (mimeMatch) {
-                                mime = mimeMatch[1];
+                        // Deteksi dan bersihkan prefix Data URI
+                        if (base64Content.includes('base64,')) {
+                            const parts = base64Content.split('base64,');
+                            if (parts.length > 1) {
+                                const header = parts[0];
+                                const mimeMatch = header.match(/data:(.*);/);
+                                if (mimeMatch) {
+                                    mime = mimeMatch[1];
+                                }
+                                base64Content = parts[1];
                             }
-                            base64Content = parts[1];
                         }
-                    }
 
-                    // Bersihkan karakter whitespace
-                    const cleanBase64 = base64Content.replace(/[\n\r\s]/g, '');
+                        // Bersihkan karakter whitespace
+                        const cleanBase64 = base64Content.replace(/[\n\r\s]/g, '');
 
-                    const binary = atob(cleanBase64);
-                    const len = binary.length;
-                    const buffer = new Uint8Array(len);
-                    for (let i = 0; i < len; i++) {
-                        buffer[i] = binary.charCodeAt(i);
+                        const binary = atob(cleanBase64);
+                        const len = binary.length;
+                        const buffer = new Uint8Array(len);
+                        for (let i = 0; i < len; i++) {
+                            buffer[i] = binary.charCodeAt(i);
+                        }
+                        const blob = new Blob([buffer], { type: mime });
+                        downloadUrl = URL.createObjectURL(blob);
+                    } catch (err) {
+                        console.error("Gagal decode file tax monitoring", err);
                     }
-                    const blob = new Blob([buffer], { type: mime });
-                    downloadUrl = URL.createObjectURL(blob);
-                } catch (err) {
-                    console.error("Gagal decode file tax monitoring", err);
-                }
                 }
             }
 
@@ -509,10 +524,26 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         // TUTUP MODAL SEGERA: Agar user bisa lanjut memantau audit lainnya
         setUploadModalOpen(false);
 
+        const toastId = toast.loading(`Mengupload "${uploadForm.title || uploadForm.fileName}"...`);
+
         try {
             const folderId = await syncAuditFolder(selectedAudit.title, 'ACTIVE');
 
-            // Backend will handle OCR via Queue
+            // --- CLIENT-SIDE OCR INTEGRATION ---
+            let ocrResult = '';
+            // Try OCR if it's a File object (from handleFileSelect)
+            if (uploadForm.file instanceof File) {
+                try {
+                    updateToast(toastId, { message: `Menjalankan OCR: ${uploadForm.title}...`, type: 'loading' });
+                    ocrResult = await performAdvancedOCR(uploadForm.file, (msg) => {
+                        updateToast(toastId, { message: msg, type: 'loading' });
+                    });
+                } catch (ocrErr) {
+                    console.warn("TaxMonitoring OCR failed:", ocrErr);
+                }
+            }
+
+            // Backend will handle OCR via Queue if client fails
             const newDoc = {
                 id: String(Date.now()),
                 title: uploadForm.title || uploadForm.fileName,
@@ -527,16 +558,17 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 folderId: folderId,
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team',
-                ocrContent: '' // Biarkan server memproses OCR di antrean latar belakang
+                ocrContent: ocrResult // Use client-side OCR result
             };
 
             await api.createDocument(newDoc);
+            updateToast(toastId, { message: `"${newDoc.title}" berhasil diupload`, type: 'success' });
 
-            loadFiles(selectedAudit); // Reload list (will show 'processing')
+            loadFiles(selectedAudit); // Reload list
             if (onRefresh) onRefresh();
         } catch (err) {
             console.error("Background upload failed:", err);
-            alert('Gagal mengunggah dokumen di latar belakang: ' + err.message);
+            updateToast(toastId, { message: `Gagal upload: ${err.message}`, type: 'error' });
         }
     };
 
@@ -731,10 +763,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                             const percent = Math.round((doneSteps / 7) * 100);
                                             const attachment = generalAttachments[audit.id];
                                             return (
-                                            <tr key={audit.id} 
-                                                style={{ animationDelay: `${(taxAudits.indexOf(audit)) * 50}ms` }}
-                                                className="border-b dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 animate-in zoom-in-95 fade-in fill-mode-both duration-500"
-                                            >
+                                                <tr key={audit.id}
+                                                    style={{ animationDelay: `${(taxAudits.indexOf(audit)) * 50}ms` }}
+                                                    className="border-b dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 animate-in zoom-in-95 fade-in fill-mode-both duration-500"
+                                                >
                                                     <td className="px-6 py-4">
                                                         <div className="font-bold text-gray-800 dark:text-gray-200">{audit.letterNumber || '-'}</div>
                                                         <div className="text-xs text-gray-400 mt-1 flex items-center gap-1"><Calendar size={10} /> {audit.startDate ? new Date(audit.startDate).toLocaleDateString() : '-'}</div>
@@ -973,7 +1005,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         )}
                                     </div>
                                 </div>
-                                
+
                                 {/* MODERN CHECKLIST SECTION (REQUEST TRACKER) */}
                                 <div className="mb-10">
                                     <div className="flex justify-between items-center mb-4 px-1">
@@ -982,8 +1014,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         </h4>
                                         <div className="flex items-center gap-3">
                                             <div className="h-1.5 w-24 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden shadow-inner">
-                                                <div 
-                                                    className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ease-out" 
+                                                <div
+                                                    className="h-full bg-gradient-to-r from-emerald-400 to-emerald-500 transition-all duration-700 ease-out"
                                                     style={{ width: `${calculateStepProgress()}%` }}
                                                 />
                                             </div>
@@ -999,13 +1031,13 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                         )}
                                         {(selectedAudit.steps[activeStep - 1]?.notes || []).map((note) => (
                                             <div key={note.id} className={`group flex items-center gap-4 p-4 rounded-3xl border transition-all duration-300 ${note.isChecked ? 'bg-emerald-50/30 border-emerald-100 dark:bg-emerald-900/10 dark:border-emerald-800/50' : 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-800 shadow-sm hover:shadow-md'}`}>
-                                                <button 
+                                                <button
                                                     onClick={() => handleToggleCheck(note.id)}
                                                     className={`shrink-0 w-7 h-7 rounded-xl border-2 flex items-center justify-center transition-all ${note.isChecked ? 'bg-emerald-500 border-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'border-slate-200 dark:border-slate-700 hover:border-indigo-500 bg-white dark:bg-slate-800'}`}
                                                 >
                                                     {note.isChecked && <CheckSquare size={16} />}
                                                 </button>
-                                                
+
                                                 <div className="flex-1 min-w-0">
                                                     <p className={`text-sm font-bold transition-all ${note.isChecked ? 'text-slate-400 line-through opacity-60' : 'text-slate-700 dark:text-slate-200'}`}>
                                                         {note.text}
@@ -1019,7 +1051,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                         </div>
                                                         <span className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-tight">{note.pic || 'N/A'}</span>
                                                     </div>
-                                                    
+
                                                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
                                                         <button onClick={() => { setEditingNoteId(note.id); setEditingNoteText(note.text); setEditingNotePic(note.pic); }} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl transition-all"><Edit3 size={14} /></button>
                                                         <button onClick={() => handleDeleteNote(note.id)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-all"><Trash2 size={14} /></button>
@@ -1028,23 +1060,23 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                             </div>
                                         ))}
                                     </div>
-                                    
+
                                     {/* Add Item Input - Startup Style */}
                                     {hasPermission('tax-monitoring', 'edit') && (
                                         <div className="mt-4 flex gap-3 p-2 bg-slate-50 dark:bg-slate-950 rounded-[2rem] border border-slate-100 dark:border-slate-800 shadow-inner group/input focus-within:border-indigo-300 transition-all">
-                                            <input 
+                                            <input
                                                 id={`note-input-${activeStep}`}
                                                 className="flex-1 bg-transparent border-0 focus:ring-0 text-sm font-bold px-4 dark:text-white placeholder:text-slate-300"
                                                 placeholder="Tambah permintaan data baru..."
                                                 onKeyDown={(e) => { if (e.key === 'Enter') { const pic = document.getElementById(`pic-input-${activeStep}`); handleAddNote(e.target.value, pic.value); e.target.value = ''; pic.value = ''; } }}
                                             />
                                             <div className="h-8 w-px bg-slate-200 dark:bg-slate-800 my-auto"></div>
-                                            <input 
+                                            <input
                                                 id={`pic-input-${activeStep}`}
                                                 className="w-24 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl px-4 text-[10px] font-black uppercase focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
                                                 placeholder="PIC"
                                             />
-                                            <button 
+                                            <button
                                                 onClick={() => {
                                                     const val = document.getElementById(`note-input-${activeStep}`);
                                                     const pic = document.getElementById(`pic-input-${activeStep}`);
@@ -1065,7 +1097,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                     <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-6 flex items-center gap-2 px-1">
                                         <MoreVertical size={12} className="text-indigo-500" /> Koordinasi & Catatan Pending
                                     </h4>
-                                    
+
                                     <div className="flex-1 min-h-0 max-h-[400px] overflow-y-auto custom-scrollbar mb-8 px-1">
                                         <div className="space-y-4 flex flex-col">
                                             {stepNotes.length === 0 && (
@@ -1094,7 +1126,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                                         <Paperclip size={12} className={isMe ? 'text-indigo-200' : 'text-indigo-500'} />
                                                                         <span className="text-[9px] font-bold truncate max-w-[120px]">{note.attachmentName}</span>
                                                                     </div>
-                                                                    <button 
+                                                                    <button
                                                                         onClick={() => handleViewFileDetail({ id: `note-${note.id}`, title: note.attachmentName, type: note.attachmentType, url: note.attachmentUrl, fileData: null })}
                                                                         className={`text-[9px] font-black uppercase hover:underline ml-3 ${isMe ? 'text-white' : 'text-indigo-600'}`}
                                                                     >
@@ -1112,7 +1144,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
                                     {hasPermission('tax-monitoring', 'edit') && (
                                         <div className="space-y-3 bg-white dark:bg-slate-900 p-4 rounded-[2.5rem] border border-slate-100 dark:border-slate-800 shadow-xl shadow-indigo-500/5">
-                                            <textarea 
+                                            <textarea
                                                 value={newNoteText} onChange={e => setNewNoteText(e.target.value)}
                                                 className="w-full p-4 text-sm bg-slate-50 dark:bg-slate-950 border-0 rounded-3xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white resize-none shadow-inner"
                                                 placeholder="Tulis koordinasi atau alasan pending..."
@@ -1129,8 +1161,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                     </div>
                                                     <input type="file" className="hidden" onChange={e => setNoteAttachment(e.target.files[0])} />
                                                 </label>
-                                                <button 
-                                                    onClick={handlePostNote} 
+                                                <button
+                                                    onClick={handlePostNote}
                                                     disabled={isPostingNote || (!newNoteText.trim() && !noteAttachment)}
                                                     className="px-8 py-3 bg-indigo-600 text-white text-xs font-black uppercase tracking-widest rounded-2xl shadow-lg shadow-indigo-500/30 hover:bg-indigo-500 hover:-translate-y-0.5 active:scale-95 disabled:opacity-50 disabled:translate-y-0 transition-all flex items-center gap-2"
                                                 >
@@ -1298,7 +1330,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     {/* LEFT: PREVIEW */}
                     <div className="flex-1 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 relative">
                         {String(selectedFileDetail?.type || '').toLowerCase().startsWith('image/') ? (
-                            <img src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display='none'; }} />
+                            <img src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
                         ) : String(selectedFileDetail?.type || '').toLowerCase().includes('pdf') ? (
                             <iframe src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} className="w-full h-full" title="PDF Preview"></iframe>
                         ) : (
@@ -1468,6 +1500,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     </div>
                 )
             }
+            {/* TOAST NOTIFICATIONS */}
+            <ToastContainer toasts={toasts} onRemove={removeToast} />
         </>
     );
 }

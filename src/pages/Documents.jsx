@@ -79,9 +79,22 @@ export default function Documents({
     }, [comments, selectedDocPreview]);
 
     const getFullUrl = (url) => {
-        if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
-        const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
-        return isDev ? `http://${window.location.hostname}:5000${url}` : url;
+        if (typeof url !== 'string') return url;
+        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
+
+        const { hostname, port, protocol } = window.location;
+        const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+
+        let cleanUrl = url;
+        if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+
+        if (cleanUrl.startsWith('/uploads/')) {
+            return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
+        }
+        if (cleanUrl.includes('localhost:5000')) {
+            return cleanUrl.replace('localhost', hostname);
+        }
+        return cleanUrl;
     };
 
     const handlePreview = async (doc, isAttachment = false) => {
@@ -112,12 +125,20 @@ export default function Documents({
         const name = String(fullDoc?.title || '').toLowerCase();
         const isPdf = type.includes('pdf') || name.endsWith('.pdf') || (typeof content === 'string' && (content.match(/\.pdf$/i) || content.startsWith('data:application/pdf')));
 
+        console.log('[Preview] Documents.handlePreview:', { type, name, isPdf, hasContent: !!content });
+
         if (content && typeof content === 'string') {
             try {
                 let buffer;
-                if (content.startsWith('http') || content.startsWith('/uploads/') || content.startsWith('blob:')) {
-                    const response = await fetch(getFullUrl(content));
+                const normalizedUrl = getFullUrl(content);
+                console.log('[Preview] Normalized URL:', normalizedUrl);
+
+                if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
+                    console.log('[Preview] Fetching buffer from URL...');
+                    const response = await fetch(normalizedUrl);
+                    if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
                     buffer = await response.arrayBuffer();
+                    console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
                 } else if (content.includes('base64,') || content.length > 1000) {
                     let base64 = content;
                     if (base64.includes('base64,')) base64 = base64.split('base64,')[1];

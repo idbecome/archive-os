@@ -292,8 +292,19 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
 
 export default function Pustaka({ currentUser, hasPermission, users = [], departments = [] }) {
     const getFullUrl = (url) => {
-        if (!url || url.startsWith('http') || url.startsWith('data:')) return url;
-        return `http://${window.location.hostname}:5000${url}`;
+        if (typeof url !== 'string') return url;
+        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
+
+        const { hostname, port, protocol } = window.location;
+        const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+
+        let cleanUrl = url;
+        if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+
+        if (cleanUrl.startsWith('/uploads/')) {
+            return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
+        }
+        return cleanUrl;
     };
 
     const [guides, setGuides] = useState([]);

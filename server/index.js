@@ -47,6 +47,21 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
     });
 });
 
+// --- OCR QUEUE API ---
+app.get('/api/ocr/queue', async (req, res) => {
+    try {
+        const waiting = await ocrQueue.getJobs(['waiting'], 0, 50, true);
+        const active = await ocrQueue.getJobs(['active'], 0, 10, true);
+        res.json({
+            waiting,
+            active,
+            total: waiting.length + active.length
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // --- PUSTAKA (KNOWLEDGE BASE) API ---
 app.get('/api/pustaka/guides', (req, res) => {
     db.all("SELECT * FROM pustaka_guides ORDER BY category, title ASC", [], (err, rows) => {
@@ -1835,10 +1850,10 @@ app.put('/api/documents/:id', (req, res) => {
             let newStatus = oldDoc.status;
             let newOcrContent = ocrContent; // Default keep existing if only meta update
 
-            // Jika ada file baru yang diupload, reset status dan kosongkan OCR lama
+            // Jika ada file baru yang diupload, gunakan OCR dari client jika ada
             if (newSavedUrl) {
-                newStatus = 'processing';
-                newOcrContent = ''; // Clear old OCR content for new file
+                newOcrContent = ocrContent || '';
+                newStatus = newOcrContent ? 'done' : 'processing';
             }
 
             db.run("UPDATE documents SET title = ?, folderId = ?, department = ?, ocrContent = ?, fileData = NULL, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",

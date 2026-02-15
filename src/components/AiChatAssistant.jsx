@@ -6,7 +6,14 @@ import {
     ChevronDown, Bot, User
 } from 'lucide-react';
 
-const API_URL = 'http://localhost:5000/api';
+const getApiUrl = () => {
+    const { hostname, port, protocol } = window.location;
+    if (port === '5173' || port === '3000' || hostname === 'localhost') {
+        return `${protocol}//${hostname}:5000/api`;
+    }
+    return '/api';
+};
+const API_URL = getApiUrl();
 
 // Format currency for Indonesian Rupiah
 const formatRupiah = (amount) => {

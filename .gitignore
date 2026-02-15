@@ -1,7 +1,5 @@
 # Environment & Credentials
-.env
-.env.local
-.env.production
+
 
 # Debug artifacts
 debug_queue_output.txt

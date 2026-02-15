@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock, Eye, Info, MessageSquare, BookOpen, FileCheck, ClipboardCheck, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
+import QueueStatus from '../components/ui/QueueStatus';
 
 export default function Dashboard({
     stats: propStats,
@@ -44,7 +45,10 @@ export default function Dashboard({
         setCurrentPage(1);
         try {
             // Use the new AI Search Endpoint
-            const API_URL = `http://${window.location.hostname}:5000/api`;
+            const { hostname, port, protocol } = window.location;
+            const API_URL = (port === '5173' || port === '3000' || hostname === 'localhost')
+                ? `${protocol}//${hostname}:5000/api`
+                : '/api';
             const res = await fetch(`${API_URL}/search/ai`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -397,6 +401,11 @@ export default function Dashboard({
                     icon={FileBarChart}
                     colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
                 />
+            </div>
+
+            {/* OCR QUEUE STATUS SECTION */}
+            <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">
+                <QueueStatus />
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

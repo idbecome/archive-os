@@ -168,168 +168,185 @@ async function processOCRJob(job) {
             throw new Error(`File not found: ${filePath}`);
         }
 
-        // FIX: Auto-detect PDF signature to prevent Tesseract crash on PDF-as-Image
-        let effectiveFileType = fileType;
-        if (isPdfFile(filePath)) {
-            console.log(`[Worker] Detected PDF signature for ${filePath}. Forcing type to application/pdf.`);
-            effectiveFileType = 'application/pdf';
-        } else if (effectiveFileType.startsWith('image/') && !isImageFile(filePath)) {
-            console.warn(`[Worker] File ${filePath} has image MIME type but invalid signature. Skipping Tesseract.`);
-            effectiveFileType = 'application/octet-stream';
-        }
-
-        // 2. OCR Hybrid logic (Internal Text extraction + Tesseract fallback)
-        let extractedText = "";
-
-        if (effectiveFileType.startsWith('image/')) {
-            let tess = null;
-            try {
-                tess = await createWorker('eng+ind');
-                const { data: { text } } = await tess.recognize(filePath);
-                extractedText = `[OCR IMAGE]\n${text}`;
-            } catch (ocrErr) {
-                console.error("[Worker] Tesseract Image OCR Failed:", ocrErr);
-                extractedText = `[OCR FAILED] ${ocrErr.message}`;
-            } finally {
-                if (tess) await tess.terminate();
-            }
-        }
-        else if (effectiveFileType === 'application/pdf') {
-            const dataBuffer = fs.readFileSync(filePath);
-
-            let pdfText = "";
-            let isScanned = false;
-
-            // 1. Try PDF.js Text Extraction (Better layout & reliability)
-            try {
-                const uint8Array = new Uint8Array(dataBuffer);
-                const loadingTask = pdfjsLib.getDocument({
-                    data: uint8Array,
-                    standardFontDataUrl: pathToFileURL(standardFontDataUrl).href
-                });
-                const pdfDocument = await loadingTask.promise;
-
-                const numPages = pdfDocument.numPages;
-                let totalTextLength = 0;
-
-                // Extract text from up to 50 pages
-                for (let i = 1; i <= Math.min(numPages, 50); i++) {
-                    const page = await pdfDocument.getPage(i);
-                    const tokenizedText = await page.getTextContent();
-                    const pageText = tokenizedText.items.map(token => token.str).join(' ');
-                    pdfText += pageText + "\n";
-                    totalTextLength += pageText.length;
-                }
-
-                // Heuristic: If average text per page < 50 chars, assume scanned
-                if (totalTextLength / Math.min(numPages, 50) < 50) {
-                    isScanned = true;
-                }
-            } catch (e) {
-                console.error("[Worker] PDF.js Text Extraction Error:", e);
-            }
-
-            extractedText = pdfText.trim();
-
-            // 2. If Scanned or Low Text, Try OCR on Images
-            if (isScanned || extractedText.length < 50) {
-                console.log('[Worker] PDF appears to be scanned or low text. Attempting OCR...');
-                try {
-                    const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
-                    if (images.length > 0) {
-                        const tess = await createWorker('eng+ind');
-                        let ocrText = "";
-                        for (const imgBuffer of images) {
-                            const { data: { text } } = await tess.recognize(imgBuffer);
-                            ocrText += text + "\n";
-                        }
-                        await tess.terminate();
-
-                        if (ocrText.trim().length > 20) {
-                            extractedText = `[OCR-SCAN]\n${ocrText}\n\n[METADATA]\n${extractedText}`;
-                        } else {
-                            extractedText = `[PDF-LOW-TEXT]\n${extractedText}\n(OCR yielded no text)`;
-                        }
-                    } else {
-                        extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
-                    }
-                } catch (ocrErr) {
-                    console.error("[Worker] OCR Failed:", ocrErr);
-                    extractedText += `\n[OCR-ERROR] ${ocrErr.message}`;
-                }
-            } else {
-                extractedText = `[PDF-NATIVE]\n${extractedText}`;
-            }
-        }
-        else if (
-            fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
-            (originalName && (originalName.endsWith('.docx') || originalName.endsWith('.doc'))) ||
-            fileType.includes('msword')
-        ) {
-            const result = await mammoth.extractRawText({ path: filePath });
-            extractedText = `[WORD]\n${result.value}`;
-        }
-        else if (
-            fileType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
-            (originalName && (originalName.endsWith('.pptx')))
-        ) {
-            console.log(`[Worker] Starting PPTX extraction for: ${filePath}`);
-            try {
-                const data = fs.readFileSync(filePath);
-                const zip = await JSZip.loadAsync(data);
-                let slideText = "";
-
-                // Find all slide files
-                const slideFiles = Object.keys(zip.files).filter(name => name.startsWith('ppt/slides/slide') && name.endsWith('.xml'));
-
-                // Sort by slide number (slide1, slide2, etc.)
-                slideFiles.sort((a, b) => {
-                    const numA = parseInt(a.match(/slide(\d+)\.xml/)[1]);
-                    const numB = parseInt(b.match(/slide(\d+)\.xml/)[1]);
-                    return numA - numB;
-                });
-
-                for (const fileName of slideFiles) {
-                    const slideXml = await zip.file(fileName).async('string');
-                    // Simple regex to strip XML tags and find text content
-                    // PPTX text is usually in <a:t>...</a:t>
-                    const matches = slideXml.match(/<a:t>([^<]*)<\/a:t>/g);
-                    if (matches) {
-                        const text = matches.map(tag => tag.replace(/<\/?a:t>/g, '')).join(' ');
-                        slideText += `--- Slide ${fileName.match(/slide(\d+)\.xml/)[1]} ---\n${text}\n\n`;
-                    }
-                }
-                extractedText = `[POWERPOINT]\n${slideText}`;
-            } catch (pptxErr) {
-                console.error("[Worker] PPTX Extraction Failed:", pptxErr);
-                extractedText = `[PPTX-ERROR] ${pptxErr.message}`;
-            }
-        }
-        else if (
-            fileType === 'text/plain' ||
-            (originalName && originalName.endsWith('.txt'))
-        ) {
-            const text = fs.readFileSync(filePath, 'utf-8');
-            extractedText = `[TEXT-FILE]\n${text}`;
-        }
-        else if (
-            fileType.includes('spreadsheet') ||
-            fileType.includes('excel') ||
-            (originalName && (originalName.endsWith('.xlsx') || originalName.endsWith('.xls')))
-        ) {
-            console.log(`[Worker] Starting Excel extraction for: ${filePath}`);
-            const data = fs.readFileSync(filePath);
-            const workbook = XLSX.read(data, { type: 'buffer' });
-            let result = "";
-            workbook.SheetNames.forEach(sheetName => {
-                const sheet = workbook.Sheets[sheetName];
-                const text = XLSX.utils.sheet_to_txt(sheet);
-                result += `--- Sheet: ${sheetName} ---\n${text}\n\n`;
+        // --- CHECK FOR EXISTING CLIENT-SIDE OCR ---
+        const existingData = await new Promise((resolve) => {
+            db.get("SELECT ocrContent FROM documents WHERE id = ?", [docId], (err, row) => {
+                if (err) return resolve(null);
+                resolve(row);
             });
-            extractedText = `[EXCEL]\n${result}`;
+        });
+
+        let extractedText = "";
+        let shouldProcess = true;
+
+        if (existingData && existingData.ocrContent && existingData.ocrContent.trim().length > 50) {
+            console.log(`[Worker] Client-side OCR found for DocID ${docId} (${existingData.ocrContent.length} chars). Skipping extraction.`);
+            extractedText = existingData.ocrContent;
+            shouldProcess = false;
         }
-        else {
-            extractedText = "Format not supported for server-side extraction.";
+
+        if (shouldProcess) {
+            // FIX: Auto-detect PDF signature to prevent Tesseract crash on PDF-as-Image
+            let effectiveFileType = fileType;
+            if (isPdfFile(filePath)) {
+                console.log(`[Worker] Detected PDF signature for ${filePath}. Forcing type to application/pdf.`);
+                effectiveFileType = 'application/pdf';
+            } else if (effectiveFileType.startsWith('image/') && !isImageFile(filePath)) {
+                console.warn(`[Worker] File ${filePath} has image MIME type but invalid signature. Skipping Tesseract.`);
+                effectiveFileType = 'application/octet-stream';
+            }
+
+            // 2. OCR Hybrid logic (Internal Text extraction + Tesseract fallback)
+            // ... (rest of the logic)
+
+
+            if (effectiveFileType.startsWith('image/')) {
+                let tess = null;
+                try {
+                    tess = await createWorker('eng+ind');
+                    const { data: { text } } = await tess.recognize(filePath);
+                    extractedText = `[OCR IMAGE]\n${text}`;
+                } catch (ocrErr) {
+                    console.error("[Worker] Tesseract Image OCR Failed:", ocrErr);
+                    extractedText = `[OCR FAILED] ${ocrErr.message}`;
+                } finally {
+                    if (tess) await tess.terminate();
+                }
+            }
+            else if (effectiveFileType === 'application/pdf') {
+                const dataBuffer = fs.readFileSync(filePath);
+
+                let pdfText = "";
+                let isScanned = false;
+
+                // 1. Try PDF.js Text Extraction (Better layout & reliability)
+                try {
+                    const uint8Array = new Uint8Array(dataBuffer);
+                    const loadingTask = pdfjsLib.getDocument({
+                        data: uint8Array,
+                        standardFontDataUrl: pathToFileURL(standardFontDataUrl).href
+                    });
+                    const pdfDocument = await loadingTask.promise;
+
+                    const numPages = pdfDocument.numPages;
+                    let totalTextLength = 0;
+
+                    // Extract text from up to 50 pages
+                    for (let i = 1; i <= Math.min(numPages, 50); i++) {
+                        const page = await pdfDocument.getPage(i);
+                        const tokenizedText = await page.getTextContent();
+                        const pageText = tokenizedText.items.map(token => token.str).join(' ');
+                        pdfText += pageText + "\n";
+                        totalTextLength += pageText.length;
+                    }
+
+                    // Heuristic: If average text per page < 50 chars, assume scanned
+                    if (totalTextLength / Math.min(numPages, 50) < 50) {
+                        isScanned = true;
+                    }
+                } catch (e) {
+                    console.error("[Worker] PDF.js Text Extraction Error:", e);
+                }
+
+                extractedText = pdfText.trim();
+
+                // 2. If Scanned or Low Text, Try OCR on Images
+                if (isScanned || extractedText.length < 50) {
+                    console.log('[Worker] PDF appears to be scanned or low text. Attempting OCR...');
+                    try {
+                        const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
+                        if (images.length > 0) {
+                            const tess = await createWorker('eng+ind');
+                            let ocrText = "";
+                            for (const imgBuffer of images) {
+                                const { data: { text } } = await tess.recognize(imgBuffer);
+                                ocrText += text + "\n";
+                            }
+                            await tess.terminate();
+
+                            if (ocrText.trim().length > 20) {
+                                extractedText = `[OCR-SCAN]\n${ocrText}\n\n[METADATA]\n${extractedText}`;
+                            } else {
+                                extractedText = `[PDF-LOW-TEXT]\n${extractedText}\n(OCR yielded no text)`;
+                            }
+                        } else {
+                            extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
+                        }
+                    } catch (ocrErr) {
+                        console.error("[Worker] OCR Failed:", ocrErr);
+                        extractedText += `\n[OCR-ERROR] ${ocrErr.message}`;
+                    }
+                } else {
+                    extractedText = `[PDF-NATIVE]\n${extractedText}`;
+                }
+            }
+            else if (
+                fileType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+                (originalName && (originalName.endsWith('.docx') || originalName.endsWith('.doc'))) ||
+                fileType.includes('msword')
+            ) {
+                const result = await mammoth.extractRawText({ path: filePath });
+                extractedText = `[WORD]\n${result.value}`;
+            }
+            else if (
+                fileType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation' ||
+                (originalName && (originalName.endsWith('.pptx')))
+            ) {
+                console.log(`[Worker] Starting PPTX extraction for: ${filePath}`);
+                try {
+                    const data = fs.readFileSync(filePath);
+                    const zip = await JSZip.loadAsync(data);
+                    let slideText = "";
+
+                    // Find all slide files
+                    const slideFiles = Object.keys(zip.files).filter(name => name.startsWith('ppt/slides/slide') && name.endsWith('.xml'));
+
+                    // Sort by slide number (slide1, slide2, etc.)
+                    slideFiles.sort((a, b) => {
+                        const numA = parseInt(a.match(/slide(\d+)\.xml/)[1]);
+                        const numB = parseInt(b.match(/slide(\d+)\.xml/)[1]);
+                        return numA - numB;
+                    });
+
+                    for (const fileName of slideFiles) {
+                        const slideXml = await zip.file(fileName).async('string');
+                        // Simple regex to strip XML tags and find text content
+                        // PPTX text is usually in <a:t>...</a:t>
+                        const matches = slideXml.match(/<a:t>([^<]*)<\/a:t>/g);
+                        if (matches) {
+                            const text = matches.map(tag => tag.replace(/<\/?a:t>/g, '')).join(' ');
+                            slideText += `--- Slide ${fileName.match(/slide(\d+)\.xml/)[1]} ---\n${text}\n\n`;
+                        }
+                    }
+                    extractedText = `[POWERPOINT]\n${slideText}`;
+                } catch (pptxErr) {
+                    console.error("[Worker] PPTX Extraction Failed:", pptxErr);
+                    extractedText = `[PPTX-ERROR] ${pptxErr.message}`;
+                }
+            }
+            else if (
+                fileType === 'text/plain' ||
+                (originalName && originalName.endsWith('.txt'))
+            ) {
+                const text = fs.readFileSync(filePath, 'utf-8');
+                extractedText = `[TEXT-FILE]\n${text}`;
+            }
+            else if (
+                fileType.includes('spreadsheet') ||
+                fileType.includes('excel') ||
+                (originalName && (originalName.endsWith('.xlsx') || originalName.endsWith('.xls')))
+            ) {
+                console.log(`[Worker] Starting Excel extraction for: ${filePath}`);
+                const data = fs.readFileSync(filePath);
+                const workbook = XLSX.read(data, { type: 'buffer' });
+                let result = "";
+                workbook.SheetNames.forEach(sheetName => {
+                    const sheet = workbook.Sheets[sheetName];
+                    const text = XLSX.utils.sheet_to_txt(sheet);
+                    result += `--- Sheet: ${sheetName} ---\n${text}\n\n`;
+                });
+                extractedText = `[EXCEL]\n${result}`;
+            }
         }
 
         // 3. Update Database
