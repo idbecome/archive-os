@@ -218,3 +218,43 @@ export async function parseIntent(query, queryVector = null) {
 
     return intent;
 }
+
+
+let generator = null;
+
+async function initGenerator() {
+    if (!generator) {
+        console.log('[AI Search] Initializing text-generation model (flan-t5-small)...');
+        generator = await pipeline('text2text-generation', 'Xenova/flan-t5-small');
+    }
+    return generator;
+}
+
+/**
+ * Generate a natural language answer based on context.
+ * @param {string} query 
+ * @param {string[]} contexts 
+ * @returns {Promise<string>}
+ */
+export async function generateAnswer(query, contexts) {
+    try {
+        const gen = await initGenerator();
+
+        // Prepare context (limit to ~1000 chars to avoid token limits of small model)
+        const contextText = contexts.slice(0, 3).join("\n").substring(0, 1000);
+
+        // Construct Prompt suitable for Flan-T5
+        const prompt = `question: ${query} context: ${contextText}`;
+
+        const output = await gen(prompt, {
+            max_new_tokens: 128,
+            temperature: 0.5,
+            repetition_penalty: 1.2
+        });
+
+        return output[0].generated_text;
+    } catch (e) {
+        console.error("Content Generation Error:", e);
+        return "Maaf, saya tidak dapat membuat ringkasan saat ini.";
+    }
+}

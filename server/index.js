@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import multer from 'multer';
 import bcrypt from 'bcrypt';
 import { addOCRJob, ocrQueue } from './queue.js'; // NEW
-import { generateEmbedding, parseIntent, cosineSimilarity } from './ai_search.js';
+import { generateEmbedding, parseIntent, cosineSimilarity, generateAnswer } from './ai_search.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -2700,7 +2700,23 @@ app.post('/api/search/ai', async (req, res) => {
 
         // 4. Sort and return
         ranked.sort((a, b) => b.score - a.score);
-        res.json({ results: ranked.slice(0, 20), intent });
+
+        // 5. Generate Answer (RAG)
+        const topResults = ranked.slice(0, 3);
+        const contexts = topResults.map(r => {
+            if (r.type === 'document') return `Dokumen "${r.title}": ${r.snippet}`;
+            if (r.type === 'invoice') return `Invoice ${r.title} dari ${r.vendor} senilai ${r.amount}`;
+            return '';
+        });
+
+        let aiReply = 'Berikut hasil pencarian yang relevan:';
+        if (contexts.length > 0) {
+            aiReply = await generateAnswer(message, contexts);
+        } else {
+            aiReply = "Maaf, saya tidak menemukan dokumen yang relevan.";
+        }
+
+        res.json({ reply: aiReply, results: ranked.slice(0, 20), intent });
 
     } catch (error) {
         console.error("[AI Search Error]", error);
@@ -3143,24 +3159,18 @@ app.post('/api/chat', async (req, res) => {
         } else if (total === 0) {
             reply = `Maaf, saya tidak menemukan hasil untuk "${message}". Coba kata kunci lain atau pertanyaan yang lebih spesifik.`;
         } else {
-            // Build natural language response
-            const parts = [];
-            if (docCount > 0) parts.push(`${docCount} dokumen`);
-            if (invCount > 0) parts.push(`${invCount} invoice`);
-            if (extCount > 0) parts.push(`${extCount} item eksternal`);
+            // RAG: Generate Natural Language Answer
+            const topContexts = allResults.slice(0, 3).map(r => {
+                if (r.type === 'document') return `Dokumen "${r.title}": ${r.snippet}`;
+                if (r.type === 'invoice') return `Invoice ${r.title} dari ${r.vendor} senilai ${r.amount}`;
+                return '';
+            });
 
-            reply = `Saya menemukan ${total} hasil (${parts.join(', ')})`;
-
-            // Add intent context
-            if (intent.vendor) reply += ` dari "${intent.vendor}"`;
-            if (intent.minAmount) reply += ` dengan nilai ≥ Rp ${intent.minAmount.toLocaleString('id-ID')}`;
-            if (intent.maxAmount) reply += ` dengan nilai ≤ Rp ${intent.maxAmount.toLocaleString('id-ID')}`;
-            if (intent.month || intent.year) {
-                const monthNames = ['', 'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-                if (intent.month) reply += ` bulan ${monthNames[intent.month]}`;
-                if (intent.year) reply += ` tahun ${intent.year}`;
+            if (topContexts.length > 0) {
+                reply = await generateAnswer(message, topContexts);
+            } else {
+                reply = `Saya menemukan ${total} hasil yang relevan.`;
             }
-            reply += ':';
         }
 
         res.json({ reply, results: allResults, intent });
