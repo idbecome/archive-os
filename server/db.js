@@ -150,9 +150,18 @@ async function initDb() {
 }
 
 // Initialize
-initDb().then(() => {
-    console.log('Database system ready.');
-});
+// Only run migrations/seeding if this is NOT the worker process
+// We detect worker by checking if the process entry point includes 'worker.js'
+const isWorker = process.argv[1] && process.argv[1].includes('worker.js');
+const isUtilityScript = process.argv[1] && (process.argv[1].includes('update_') || process.argv[1].includes('add_'));
+
+if (!isWorker && !isUtilityScript) {
+    initDb().then(() => {
+        console.log('Database system ready (Main Process).');
+    });
+} else {
+    console.log(`Database connection initialized for ${isWorker ? 'Worker' : 'Script'} (Skipping Migration).`);
+}
 
 export default db;
 export { knex };

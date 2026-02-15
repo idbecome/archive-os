@@ -50,16 +50,63 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 // --- OCR QUEUE API ---
 app.get('/api/ocr/queue', async (req, res) => {
     try {
-        const waiting = await ocrQueue.getJobs(['waiting'], 0, 50, true);
-        const active = await ocrQueue.getJobs(['active'], 0, 10, true);
-        res.json({
-            waiting,
-            active,
-            total: waiting.length + active.length
+        db.all("SELECT * FROM job_queue WHERE status IN ('waiting', 'active') ORDER BY created_at ASC", [], (err, rows) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                const waiting = rows.filter(r => r.status === 'waiting').map(r => ({ ...r, data: JSON.parse(r.data || '{}') }));
+                const active = rows.filter(r => r.status === 'active').map(r => ({ ...r, data: JSON.parse(r.data || '{}') }));
+                res.json({
+                    waiting,
+                    active,
+                    total: waiting.length + active.length
+                });
+            } catch (parseErr) {
+                console.error("Queue JSON Parse Error:", parseErr);
+                res.status(500).json({ error: "Failed to parse queue data" });
+            }
         });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
+});
+
+app.get('/api/ocr/status', (req, res) => {
+    const sql = `SELECT 
+        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
+        SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) as waiting,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
+        FROM job_queue`;
+
+    db.get(sql, [], (err, counts) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Get active jobs detail
+        db.all("SELECT * FROM job_queue WHERE status = 'active' LIMIT 5", [], (err2, rows) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+
+            try {
+                const activeJobs = (rows || []).map(r => ({
+                    id: r.id,
+                    data: JSON.parse(r.data || '{}'),
+                    progress: r.progress
+                }));
+
+                res.json({
+                    counts: {
+                        active: counts?.active || 0,
+                        waiting: counts?.waiting || 0,
+                        completed: counts?.completed || 0,
+                        failed: counts?.failed || 0
+                    },
+                    activeJobs
+                });
+            } catch (e) {
+                console.error("Status JSON Parse Error:", e);
+                res.status(500).json({ error: "Data corruption in job queue" });
+            }
+        });
+    });
 });
 
 // --- PUSTAKA (KNOWLEDGE BASE) API ---
@@ -846,17 +893,7 @@ app.get('/api/users', (req, res) => {
     });
 });
 
-app.get('/api/folders', (req, res) => {
-    console.log('GET /api/folders REQUESTED');
-    db.all("SELECT * FROM folders ORDER BY name ASC", [], (err, rows) => {
-        if (err) {
-            console.error('GET /api/folders ERROR:', err);
-            return res.status(500).json({ error: err.message });
-        }
-        console.log('GET /api/folders SUCCESS:', rows ? rows.length : 0, 'folders found');
-        res.json(rows);
-    });
-});
+
 
 app.post('/api/users', async (req, res) => {
     const { username, password, name, role, department } = req.body;
@@ -1135,7 +1172,10 @@ app.get('/api/inventory', (req, res) => {
                     status: (r.status || 'EMPTY').toUpperCase(),
                     lastUpdated: rawLastUpdated,
                     boxData: parsedBoxData,
-                    history: parsedHistory
+                    history: parsedHistory,
+                    rack: r.rack,
+                    shelf: r.shelf,
+                    position: r.position
                 });
             } else {
                 // Jika baris ID i tidak ada di DB (seperti kasus slot 2 hilang), buat data dummy EMPTY
@@ -1143,6 +1183,26 @@ app.get('/api/inventory', (req, res) => {
             }
         }
         res.json(fullInventory);
+    });
+});
+
+// --- INVENTORY ANALYTICS (PREDICTION) ---
+app.get('/api/inventory/analytics', (req, res) => {
+    // Top 10 most moved/retrieved items in log history
+    const sql = `
+        SELECT details as location, COUNT(*) as frequency, MAX(timestamp) as last_access 
+        FROM logs 
+        WHERE (action = 'RETRIEVE' OR action = 'BORROW' OR action = 'MOVE') 
+        GROUP BY details 
+        ORDER BY frequency DESC 
+        LIMIT 10
+    `;
+
+    db.all(sql, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        // Enriched with current inventory status if possible, 
+        // but for now simple log aggregation is enough for the "Heatmap"
+        res.json(rows);
     });
 });
 
@@ -2634,95 +2694,7 @@ app.post('/api/tax-audits/:auditId/steps/:stepIndex/notes', upload.single('attac
     );
 });
 
-// --- AI POWERED SMART SEARCH ---
-app.post('/api/search/ai', async (req, res) => {
-    const { query } = req.body;
-    if (!query) return res.json({ results: [] });
 
-    try {
-        const intent = await parseIntent(query);
-        const queryVector = await generateEmbedding(query);
-
-        // 1. Build Dynamic SQL for hard filters
-        let filters = [];
-        let params = [];
-
-        if (intent.vendor) {
-            filters.push("vendor LIKE ?");
-            params.push(`%${intent.vendor}%`);
-        }
-        if (intent.minAmount) {
-            filters.push("amount >= ?");
-            params.push(intent.minAmount);
-        }
-        if (intent.maxAmount) {
-            filters.push("amount <= ?");
-            params.push(intent.maxAmount);
-        }
-
-        const filterClause = filters.length > 0 ? `WHERE ${filters.join(' AND ')}` : "";
-
-        // 2. Fetch all candidates (limited to 100 for performance)
-        // We'll search in BOTH documents and invoices for a unified experience
-        const docSql = `SELECT id, title as name, 'document' as matchType, vector, url, type, uploadDate as date FROM documents ${filters.length > 0 ? 'WHERE ' + filters.map(f => f.replace('vendor', 'title').replace('amount', 'size')).join(' AND ') : ''} LIMIT 50`;
-        const invSql = `SELECT id, invoice_no, 'invoice' as matchType, vector, file_url as url, vendor, amount, payment_date as date FROM invoices ${filterClause} LIMIT 50`;
-
-        const getResults = (sql, p) => new Promise(res => db.all(sql, p, (err, rows) => res(rows || [])));
-
-        const [docs, invs] = await Promise.all([
-            getResults(docSql, params.map(p => typeof p === 'string' ? p : 0)), // Title instead of Vendor for docs
-            getResults(invSql, params)
-        ]);
-
-        // Fix invoice name mapping
-        const formattedInvs = invs.map(inv => ({
-            ...inv,
-            name: `${inv.vendor} - ${inv.invoice_no}`
-        }));
-
-        const allCandidates = [...docs, ...formattedInvs];
-
-        // 3. Rerank using Semantic Similarity
-        const ranked = allCandidates.map(item => {
-            let score = 0.5; // Base score
-            if (item.vector) {
-                try {
-                    const itemVector = JSON.parse(item.vector);
-                    // Boost score if keyword match
-                    if (intent.vendor && item.name.toLowerCase().includes(intent.vendor.toLowerCase())) {
-                        score += 0.3;
-                    }
-                    score += cosineSimilarity(queryVector, itemVector);
-                } catch (e) { /* ignore vector error */ }
-            }
-            return { ...item, score, vector: undefined }; // Don't return long vectors to client
-        });
-
-        // 4. Sort and return
-        ranked.sort((a, b) => b.score - a.score);
-
-        // 5. Generate Answer (RAG)
-        const topResults = ranked.slice(0, 3);
-        const contexts = topResults.map(r => {
-            if (r.type === 'document') return `Dokumen "${r.title}": ${r.snippet}`;
-            if (r.type === 'invoice') return `Invoice ${r.title} dari ${r.vendor} senilai ${r.amount}`;
-            return '';
-        });
-
-        let aiReply = 'Berikut hasil pencarian yang relevan:';
-        if (contexts.length > 0) {
-            aiReply = await generateAnswer(message, contexts);
-        } else {
-            aiReply = "Maaf, saya tidak menemukan dokumen yang relevan.";
-        }
-
-        res.json({ reply: aiReply, results: ranked.slice(0, 20), intent });
-
-    } catch (error) {
-        console.error("[AI Search Error]", error);
-        res.status(500).json({ error: error.message });
-    }
-});
 
 
 // --- STATISTICS API ---
@@ -2769,6 +2741,70 @@ app.get('/api/tax-summary', (req, res) => {
             data: typeof r.data === 'string' ? JSON.parse(r.data || '{}') : (r.data || {})
         })));
     });
+});
+
+// --- AI SEMANTIC SEARCH API (Dashboard) ---
+app.post('/api/search/ai', async (req, res) => {
+    const { query } = req.body;
+    if (!query) return res.json({ results: [] });
+
+    try {
+        console.log(`[Search] Processing: "${query}"`);
+        const queryVector = await generateEmbedding(query);
+        const term = `%${query.toLowerCase()}%`;
+
+        const dbAll = (sql, params) => new Promise((resolve) => {
+            db.all(sql, params, (err, rows) => resolve(err ? [] : (rows || [])));
+        });
+
+        // 1. Keyword Search
+        const docKeyword = await dbAll(
+            `SELECT id, title, type, size, url, uploadDate, ocrContent, folderId 
+             FROM documents WHERE title LIKE ? OR ocrContent LIKE ? LIMIT 20`,
+            [term, term]
+        );
+
+        // 2. Vector Search
+        let vectorResults = [];
+        try {
+            const docsWithVectors = await dbAll(
+                `SELECT id, title, type, url, uploadDate, ocrContent, vector FROM documents WHERE vector IS NOT NULL LIMIT 100`, []
+            );
+            vectorResults = docsWithVectors
+                .map(doc => {
+                    try {
+                        const vec = JSON.parse(doc.vector);
+                        const similarity = cosineSimilarity(queryVector, vec);
+                        return { ...doc, vector: undefined, similarity };
+                    } catch { return null; }
+                })
+                .filter(d => d && d.similarity > 0.35)
+                .sort((a, b) => b.similarity - a.similarity).slice(0, 10);
+        } catch (e) { console.warn("Vector search skipped", e); }
+
+        // 3. Merge
+        const resultMap = new Map();
+        [...vectorResults, ...docKeyword].forEach(doc => {
+            if (!resultMap.has(doc.id)) {
+                resultMap.set(doc.id, {
+                    id: doc.id,
+                    name: doc.title,
+                    type: 'Document',
+                    date: doc.uploadDate,
+                    size: doc.size,
+                    matchType: doc.similarity ? 'semantic' : 'keyword',
+                    url: doc.url,
+                    folderId: doc.folderId
+                });
+            }
+        });
+
+        res.json({ results: Array.from(resultMap.values()) });
+
+    } catch (error) {
+        console.error("Search Error:", error);
+        res.status(500).json({ error: error.message });
+    }
 });
 
 app.post('/api/chat', async (req, res) => {

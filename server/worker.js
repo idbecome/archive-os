@@ -362,9 +362,15 @@ async function processOCRJob(job) {
                     if (err) return reject(new Error(`[Worker] Failed to fetch inventory ${slotId}: ${err.message}`));
                     if (!row) return reject(new Error(`[Worker] Inventory ${slotId} not found`));
 
+                    let box;
                     try {
                         const raw = row.box_data;
-                        const box = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        box = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                    } catch (e) {
+                        return reject(new Error(`[Worker] Corrupt Inventory JSON for ${slotId}`));
+                    }
+
+                    try {
                         let updated = false;
 
                         if (box && box.ordners) {
@@ -398,7 +404,7 @@ async function processOCRJob(job) {
                             resolve();
                         }
                     } catch (pe) {
-                        reject(new Error(`[Worker] JSON Parse error for inventory: ${pe.message}`));
+                        reject(new Error(`[Worker] Processing error for inventory: ${pe.message}`));
                     }
                 });
             });
@@ -481,9 +487,18 @@ async function startPolling() {
                     db.run("UPDATE job_queue SET status = 'active', processed_at = NOW() WHERE id = ?", [row.id], async () => {
 
                         // Construct Job Object
+                        let jobData;
+                        try {
+                            jobData = JSON.parse(row.data || '{}');
+                        } catch (e) {
+                            console.error(`[Worker] Job ${row.id} has corrupt JSON data. Marking failed.`);
+                            db.run("UPDATE job_queue SET status = 'failed', error = 'Corrupt JSON Data' WHERE id = ?", [row.id]);
+                            return setTimeout(poll, 100);
+                        }
+
                         const job = {
                             id: row.id,
-                            data: JSON.parse(row.data),
+                            data: jobData,
                             updateProgress: async (progress) => {
                                 db.run("UPDATE job_queue SET progress = ? WHERE id = ?", [progress, row.id], () => { });
                             }

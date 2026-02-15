@@ -2,6 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock, Eye, Info, MessageSquare, BookOpen, FileCheck, ClipboardCheck, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
 import QueueStatus from '../components/ui/QueueStatus';
+import WarehouseMap from '../components/WarehouseMap';
+import TaxAnalytics from '../components/TaxAnalytics';
 
 export default function Dashboard({
     stats: propStats,
@@ -21,8 +23,10 @@ export default function Dashboard({
     departments = [],
     externalItems = [],
     folders = [],
+    todayWork,
     currentUser,
-    onOpenLanding
+    onOpenLanding,
+    inventory = [] // Prop baru
 }) {
     // Defensive Defaults
     const stats = propStats || { occupancy: 0, stored: 0, borrowed: 0, audit: 0, empty: 0 };
@@ -402,6 +406,28 @@ export default function Dashboard({
                     colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
                 />
             </div>
+
+            {/* WAREHOUSE MAP VISUALIZATION */}
+            <div className="grid grid-cols-1 gap-6">
+                <WarehouseMap
+                    inventory={inventory}
+                    onSelectInfo={(item) => {
+                        // Optional: Handle click on box map
+                        if (item.status !== 'EMPTY') {
+                            // Maybe navigate to inventory tab with filter?
+                            // For now just console log or toast
+                            console.log("Selected:", item);
+                        }
+                    }}
+                />
+            </div>
+
+            {/* TAX ANALYTICS VISUALIZATION */}
+            <div className="grid grid-cols-1 gap-6">
+                <TaxAnalytics taxSummaries={taxSummaries} taxAudits={taxAudits} />
+            </div>
+
+            {/* OCR QUEUE STATUS SECTION */}
 
             {/* OCR QUEUE STATUS SECTION */}
             <div className="grid grid-cols-1 lg:grid-cols-1 gap-6">

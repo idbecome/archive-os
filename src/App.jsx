@@ -457,8 +457,9 @@ export default function App() {
       }
     };
 
-    const interval = setInterval(fetchOcrStatus, 2000); // Poll every 2s
-    fetchOcrStatus();
+    const interval = setInterval(fetchOcrStatus, 5000); // Poll every 5s
+    // Initial fetch with small delay to allow server startup
+    setTimeout(fetchOcrStatus, 1000);
 
     return () => clearInterval(interval);
   }, [currentUser]); // Dependency on currentUser ensures it runs only when logged in
@@ -2713,6 +2714,7 @@ export default function App() {
                 currentUser={currentUser}
                 onCopy={handleCopyToClipboard}
                 onOpenLanding={handleOpenLanding}
+                inventory={inventory}
               />
             )}
             {activeTab === 'inventory' && (
