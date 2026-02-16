@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
-import db from './db.js';
+import db, { knex } from './db.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -50,379 +50,441 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 // --- OCR QUEUE API ---
 app.get('/api/ocr/queue', async (req, res) => {
     try {
-        db.all("SELECT * FROM job_queue WHERE status IN ('waiting', 'active') ORDER BY created_at ASC", [], (err, rows) => {
-            if (err) return res.status(500).json({ error: err.message });
-            try {
-                const waiting = rows.filter(r => r.status === 'waiting').map(r => ({ ...r, data: JSON.parse(r.data || '{}') }));
-                const active = rows.filter(r => r.status === 'active').map(r => ({ ...r, data: JSON.parse(r.data || '{}') }));
-                res.json({
-                    waiting,
-                    active,
-                    total: waiting.length + active.length
-                });
-            } catch (parseErr) {
-                console.error("Queue JSON Parse Error:", parseErr);
-                res.status(500).json({ error: "Failed to parse queue data" });
-            }
+        const rows = await knex('job_queue').whereIn('status', ['waiting', 'active']).orderBy('created_at', 'asc');
+        const waiting = rows.filter(r => r.status === 'waiting').map(r => ({ ...r, data: JSON.parse(r.data || '{}') }));
+        const active = rows.filter(r => r.status === 'active').map(r => ({ ...r, data: JSON.parse(r.data || '{}') }));
+        res.json({
+            waiting,
+            active,
+            total: waiting.length + active.length
         });
     } catch (err) {
+        console.error("Queue Parse Error:", err);
         res.status(500).json({ error: err.message });
     }
 });
 
-app.get('/api/ocr/status', (req, res) => {
-    const sql = `SELECT 
-        SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN status = 'waiting' THEN 1 ELSE 0 END) as waiting,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
-        SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed
-        FROM job_queue`;
+app.get('/api/ocr/status', async (req, res) => {
+    try {
+        const counts = await knex('job_queue')
+            .select(
+                knex.raw('SUM(CASE WHEN status = "active" THEN 1 ELSE 0 END) as active'),
+                knex.raw('SUM(CASE WHEN status = "waiting" THEN 1 ELSE 0 END) as waiting'),
+                knex.raw('SUM(CASE WHEN status = "completed" THEN 1 ELSE 0 END) as completed'),
+                knex.raw('SUM(CASE WHEN status = "failed" THEN 1 ELSE 0 END) as failed')
+            )
+            .first();
 
-    db.get(sql, [], (err, counts) => {
-        if (err) return res.status(500).json({ error: err.message });
+        const rows = await knex('job_queue')
+            .where('status', 'active')
+            .limit(5);
 
-        // Get active jobs detail
-        db.all("SELECT * FROM job_queue WHERE status = 'active' LIMIT 5", [], (err2, rows) => {
-            if (err2) return res.status(500).json({ error: err2.message });
+        const activeJobs = (rows || []).map(r => ({
+            id: r.id,
+            data: JSON.parse(r.data || '{}'),
+            progress: r.progress
+        }));
 
-            try {
-                const activeJobs = (rows || []).map(r => ({
-                    id: r.id,
-                    data: JSON.parse(r.data || '{}'),
-                    progress: r.progress
-                }));
-
-                res.json({
-                    counts: {
-                        active: counts?.active || 0,
-                        waiting: counts?.waiting || 0,
-                        completed: counts?.completed || 0,
-                        failed: counts?.failed || 0
-                    },
-                    activeJobs
-                });
-            } catch (e) {
-                console.error("Status JSON Parse Error:", e);
-                res.status(500).json({ error: "Data corruption in job queue" });
-            }
+        res.json({
+            counts: {
+                active: counts?.active || 0,
+                waiting: counts?.waiting || 0,
+                completed: counts?.completed || 0,
+                failed: counts?.failed || 0
+            },
+            activeJobs
         });
-    });
+    } catch (e) {
+        console.error("Status Error:", e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // --- PUSTAKA (KNOWLEDGE BASE) API ---
-app.get('/api/pustaka/guides', (req, res) => {
-    db.all("SELECT * FROM pustaka_guides ORDER BY category, title ASC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/pustaka/guides', async (req, res) => {
+    try {
+        const rows = await knex('pustaka_guides').orderBy(['category', { column: 'title', order: 'asc' }]);
         const result = (rows || []).map(r => ({
             ...r,
             allowed_depts: r.allowed_depts ? JSON.parse(r.allowed_depts) : [],
             allowed_users: r.allowed_users ? JSON.parse(r.allowed_users) : []
         }));
         res.json(result);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.get('/api/pustaka/search', (req, res) => {
-    const q = req.query.q;
-    if (!q) return res.json([]);
+app.get('/api/pustaka/search', async (req, res) => {
+    try {
+        const q = req.query.q;
+        if (!q) return res.json([]);
 
-    const term = `%${q}%`;
-    const sql = `
-        SELECT DISTINCT g.* 
-        FROM pustaka_guides g
-        LEFT JOIN pustaka_slides s ON g.id = s.guide_id
-        WHERE g.title LIKE ? OR g.description LIKE ? OR g.category LIKE ? OR s.title LIKE ? OR s.content LIKE ?
-        ORDER BY g.title ASC
-    `;
+        const term = `%${q}%`;
+        const rows = await knex('pustaka_guides as g')
+            .distinct('g.*')
+            .leftJoin('pustaka_slides as s', 'g.id', 's.guide_id')
+            .where('g.title', 'like', term)
+            .orWhere('g.description', 'like', term)
+            .orWhere('g.category', 'like', term)
+            .orWhere('s.title', 'like', term)
+            .orWhere('s.content', 'like', term)
+            .orderBy('g.title', 'asc');
 
-    db.all(sql, [term, term, term, term, term], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
         res.json(rows || []);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.get('/api/pustaka/categories', (req, res) => {
-    db.all("SELECT * FROM pustaka_categories ORDER BY name ASC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/pustaka/categories', async (req, res) => {
+    try {
+        const rows = await knex('pustaka_categories').orderBy('name', 'asc');
         res.json(rows || []);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/pustaka/categories', (req, res) => {
-    const { name } = req.body;
-    db.run("INSERT INTO pustaka_categories (name) VALUES (?)", [name], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, id: this.lastID });
-    });
+app.post('/api/pustaka/categories', async (req, res) => {
+    try {
+        const { name } = req.body;
+        const [id] = await knex('pustaka_categories').insert({ name });
+        res.json({ success: true, id: id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.delete('/api/pustaka/categories/:id', (req, res) => {
-    db.run("DELETE FROM pustaka_categories WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.delete('/api/pustaka/categories/:id', async (req, res) => {
+    try {
+        await knex('pustaka_categories').where('id', req.params.id).del();
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.get('/api/pustaka/guides/:id/slides', (req, res) => {
-    db.all("SELECT * FROM pustaka_slides WHERE guide_id = ? ORDER BY step_order ASC", [req.params.id], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/pustaka/guides/:id/slides', async (req, res) => {
+    try {
+        const rows = await knex('pustaka_slides').where('guide_id', req.params.id).orderBy('step_order', 'asc');
         res.json(rows || []);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/pustaka/guides', (req, res) => {
-    const { title, description, category, icon, privacy, allowed_depts, allowed_users, owner } = req.body;
-    db.run("INSERT INTO pustaka_guides (title, description, category, icon, privacy, allowed_depts, allowed_users, owner) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        [title, description, category, icon, privacy || 'public', JSON.stringify(allowed_depts || []), JSON.stringify(allowed_users || []), owner],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, id: this.lastID });
-        }
-    );
-});
-
-app.put('/api/pustaka/guides/:id', (req, res) => {
-    const { title, description, category, icon, privacy, allowed_depts, allowed_users } = req.body;
-    db.run("UPDATE pustaka_guides SET title = ?, description = ?, category = ?, icon = ?, privacy = ?, allowed_depts = ?, allowed_users = ? WHERE id = ?",
-        [title, description, category, icon, privacy, JSON.stringify(allowed_depts || []), JSON.stringify(allowed_users || []), req.params.id],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
-});
-
-app.delete('/api/pustaka/guides/:id', (req, res) => {
-    const guideId = req.params.id;
-    db.run("DELETE FROM pustaka_guides WHERE id = ?", [guideId], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        db.run("DELETE FROM pustaka_slides WHERE guide_id = ?", [guideId], (err2) => {
-            if (err2) return res.status(500).json({ error: err2.message });
-            res.json({ success: true });
+app.post('/api/pustaka/guides', async (req, res) => {
+    try {
+        const { title, description, category, icon, privacy, allowed_depts, allowed_users, owner } = req.body;
+        const [id] = await knex('pustaka_guides').insert({
+            title,
+            description,
+            category,
+            icon,
+            privacy: privacy || 'public',
+            allowed_depts: JSON.stringify(allowed_depts || []),
+            allowed_users: JSON.stringify(allowed_users || []),
+            owner
         });
-    });
+        res.json({ success: true, id: id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.delete('/api/pustaka/slides/by-guide/:id', (req, res) => {
-    db.run("DELETE FROM pustaka_slides WHERE guide_id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.put('/api/pustaka/guides/:id', async (req, res) => {
+    try {
+        const { title, description, category, icon, privacy, allowed_depts, allowed_users } = req.body;
+        await knex('pustaka_guides')
+            .where('id', req.params.id)
+            .update({
+                title,
+                description,
+                category,
+                icon,
+                privacy,
+                allowed_depts: JSON.stringify(allowed_depts || []),
+                allowed_users: JSON.stringify(allowed_users || [])
+            });
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/pustaka/slides', (req, res) => {
-    const { guide_id, title, content, image, step_order } = req.body;
-    db.run("INSERT INTO pustaka_slides (guide_id, title, content, image, step_order) VALUES (?, ?, ?, ?, ?)",
-        [guide_id, title, content, image, step_order],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, id: this.lastID });
-        }
-    );
+app.delete('/api/pustaka/guides/:id', async (req, res) => {
+    try {
+        const guideId = req.params.id;
+        await knex.transaction(async trx => {
+            await trx('pustaka_guides').where('id', guideId).del();
+            await trx('pustaka_slides').where('guide_id', guideId).del();
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/pustaka/slides/by-guide/:id', async (req, res) => {
+    try {
+        await knex('pustaka_slides').where('guide_id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/pustaka/slides', async (req, res) => {
+    try {
+        const { guide_id, title, content, image, step_order } = req.body;
+        const [id] = await knex('pustaka_slides').insert({
+            guide_id,
+            title,
+            content,
+            image,
+            step_order
+        });
+        res.json({ success: true, id: id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- DOCUMENT APPROVAL API ---
-app.get('/api/approvals', (req, res) => {
-    db.all("SELECT * FROM document_approvals ORDER BY created_at DESC", [], (err, approvals) => {
-        if (err) return res.status(500).json({ error: err.message });
-        const safeApprovals = approvals || [];
-        db.all("SELECT * FROM approval_steps ORDER BY approval_id, step_index ASC", [], (err2, steps) => {
-            if (err2) return res.status(500).json({ error: err2.message });
-            const safeSteps = steps || [];
-            const result = safeApprovals.map(item => ({
-                ...item,
-                steps: safeSteps.filter(s => s.approval_id === item.id)
-            }));
-            res.json(result);
-        });
-    });
+app.get('/api/approvals', async (req, res) => {
+    try {
+        const approvals = await knex('document_approvals').orderBy('created_at', 'desc');
+        const steps = await knex('approval_steps').orderBy(['approval_id', { column: 'step_index', order: 'asc' }]);
+
+        const result = (approvals || []).map(item => ({
+            ...item,
+            steps: (steps || []).filter(s => s.approval_id === item.id)
+        }));
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/approvals', (req, res) => {
-    const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, steps, flow_id } = req.body;
-    const now = new Date().toISOString();
+app.post('/api/approvals', async (req, res) => {
+    try {
+        const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, steps, flow_id } = req.body;
+        const now = new Date().toISOString();
 
-    db.run(`INSERT INTO document_approvals (title, description, division, requester_name, requester_username, attachment_url, attachment_name, status, created_at, current_step_index, flow_id) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, 'Pending', ?, 0, ?)`,
-        [title, description, division, requester_name, requester_username, attachment_url, attachment_name, now, flow_id || null],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            const approvalId = this.lastID;
-
-            // Insert steps
-            const stepPromises = steps.map((step, index) => {
-                return new Promise((resolve, reject) => {
-                    db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name, node_id) VALUES (?, ?, ?, ?, ?)`,
-                        [approvalId, index, step.username, step.name, step.nodeId || null],
-                        (sErr) => sErr ? reject(sErr) : resolve()
-                    );
-                });
+        const [approvalId] = await knex.transaction(async trx => {
+            const [newApprovalId] = await trx('document_approvals').insert({
+                title,
+                description,
+                division,
+                requester_name,
+                requester_username,
+                attachment_url,
+                attachment_name,
+                status: 'Pending',
+                created_at: now,
+                current_step_index: 0,
+                flow_id: flow_id || null
             });
 
-            Promise.all(stepPromises)
-                .then(() => res.json({ success: true, id: approvalId }))
-                .catch(pErr => res.status(500).json({ error: pErr.message }));
-        }
-    );
+            const stepInserts = (steps || []).map((step, index) => ({
+                approval_id: newApprovalId,
+                step_index: index,
+                approver_username: step.username,
+                approver_name: step.name,
+                node_id: step.nodeId || null
+            }));
+
+            if (stepInserts.length > 0) {
+                await trx('approval_steps').insert(stepInserts);
+            }
+
+            return [newApprovalId];
+        });
+
+        res.json({ success: true, id: approvalId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/approvals/:id/action', upload.single('file'), (req, res) => {
-    const { action, note, username } = req.body; // action: 'Approve' | 'Reject'
-    const approvalId = req.params.id;
-    const now = new Date().toISOString();
+app.post('/api/approvals/:id/action', upload.single('file'), async (req, res) => {
+    try {
+        const { action, note, username } = req.body;
+        const approvalId = req.params.id;
+        const now = new Date().toISOString();
 
-    let attachment_url = null;
-    let attachment_name = null;
-    if (req.file) {
-        attachment_url = `/uploads/${req.file.filename}`;
-        attachment_name = req.file.originalname;
-    }
+        let attachment_url = null;
+        let attachment_name = null;
+        if (req.file) {
+            attachment_url = `/uploads/${req.file.filename}`;
+            attachment_name = req.file.originalname;
+        }
 
-    db.get("SELECT * FROM document_approvals WHERE id = ?", [approvalId], (err, approval) => {
-        if (err || !approval) return res.status(404).json({ error: "Not found" });
+        await knex.transaction(async trx => {
+            const approval = await trx('document_approvals').where('id', approvalId).first();
+            if (!approval) throw new Error("Approval not found");
 
-        const currentIndex = approval.current_step_index;
+            const currentIndex = approval.current_step_index;
 
-        // Update current step
-        db.run(`UPDATE approval_steps SET status = ?, action_date = ?, note = ?, attachment_url = ?, attachment_name = ? 
-                WHERE approval_id = ? AND step_index = ? AND approver_username = ?`,
-            [action === 'Approve' ? 'Approved' : 'Rejected', now, note, attachment_url, attachment_name, approvalId, currentIndex, username],
-            function (stepErr) {
-                if (stepErr) return res.status(500).json({ error: stepErr.message });
+            // Update current step
+            await trx('approval_steps')
+                .where({ approval_id: approvalId, step_index: currentIndex, approver_username: username })
+                .update({
+                    status: action === 'Approve' ? 'Approved' : 'Rejected',
+                    action_date: now,
+                    note: note,
+                    attachment_url: attachment_url,
+                    attachment_name: attachment_name
+                });
 
-                if (action === 'Reject') {
-                    // If rejected, the whole document is rejected
-                    db.run("UPDATE document_approvals SET status = 'Rejected' WHERE id = ?", [approvalId], () => {
-                        res.json({ success: true, status: 'Rejected' });
-                    });
+            if (action === 'Reject') {
+                await trx('document_approvals').where('id', approvalId).update({ status: 'Rejected' });
+                res.json({ success: true, status: 'Rejected' });
+            } else {
+                const stepCount = await trx('approval_steps').where('approval_id', approvalId).count('id as count').first();
+                const nextIndex = currentIndex + 1;
+
+                if (nextIndex < stepCount.count) {
+                    await trx('document_approvals').where('id', approvalId).update({ current_step_index: nextIndex });
+                    res.json({ success: true, status: 'Pending', nextStep: nextIndex });
                 } else {
-                    // Check if there are more steps
-                    db.get("SELECT COUNT(*) as count FROM approval_steps WHERE approval_id = ?", [approvalId], (cErr, row) => {
-                        const nextIndex = currentIndex + 1;
-                        if (nextIndex < row.count) {
-                            db.run("UPDATE document_approvals SET current_step_index = ? WHERE id = ?", [nextIndex, approvalId], () => {
-                                res.json({ success: true, status: 'Pending', nextStep: nextIndex });
-                            });
-                        } else {
-                            db.run("UPDATE document_approvals SET status = 'Approved' WHERE id = ?", [approvalId], () => {
-                                // Sinkronisasi ke folder Documents dan jalankan OCR hanya setelah Approved
-                                db.get("SELECT title, attachment_url, attachment_name, requester_name, division FROM document_approvals WHERE id = ?", [approvalId], (err, app) => {
-                                    if (app && app.attachment_url) {
-                                        // Cari folder tujuan (ApprovalDoc -> Judul)
-                                        db.get("SELECT id FROM folders WHERE name = 'ApprovalDoc' AND (parentId IS NULL OR parentId = 0 OR parentId = 'null')", [], (err, parent) => {
-                                            if (parent) {
-                                                db.get("SELECT id FROM folders WHERE name = ? AND parentId = ?", [app.title, parent.id], (err, folder) => {
-                                                    if (folder) {
-                                                        const docId = `DOC-APP-${Date.now()}`;
-                                                        const ext = path.extname(app.attachment_name || '').toLowerCase();
-                                                        let type = 'application/pdf';
-                                                        if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) type = 'image/jpeg';
+                    await trx('document_approvals').where('id', approvalId).update({ status: 'Approved' });
 
-                                                        // Masukkan ke tabel documents agar muncul di file explorer
-                                                        db.run(`INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, status, ocrContent) 
-                                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', '')`,
-                                                            [docId, app.attachment_name, type, '0 KB', now, app.attachment_url, folder.id, app.division, app.requester_name],
-                                                            (docErr) => {
-                                                                if (!docErr) {
-                                                                    const filename = path.basename(app.attachment_url);
-                                                                    const absolutePath = path.join(UPLOADS_DIR, filename);
-                                                                    // Jalankan OCR untuk dokumen baru ini
-                                                                    addOCRJob(docId, absolutePath, type, app.attachment_name, {
-                                                                        type: 'document',
-                                                                        documentId: docId,
-                                                                        approvalId: approvalId // Berikan info approvalId agar worker bisa update ocr_content di tabel approval juga
-                                                                    }).catch(e => console.error("Final Approval OCR Error:", e));
-                                                                }
-                                                            }
-                                                        );
-                                                    }
-                                                });
-                                            }
-                                        });
-                                    }
-                                    res.json({ success: true, status: 'Approved' });
+                    // Post-approval logic (OCR etc.)
+                    const app = await trx('document_approvals').where('id', approvalId).first();
+                    if (app && app.attachment_url) {
+                        const parent = await trx('folders').where('name', 'ApprovalDoc').andWhere(function () {
+                            this.whereNull('parentId').orWhere('parentId', 0).orWhere('parentId', 'null');
+                        }).first();
+
+                        if (parent) {
+                            const folder = await trx('folders').where({ name: app.title, parentId: parent.id }).first();
+                            if (folder) {
+                                const docId = `DOC-APP-${Date.now()}`;
+                                const ext = path.extname(app.attachment_name || '').toLowerCase();
+                                let type = 'application/pdf';
+                                if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) type = 'image/jpeg';
+
+                                await trx('documents').insert({
+                                    id: docId,
+                                    title: app.attachment_name,
+                                    type: type,
+                                    size: '0 KB',
+                                    uploadDate: now,
+                                    url: app.attachment_url,
+                                    folderId: folder.id,
+                                    department: app.division,
+                                    owner: app.requester_name,
+                                    status: 'processing',
+                                    ocrContent: ''
                                 });
-                            });
+
+                                const filename = path.basename(app.attachment_url);
+                                const absolutePath = path.join(UPLOADS_DIR, filename);
+                                addOCRJob(docId, absolutePath, type, app.attachment_name, {
+                                    type: 'document',
+                                    documentId: docId,
+                                    approvalId: approvalId
+                                }).catch(e => console.error("Final Approval OCR Error:", e));
+                            }
                         }
-                    });
+                    }
+                    res.json({ success: true, status: 'Approved' });
                 }
             }
-        );
-    });
-});
-
-app.post('/api/approvals/:id/reset-step', (req, res) => {
-    const { stepIndex } = req.body;
-    const approvalId = req.params.id;
-
-    // 1. Kembalikan index dokumen ke langkah yang dipilih dan set status ke Pending
-    db.run(`UPDATE document_approvals SET current_step_index = ?, status = 'Pending' WHERE id = ?`,
-        [stepIndex, approvalId], (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-
-            // 2. Bersihkan status dan catatan pada langkah tersebut dan semua langkah setelahnya
-            db.run(`UPDATE approval_steps SET status = 'Pending', action_date = NULL, note = NULL, attachment_url = NULL, attachment_name = NULL 
-                WHERE approval_id = ? AND step_index >= ?`, [approvalId, stepIndex], (err2) => {
-                if (err2) return res.status(500).json({ error: err2.message });
-                res.json({ success: true });
-            });
         });
+    } catch (err) {
+        console.error("Approval Action Error:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/approvals/:id', (req, res) => {
-    const { title, description, division, attachment_url, attachment_name, steps } = req.body;
-    const approvalId = req.params.id;
+app.post('/api/approvals/:id/reset-step', async (req, res) => {
+    try {
+        const { stepIndex } = req.body;
+        const approvalId = req.params.id;
 
-    // 1. Ambil data lama untuk cek perubahan lampiran
-    db.get("SELECT attachment_url FROM document_approvals WHERE id = ?", [approvalId], (err, oldRow) => {
-        const attachmentChanged = oldRow && oldRow.attachment_url !== attachment_url;
-        const ocrUpdateSql = attachmentChanged ? ", ocr_content = NULL" : "";
+        await knex.transaction(async trx => {
+            await trx('document_approvals')
+                .where('id', approvalId)
+                .update({ current_step_index: stepIndex, status: 'Pending' });
 
-        // 2. Reset status ke Pending dan index ke 0 (Alur kereset ke awal)
-        db.run(`UPDATE document_approvals SET title = ?, description = ?, division = ?, attachment_url = ?, attachment_name = ?, status = 'Pending', current_step_index = 0 ${ocrUpdateSql}
-                WHERE id = ?`,
-            [title, description, division, attachment_url, attachment_name, approvalId],
-            function (err) {
-                if (err) return res.status(500).json({ error: err.message });
-
-                // 3. Hapus langkah lama dan masukkan langkah baru (reset flow steps)
-                db.run("DELETE FROM approval_steps WHERE approval_id = ?", [approvalId], (delErr) => {
-                    if (delErr) return res.status(500).json({ error: delErr.message });
-
-                    const stepPromises = steps.map((step, index) => {
-                        return new Promise((resolve, reject) => {
-                            db.run(`INSERT INTO approval_steps (approval_id, step_index, approver_username, approver_name, node_id) VALUES (?, ?, ?, ?, ?)`,
-                                [approvalId, index, step.username, step.name, step.nodeId || null],
-                                (sErr) => sErr ? reject(sErr) : resolve()
-                            );
-                        });
-                    });
-
-                    Promise.all(stepPromises)
-                        .then(() => res.json({ success: true }))
-                        .catch(pErr => res.status(500).json({ error: pErr.message }));
+            await trx('approval_steps')
+                .where('approval_id', approvalId)
+                .andWhere('step_index', '>=', stepIndex)
+                .update({
+                    status: 'Pending',
+                    action_date: null,
+                    note: null,
+                    attachment_url: null,
+                    attachment_name: null
                 });
-            }
-        );
-    });
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.delete('/api/approvals/:id', (req, res) => {
-    db.run("DELETE FROM document_approvals WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.put('/api/approvals/:id', async (req, res) => {
+    try {
+        const { title, description, division, attachment_url, attachment_name, steps } = req.body;
+        const approvalId = req.params.id;
+
+        await knex.transaction(async trx => {
+            const oldRow = await trx('document_approvals').where('id', approvalId).select('attachment_url').first();
+            const attachmentChanged = oldRow && oldRow.attachment_url !== attachment_url;
+
+            const updateData = {
+                title,
+                description,
+                division,
+                attachment_url,
+                attachment_name,
+                status: 'Pending',
+                current_step_index: 0
+            };
+            if (attachmentChanged) updateData.ocr_content = null;
+
+            await trx('document_approvals').where('id', approvalId).update(updateData);
+
+            await trx('approval_steps').where('approval_id', approvalId).del();
+
+            const stepInserts = (steps || []).map((step, index) => ({
+                approval_id: approvalId,
+                step_index: index,
+                approver_username: step.username,
+                approver_name: step.name,
+                node_id: step.nodeId || null
+            }));
+
+            if (stepInserts.length > 0) {
+                await trx('approval_steps').insert(stepInserts);
+            }
+        });
+
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/approvals/:id', async (req, res) => {
+    try {
+        await knex('document_approvals').where('id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- APPROVAL FLOWS (MASTER) API ---
-app.get('/api/approval-flows', (req, res) => {
-    db.all("SELECT * FROM approval_flows ORDER BY name ASC", [], (err, rows) => {
-        if (err) {
-            console.error("Database Error (approval-flows):", err.message);
-            return res.status(500).json({ error: "Gagal mengambil data alur. Pastikan tabel approval_flows sudah dibuat." });
-        }
-        const safeRows = rows || [];
-        const result = safeRows.map(r => {
+app.get('/api/approval-flows', async (req, res) => {
+    try {
+        const rows = await knex('approval_flows').orderBy('name', 'asc');
+        const result = (rows || []).map(r => {
             try {
                 return {
                     ...r,
@@ -433,357 +495,340 @@ app.get('/api/approval-flows', (req, res) => {
             catch (e) { return { ...r, steps: [], visual_config: null }; }
         });
         res.json(result);
-    });
+    } catch (err) {
+        console.error("Database Error (approval-flows):", err.message);
+        res.status(500).json({ error: "Gagal mengambil data alur. Pastikan tabel approval_flows sudah dibuat." });
+    }
 });
 
-app.post('/api/approval-flows', (req, res) => {
-    const { name, description, steps, visual_config } = req.body;
-    db.run("INSERT INTO approval_flows (name, description, steps, visual_config) VALUES (?, ?, ?, ?)",
-        [name, description, JSON.stringify(steps || []), JSON.stringify(visual_config || null)],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, id: this.lastID });
-        }
-    );
+app.post('/api/approval-flows', async (req, res) => {
+    try {
+        const { name, description, steps, visual_config } = req.body;
+        const [id] = await knex('approval_flows').insert({
+            name,
+            description,
+            steps: JSON.stringify(steps || []),
+            visual_config: JSON.stringify(visual_config || null)
+        });
+        res.json({ success: true, id: id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/approval-flows/:id', (req, res) => {
-    const { name, description, steps, visual_config } = req.body;
-    db.run("UPDATE approval_flows SET name = ?, description = ?, steps = ?, visual_config = ? WHERE id = ?",
-        [name, description, JSON.stringify(steps || []), JSON.stringify(visual_config || null), req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
-});
-
-app.delete('/api/approval-flows/:id', (req, res) => {
-    db.run("DELETE FROM approval_flows WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.put('/api/approval-flows/:id', async (req, res) => {
+    try {
+        const { name, description, steps, visual_config } = req.body;
+        await knex('approval_flows').where('id', req.params.id).update({
+            name,
+            description,
+            steps: JSON.stringify(steps || []),
+            visual_config: JSON.stringify(visual_config || null)
+        });
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/approval-flows/:id', async (req, res) => {
+    try {
+        await knex('approval_flows').where('id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Helper: Save Base64 to File
 
 // --- UNIVERSAL SEARCH API (AI SEMANTIC) ---
-app.get('/api/search', (req, res) => {
-    const query = (req.query.q || '').toLowerCase();
-    if (!query) return res.json([]);
+app.get('/api/search', async (req, res) => {
+    try {
+        const query = (req.query.q || '').toLowerCase();
+        if (!query) return res.json([]);
 
-    // 1. Search Documents
-    const docPromise = new Promise((resolve) => {
-        const sql = `SELECT * FROM documents`;
-        db.all(sql, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
+        // 1. Search Documents
+        const docPromise = (async () => {
+            try {
+                const rows = await knex('documents');
+                return (rows || []).filter(doc => {
+                    const title = (doc.title || '').toLowerCase();
+                    const ocr = (doc.ocrContent || '').toLowerCase();
+                    return title.includes(query) || ocr.includes(query);
+                }).map(doc => {
+                    let score = 0;
+                    const title = (doc.title || '').toLowerCase();
+                    if (title.includes(query)) score += 0.5;
+                    if (doc.ocrContent && doc.ocrContent.toLowerCase().includes(query)) score += 0.3;
+                    if (title === query) score += 0.5;
 
-            const matches = rows.filter(doc => {
-                const title = (doc.title || '').toLowerCase();
-                const ocr = (doc.ocrContent || '').toLowerCase();
-                return title.includes(query) || ocr.includes(query);
-            }).map(doc => {
-                // Calculate Relevance Score
-                let score = 0;
-                const title = (doc.title || '').toLowerCase();
-                if (title.includes(query)) score += 0.5;
-                if (doc.ocrContent && doc.ocrContent.toLowerCase().includes(query)) score += 0.3;
-                // Exact match bonus
-                if (title === query) score += 0.5;
+                    return {
+                        id: doc.id,
+                        title: doc.title,
+                        type: doc.type || 'document',
+                        size: doc.size,
+                        uploadDate: doc.uploadDate,
+                        folderId: doc.folderId,
+                        folderName: 'Digital Archive',
+                        score: score,
+                        matchType: 'document'
+                    };
+                });
+            } catch { return []; }
+        })();
 
-                return {
-                    id: doc.id,
-                    title: doc.title,
-                    type: doc.type || 'document',
-                    size: doc.size,
-                    uploadDate: doc.uploadDate,
-                    folderId: doc.folderId,
-                    folderName: 'Digital Archive', // Todo: Join foldernames if needed
-                    score: score,
-                    matchType: 'document'
-                };
-            });
-            resolve(matches);
-        });
-    });
+        // 2. Search Inventory (Invoices inside Boxes)
+        const invPromise = (async () => {
+            try {
+                const term = `%${query}%`;
+                const rows = await knex('inventory_items as i')
+                    .select('i.*', 'inv.box_data')
+                    .leftJoin('inventory as inv', 'i.inventory_id', 'inv.id')
+                    .where('i.invoice_no', 'like', term)
+                    .orWhere('i.vendor', 'like', term)
+                    .orWhere('i.ocr_content', 'like', term)
+                    .limit(50);
 
-    // 2. Search Inventory (Invoices inside Boxes) -> OPTIMIZED
-    const invPromise = new Promise((resolve) => {
-        const term = `%${query}%`;
-        const sql = `
-            SELECT i.*, inv.box_data 
-            FROM inventory_items i
-            LEFT JOIN inventory inv ON i.inventory_id = inv.id
-            WHERE i.invoice_no LIKE ? OR i.vendor LIKE ? OR i.ocr_content LIKE ?
-            LIMIT 50
-        `;
+                return (rows || []).map(item => {
+                    let score = 0;
+                    const invNo = (item.invoice_no || '').toLowerCase();
+                    const vendor = (item.vendor || '').toLowerCase();
+                    const ocr = (item.ocr_content || '').toLowerCase();
 
-        db.all(sql, [term, term, term], (err, rows) => {
-            if (err || !rows) return resolve([]);
+                    if (invNo.includes(query)) score += 0.5;
+                    if (vendor.includes(query)) score += 0.4;
+                    if (ocr.includes(query)) score += 0.3;
 
-            const matches = rows.map(item => {
-                // Construct the result object matching the previous structure
-                let score = 0;
-                const invNo = (item.invoice_no || '').toLowerCase();
-                const vendor = (item.vendor || '').toLowerCase();
-                const ocr = (item.ocr_content || '').toLowerCase();
+                    return {
+                        id: `INV-${item.id}`,
+                        title: `Invoice: ${item.invoice_no} (${item.vendor})`,
+                        type: item.file_url && item.file_url.match(/image\//) ? 'image/jpeg' : 'application/pdf',
+                        size: 'Invoice',
+                        uploadDate: item.date || new Date().toISOString(),
+                        folderId: 'INVENTORY',
+                        folderName: `Box ${item.box_id} / Ordner ${item.ordner_id}`,
+                        score: score,
+                        matchType: 'invoice',
+                        data: {
+                            id: item.id,
+                            invoiceNo: item.invoice_no,
+                            vendor: item.vendor,
+                            paymentDate: item.date,
+                            totalAmount: item.amount,
+                            file: item.file_url,
+                            ocrContent: item.ocr_content,
+                            fileName: 'Invoice'
+                        },
+                        boxId: item.box_id,
+                        slotId: item.inventory_id,
+                        ocrContent: item.ocr_content,
+                        url: item.file_url
+                    };
+                });
+            } catch { return []; }
+        })();
 
-                if (invNo.includes(query)) score += 0.5;
-                if (vendor.includes(query)) score += 0.4;
-                if (ocr.includes(query)) score += 0.3;
+        // 3. Search External Items (Indoarsip)
+        const extPromise = (async () => {
+            try {
+                const rows = await knex('external_items');
+                const matches = [];
+                (rows || []).forEach(item => {
+                    const boxId = (item.boxId || '').toLowerCase();
+                    const dest = (item.destination || '').toLowerCase();
+                    const sender = (item.sender || '').toLowerCase();
+                    let score = 0;
+                    let found = false;
 
-                // Reconstruct the 'data' object expected by frontend
-                // The frontend likely expects the full invoice object
-                const invoiceData = {
-                    id: item.id, // Using item ID might differ from original random ID but should work
-                    invoiceNo: item.invoice_no,
-                    vendor: item.vendor,
-                    paymentDate: item.date,
-                    totalAmount: item.amount,
-                    file: item.file_url,
-                    ocrContent: item.ocr_content,
-                    fileName: 'Invoice' // Fallback
-                };
+                    if (boxId.includes(query)) { score += 0.6; found = true; }
+                    if (dest.includes(query)) { score += 0.4; found = true; }
+                    if (sender.includes(query)) { score += 0.4; found = true; }
 
-                return {
-                    id: `INV-${item.id}`,
-                    title: `Invoice: ${item.invoice_no} (${item.vendor})`,
-                    type: item.file_url && item.file_url.match(/image\//) ? 'image/jpeg' : 'application/pdf',
-                    size: 'Invoice',
-                    uploadDate: item.date || new Date().toISOString(),
-                    folderId: 'INVENTORY', // Special flag for frontend
-                    folderName: `Box ${item.box_id} / Ordner ${item.ordner_id}`, // Use columns directly
-                    score: score,
-                    matchType: 'invoice',
-                    data: invoiceData, // Pass full object for viewing
-                    boxId: item.box_id,
-                    slotId: item.inventory_id,
-                    ocrContent: item.ocr_content, // Include OCR for display
-                    url: item.file_url // Ensure URL is passed for download/view
-                };
-            });
-            resolve(matches);
-        });
-    });
+                    let boxDataFound = false;
+                    try {
+                        const data = JSON.parse(item.boxData || '{}');
+                        if (data.ordners) {
+                            data.ordners.forEach(ord => {
+                                if (String(ord.noOrdner || '').toLowerCase().includes(query)) boxDataFound = true;
+                                if (ord.invoices) {
+                                    ord.invoices.forEach(inv => {
+                                        if (String(inv.invoiceNo || '').toLowerCase().includes(query)) boxDataFound = true;
+                                        if (String(inv.vendor || '').toLowerCase().includes(query)) boxDataFound = true;
+                                    });
+                                }
+                            });
+                        }
+                    } catch { }
 
-    // 3. Search External Items (Indoarsip)
-    const extPromise = new Promise((resolve) => {
-        const sql = `SELECT * FROM external_items`;
-        db.all(sql, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
+                    if (boxDataFound) { score += 0.3; found = true; }
 
-            const matches = [];
-            rows.forEach(item => {
-                const boxId = (item.boxId || '').toLowerCase();
-                const dest = (item.destination || '').toLowerCase();
-                const sender = (item.sender || '').toLowerCase();
-
-                let score = 0;
-                let found = false;
-
-                if (boxId.includes(query)) { score += 0.6; found = true; }
-                if (dest.includes(query)) { score += 0.4; found = true; }
-                if (sender.includes(query)) { score += 0.4; found = true; }
-
-                // Nested search in boxData (if exists)
-                let boxDataFound = false;
-                try {
-                    const data = JSON.parse(item.boxData || '{}');
-                    if (data.ordners) {
-                        data.ordners.forEach(ord => {
-                            if (String(ord.noOrdner || '').toLowerCase().includes(query)) boxDataFound = true;
-                            if (ord.invoices) {
-                                ord.invoices.forEach(inv => {
-                                    if (String(inv.invoiceNo || '').toLowerCase().includes(query)) boxDataFound = true;
-                                    if (String(inv.vendor || '').toLowerCase().includes(query)) boxDataFound = true;
-                                });
-                            }
+                    if (found) {
+                        matches.push({
+                            id: `EXT-${item.id}`,
+                            title: `Box Eksternal: ${item.boxId}`,
+                            type: 'external',
+                            size: item.destination,
+                            uploadDate: item.sentDate,
+                            folderId: 'INVENTORY_EXT',
+                            folderName: '📦 Box Eksternal (Indoarsip)',
+                            score: score,
+                            matchType: 'external_item',
+                            data: item
                         });
                     }
-                } catch (e) { }
+                });
+                return matches;
+            } catch { return []; }
+        })();
 
-                if (boxDataFound) { score += 0.3; found = true; }
+        // 4. Search Tax Summaries
+        const taxSumPromise = (async () => {
+            try {
+                const rows = await knex('tax_summaries');
+                const matches = [];
+                (rows || []).forEach(record => {
+                    const month = (record.month || '').toLowerCase();
+                    const year = String(record.year || '').toLowerCase();
+                    let score = 0;
+                    let found = false;
 
-                if (found) {
-                    matches.push({
-                        id: `EXT-${item.id}`,
-                        title: `Box Eksternal: ${item.boxId}`,
-                        type: 'external',
-                        size: item.destination,
-                        uploadDate: item.sentDate,
-                        folderId: 'INVENTORY_EXT',
-                        folderName: '📦 Box Eksternal (Indoarsip)',
-                        score: score,
-                        matchType: 'external_item',
-                        data: item
-                    });
-                }
-            });
-            resolve(matches);
-        });
-    });
+                    if (month.includes(query)) { score += 0.5; found = true; }
+                    if (year.includes(query)) { score += 0.5; found = true; }
 
-    // 4. Search Tax Summaries
-    const taxSumPromise = new Promise((resolve) => {
-        const sql = `SELECT * FROM tax_summaries`;
-        db.all(sql, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
-
-            const matches = [];
-            rows.forEach(record => {
-                const month = (record.month || '').toLowerCase();
-                const year = String(record.year || '').toLowerCase();
-
-                let score = 0;
-                let found = false;
-
-                if (month.includes(query)) { score += 0.5; found = true; }
-                if (year.includes(query)) { score += 0.5; found = true; }
-
-                // Check specific values if query is a number
-                if (!isNaN(query) && query.length > 3) {
-                    // Cari di dalam string JSON data
-                    const dataStr = typeof record.data === 'string' ? record.data : JSON.stringify(record.data || {});
-                    if (dataStr.toLowerCase().includes(query)) {
-                        score += 0.4;
-                        found = true;
+                    if (!isNaN(query) && query.length > 3) {
+                        const dataStr = typeof record.data === 'string' ? record.data : JSON.stringify(record.data || {});
+                        if (dataStr.toLowerCase().includes(query)) { score += 0.4; found = true; }
                     }
-                }
 
-                if (found) {
-                    matches.push({
-                        id: `TAXSUM-${record.id}`,
-                        title: `Ringkasan Pajak ${record.month} ${record.year}`,
-                        type: 'tax_summary',
-                        size: `PPH 23: ${record.pph23}`,
-                        uploadDate: new Date().toISOString(),
-                        folderId: 'TAX_SUMMARY',
-                        folderName: '📊 Tax Compliance',
-                        score: score,
-                        matchType: 'tax_summary',
-                        data: record
-                    });
-                }
-            });
-            resolve(matches);
-        });
-    });
+                    if (found) {
+                        matches.push({
+                            id: `TAXSUM-${record.id}`,
+                            title: `Ringkasan Pajak ${record.month} ${record.year}`,
+                            type: 'tax_summary',
+                            size: `PPH 23: ${record.pph23}`,
+                            uploadDate: new Date().toISOString(),
+                            folderId: 'TAX_SUMMARY',
+                            folderName: '📊 Tax Compliance',
+                            score: score,
+                            matchType: 'tax_summary',
+                            data: record
+                        });
+                    }
+                });
+                return matches;
+            } catch { return []; }
+        })();
 
-    // 5. Search Tax Objects (Database WP)
-    const taxObjPromise = new Promise((resolve) => {
-        const sql = `SELECT * FROM tax_objects`;
-        db.all(sql, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
-            const matches = rows.filter(item => {
-                const name = (item.name || '').toLowerCase();
-                const idNum = (item.identity_number || '').toLowerCase();
-                const objName = (item.tax_object_name || '').toLowerCase();
-                const objCode = (item.tax_object_code || '').toLowerCase();
-                return name.includes(query) || idNum.includes(query) || objName.includes(query) || objCode.includes(query);
-            }).map(item => ({
-                id: `TAXOBJ-${item.id}`,
-                title: `Wajib Pajak: ${item.name}`,
-                type: 'tax_object',
-                size: `${item.id_type}: ${item.identity_number}`,
-                uploadDate: item.created_at,
-                folderId: 'TAX_OBJECT',
-                folderName: 'Database WP',
-                score: 0.6,
-                matchType: 'tax_object',
-                data: item
-            }));
-            resolve(matches);
-        });
-    });
+        // 5. Search Tax Objects (Database WP)
+        const taxObjPromise = (async () => {
+            try {
+                const rows = await knex('tax_objects');
+                return (rows || []).filter(item => {
+                    const name = (item.name || '').toLowerCase();
+                    const idNum = (item.identity_number || '').toLowerCase();
+                    const objName = (item.tax_object_name || '').toLowerCase();
+                    const objCode = (item.tax_object_code || '').toLowerCase();
+                    return name.includes(query) || idNum.includes(query) || objName.includes(query) || objCode.includes(query);
+                }).map(item => ({
+                    id: `TAXOBJ-${item.id}`,
+                    title: `Wajib Pajak: ${item.name}`,
+                    type: 'tax_object',
+                    size: `${item.id_type}: ${item.identity_number}`,
+                    uploadDate: item.created_at,
+                    folderId: 'TAX_OBJECT',
+                    folderName: 'Database WP',
+                    score: 0.6,
+                    matchType: 'tax_object',
+                    data: item
+                }));
+            } catch { return []; }
+        })();
 
-    // 6. Search Pustaka (Guides & Slides)
-    const pustakaPromise = new Promise((resolve) => {
-        const sql = `
-            SELECT g.*, s.title as slideTitle, s.content as slideContent 
-            FROM pustaka_guides g 
-            LEFT JOIN pustaka_slides s ON g.id = s.guide_id
-        `;
-        db.all(sql, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
-            const groups = {};
-            rows.forEach(row => {
-                if (!groups[row.id]) groups[row.id] = { ...row, searchableContent: (row.title + " " + (row.description || "")).toLowerCase() };
-                if (row.slideTitle) groups[row.id].searchableContent += ` ${row.slideTitle.toLowerCase()} ${row.slideContent.toLowerCase()}`;
-            });
-            const matches = Object.values(groups).filter(g => g.searchableContent.includes(query)).map(g => ({
-                id: `PUSTAKA-${g.id}`,
-                title: `Pustaka: ${g.title}`,
-                type: 'pustaka',
-                size: g.category,
-                uploadDate: g.created_at,
-                folderId: 'PUSTAKA',
-                folderName: 'Pustaka Pengetahuan',
-                score: 0.5,
-                matchType: 'pustaka',
-                ocrContent: g.description,
-                data: g
-            }));
-            resolve(matches);
-        });
-    });
+        // 6. Search Pustaka (Guides & Slides)
+        const pustakaPromise = (async () => {
+            try {
+                const rows = await knex('pustaka_guides as g')
+                    .select('g.*', 's.title as slideTitle', 's.content as slideContent')
+                    .leftJoin('pustaka_slides as s', 'g.id', 's.guide_id');
 
-    // 7. Search Approvals
-    const approvalPromise = new Promise((resolve) => {
-        db.all(`SELECT * FROM document_approvals`, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
-            const matches = rows.filter(a => (a.title || '').toLowerCase().includes(query) || (a.description || '').toLowerCase().includes(query))
-                .map(a => ({
-                    id: `APP-${a.id}`,
-                    title: `Approval: ${a.title}`,
-                    type: 'approval',
-                    size: a.division,
-                    uploadDate: a.created_at,
-                    folderId: 'APPROVAL',
-                    folderName: 'Document Approval',
+                const groups = {};
+                rows.forEach(row => {
+                    if (!groups[row.id]) groups[row.id] = { ...row, searchableContent: (row.title + " " + (row.description || "")).toLowerCase() };
+                    if (row.slideTitle) groups[row.id].searchableContent += ` ${row.slideTitle.toLowerCase()} ${row.slideContent.toLowerCase()}`;
+                });
+                return Object.values(groups).filter(g => g.searchableContent.includes(query)).map(g => ({
+                    id: `PUSTAKA-${g.id}`,
+                    title: `Pustaka: ${g.title}`,
+                    type: 'pustaka',
+                    size: g.category,
+                    uploadDate: g.created_at,
+                    folderId: 'PUSTAKA',
+                    folderName: 'Pustaka Pengetahuan',
                     score: 0.5,
-                    matchType: 'approval',
-                    data: a
+                    matchType: 'pustaka',
+                    ocrContent: g.description,
+                    data: g
                 }));
-            resolve(matches);
-        });
-    });
+            } catch { return []; }
+        })();
 
-    // 8. Search Chat History / Notes
-    const notePromise = new Promise((resolve) => {
-        db.all(`
-            SELECT n.*, a.title as auditTitle 
-            FROM tax_audit_notes n 
-            LEFT JOIN tax_audits a ON n.auditId = a.id
-        `, [], (err, rows) => {
-            if (err || !rows) return resolve([]);
-            const matches = rows.filter(n => (n.text || '').toLowerCase().includes(query))
-                .map(n => ({
-                    id: `NOTE-${n.id}`,
-                    title: `Catatan: ${n.user}`,
-                    type: 'note',
-                    size: 'Chat History',
-                    uploadDate: n.timestamp,
-                    folderId: 'NOTE',
-                    folderName: n.auditTitle || 'Diskusi',
-                    score: 0.4,
-                    matchType: 'note',
-                    ocrContent: n.text,
-                    parentId: n.auditId,
-                    parentType: 'audit',
-                    data: n
-                }));
-            resolve(matches);
-        });
-    });
+        // 7. Search Approvals
+        const approvalPromise = (async () => {
+            try {
+                const rows = await knex('document_approvals');
+                return (rows || []).filter(a => (a.title || '').toLowerCase().includes(query) || (a.description || '').toLowerCase().includes(query))
+                    .map(a => ({
+                        id: `APP-${a.id}`,
+                        title: `Approval: ${a.title}`,
+                        type: 'approval',
+                        size: a.division,
+                        uploadDate: a.created_at,
+                        folderId: 'APPROVAL',
+                        folderName: 'Document Approval',
+                        score: 0.5,
+                        matchType: 'approval',
+                        data: a
+                    }));
+            } catch { return []; }
+        })();
 
-    Promise.all([docPromise, invPromise, extPromise, taxSumPromise, taxObjPromise, pustakaPromise, approvalPromise, notePromise]).then(([docs, invs, exts, taxSums, taxObjs, pustakas, apps, notes]) => {
-        // Merge and Sort by Score
+        // 8. Search Chat History / Notes
+        const notePromise = (async () => {
+            try {
+                const rows = await knex('tax_audit_notes as n')
+                    .select('n.*', 'a.title as auditTitle')
+                    .leftJoin('tax_audits as a', 'n.auditId', 'a.id');
+
+                return (rows || []).filter(n => (n.text || '').toLowerCase().includes(query))
+                    .map(n => ({
+                        id: `NOTE-${n.id}`,
+                        title: `Catatan: ${n.user}`,
+                        type: 'note',
+                        size: 'Chat History',
+                        uploadDate: n.timestamp,
+                        folderId: 'NOTE',
+                        folderName: n.auditTitle || 'Diskusi',
+                        score: 0.4,
+                        matchType: 'note',
+                        ocrContent: n.text,
+                        parentId: n.auditId,
+                        parentType: 'audit',
+                        data: n
+                    }));
+            } catch { return []; }
+        })();
+
+        const [docs, invs, exts, taxSums, taxObjs, pustakas, apps, notes] = await Promise.all([
+            docPromise, invPromise, extPromise, taxSumPromise, taxObjPromise, pustakaPromise, approvalPromise, notePromise
+        ]);
+
         const allResults = [...docs, ...invs, ...exts, ...taxSums, ...taxObjs, ...pustakas, ...apps, ...notes].sort((a, b) => b.score - a.score);
-        res.json(allResults.slice(0, 50)); // Limit to top 50
-    }).catch(err => {
+        res.json(allResults.slice(0, 50));
+    } catch (err) {
         console.error("Search Error:", err);
         res.status(500).json({ error: "Search failed" });
-    });
+    }
 });
 
 
@@ -833,36 +878,30 @@ function processInventoryFiles(dataObj, contextId) {
     return dataObj;
 }
 
-// INCREASE MYSQL PACKET SIZE (Critical for large uploads)
-db.run("SET GLOBAL max_allowed_packet = 67108864", [], (err) => { // 64MB
-    if (err) console.error("Warning: Failed to set max_allowed_packet:", err.message);
-    else console.log("MySQL Config: max_allowed_packet set to 64MB for large uploads");
-});
+// INCREASE MYSQL PACKET SIZE
+knex.raw("SET GLOBAL max_allowed_packet = 67108864")
+    .then(() => console.log("MySQL Config: max_allowed_packet set to 64MB for large uploads"))
+    .catch(err => console.error("Warning: Failed to set max_allowed_packet:", err.message));
 
 // --- USERS ---
 // --- AUTH HANDLERS ---
-app.post('/api/login', (req, res) => {
-    const { username, password } = req.body;
+app.post('/api/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        const user = await knex('users').where('username', username).first();
 
-    db.get("SELECT * FROM users WHERE username = ?", [username], async (err, user) => {
-        if (err) return res.status(500).json({ error: err.message });
         if (!user) return res.status(401).json({ error: "Invalid credentials" });
 
-        // Check password (bcrypt hash check, with auto-migration for legacy plaintext)
         let match = false;
         if (user.password.startsWith('$2b$') || user.password.startsWith('$2a$')) {
             match = await bcrypt.compare(password, user.password);
         } else {
-            // Legacy plaintext: compare directly, then auto-hash for security
             match = (user.password === password);
             if (match) {
-                // Auto-migrate: hash the plaintext password in DB
                 try {
                     const hashedPassword = await bcrypt.hash(password, 10);
-                    db.run("UPDATE users SET password = ? WHERE id = ?", [hashedPassword, user.id], (hashErr) => {
-                        if (hashErr) console.error("[Auth] Auto-hash migration failed:", hashErr.message);
-                        else console.log(`[Auth] Auto-migrated password for user: ${user.username}`);
-                    });
+                    await knex('users').where('id', user.id).update({ password: hashedPassword });
+                    console.log(`[Auth] Auto-migrated password for user: ${user.username}`);
                 } catch (hashErr) {
                     console.error("[Auth] Auto-hash migration error:", hashErr);
                 }
@@ -870,243 +909,243 @@ app.post('/api/login', (req, res) => {
         }
 
         if (match) {
-            // Remove password from response
-            const { password, ...userWithoutPass } = user;
-
-            // Log login
-            const logDate = new Date().toISOString();
-            // We can't update last_login if column doesn't exist, preserving schema for now.
-            // Just return user.
-
+            const { password: _, ...userWithoutPass } = user;
             res.json(userWithoutPass);
         } else {
             res.status(401).json({ error: "Invalid credentials" });
         }
-    });
-
-    // Admin/Viewer hardcoded check can be moved to DB or kept here if essential fallback
-    // But ideally we should rely on DB users. 
-    // Additional logic could handle 'admin'/'viewer' if they are not in DB, but let's assume valid users are in DB now.
-});
-
-app.get('/api/users', (req, res) => {
-    // Exclude password from result
-    db.all("SELECT id, username, name, role, department FROM users", [], (err, rows) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
-        }
-        res.json(rows);
-    });
-});
-
-
-
-app.post('/api/users', async (req, res) => {
-    const { username, password, name, role, department } = req.body;
-    try {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        db.run("INSERT INTO users (username, password, name, role, department) VALUES (?, ?, ?, ?, ?)",
-            [username, hashedPassword, name, role, department],
-            function (err) {
-                if (err) return res.status(500).json({ error: err.message });
-                res.json({ id: this.lastID });
-            }
-        );
-    } catch (e) {
-        res.status(500).json({ error: "Failed to hash password" });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
 });
 
-app.put('/api/users/:id', (req, res) => {
-    const { username, password, name, role, department } = req.body;
-
-    // Fetch OLD value for Audit
-    db.get("SELECT * FROM users WHERE id = ?", [req.params.id], async (err, oldUser) => {
-        if (err || !oldUser) {
-            console.error("Failed to fetch old user for audit", err);
-        }
-
-        let newPassword = password;
-        if (password && password !== oldUser.password && !password.startsWith('$2b$')) {
-            // Only hash if it looks like a new plaintext password
-            newPassword = await bcrypt.hash(password, 10);
-        }
-
-        db.run("UPDATE users SET username = ?, password = ?, name = ?, role = ?, department = ? WHERE id = ?",
-            [username, newPassword, name, role, department, req.params.id],
-            async function (err) {
-                if (err) return res.status(500).json({ error: err.message });
-
-                // Detailed Audit Log
-                if (oldUser) {
-                    const changes = [];
-                    if (oldUser.username !== username) changes.push(`Username: ${oldUser.username} -> ${username}`);
-                    if (oldUser.role !== role) changes.push(`Role: ${oldUser.role} -> ${role}`);
-                    if (oldUser.department !== department) changes.push(`Dept: ${oldUser.department} -> ${department}`);
-
-                    if (changes.length > 0) {
-                        await systemLog(null, "Update User", `Update User: ${name}`, JSON.stringify(oldUser), JSON.stringify({ username, password: '***', name, role, department }));
-                    }
-                }
-
-                res.json({ success: true, changes: this.changes });
-            }
-        );
-    });
+app.get('/api/users', async (req, res) => {
+    try {
+        const rows = await knex('users').select('id', 'username', 'name', 'role', 'department');
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/users/profile/:id', (req, res) => {
-    const { name, currentPassword, newPassword } = req.body;
-    const userId = req.params.id;
-
-    db.get("SELECT * FROM users WHERE id = ?", [userId], async (err, user) => {
-        if (err || !user) {
-            return res.status(404).json({ success: false, error: 'User not found' });
-        }
-
-        // If trying to update password, verify current password first
-        if (newPassword) {
-            const match = await bcrypt.compare(currentPassword, user.password);
-            if (!match) {
-                return res.status(400).json({ success: false, error: 'Password saat ini salah' });
-            }
-        }
-
-        const updatedName = name || user.name;
-        let updatedPassword = user.password;
-
-        if (newPassword) {
-            updatedPassword = await bcrypt.hash(newPassword, 10);
-        }
-
-        db.run("UPDATE users SET name = ?, password = ? WHERE id = ?",
-            [updatedName, updatedPassword, userId],
-            async function (err) {
-                if (err) return res.status(500).json({ success: false, error: err.message });
-
-                const oldValues = { name: user.name, password: '***' };
-                const newValues = { name: updatedName, password: newPassword ? '***' : '***' };
-
-                await systemLog(user.name, "Update Profile", `User ${user.username} updated their profile`, JSON.stringify(oldValues), JSON.stringify(newValues));
-
-                res.json({
-                    success: true,
-                    user: {
-                        ...user,
-                        name: updatedName,
-                        password: updatedPassword
-                    }
-                });
-            }
-        );
-    });
+app.post('/api/users', async (req, res) => {
+    try {
+        const { username, password, name, role, department } = req.body;
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const [id] = await knex('users').insert({
+            username,
+            password: hashedPassword,
+            name,
+            role,
+            department
+        });
+        res.json({ id });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
-app.delete('/api/users/:id', (req, res) => {
-    db.run("DELETE FROM users WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.put('/api/users/:id', async (req, res) => {
+    try {
+        const { username, password, name, role, department } = req.body;
+        const userId = req.params.id;
+
+        await knex.transaction(async trx => {
+            const oldUser = await trx('users').where('id', userId).first();
+            if (!oldUser) throw new Error("User not found");
+
+            let newPassword = password;
+            if (password && password !== oldUser.password && !password.startsWith('$2b$')) {
+                newPassword = await bcrypt.hash(password, 10);
+            }
+
+            await trx('users').where('id', userId).update({
+                username,
+                password: newPassword,
+                name,
+                role,
+                department
+            });
+
+            const changes = [];
+            if (oldUser.username !== username) changes.push(`Username: ${oldUser.username} -> ${username}`);
+            if (oldUser.role !== role) changes.push(`Role: ${oldUser.role} -> ${role}`);
+            if (oldUser.department !== department) changes.push(`Dept: ${oldUser.department} -> ${department}`);
+
+            if (changes.length > 0) {
+                await systemLog(null, "Update User", `Update User: ${name}`, JSON.stringify(oldUser), JSON.stringify({ username, password: '***', name, role, department }));
+            }
+        });
+
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/users/profile/:id', async (req, res) => {
+    try {
+        const { name, currentPassword, newPassword } = req.body;
+        const userId = req.params.id;
+
+        await knex.transaction(async trx => {
+            const user = await trx('users').where('id', userId).first();
+            if (!user) throw new Error("User not found");
+
+            if (newPassword) {
+                const match = await bcrypt.compare(currentPassword, user.password);
+                if (!match) throw new Error("Password saat ini salah");
+            }
+
+            const updatedName = name || user.name;
+            let updatedPassword = user.password;
+            if (newPassword) {
+                updatedPassword = await bcrypt.hash(newPassword, 10);
+            }
+
+            await trx('users').where('id', userId).update({
+                name: updatedName,
+                password: updatedPassword
+            });
+
+            await systemLog(user.name, "Update Profile", `User ${user.username} updated their profile`, JSON.stringify({ name: user.name, password: '***' }), JSON.stringify({ name: updatedName, password: '***' }));
+
+            res.json({
+                success: true,
+                user: {
+                    ...user,
+                    name: updatedName,
+                    password: updatedPassword
+                }
+            });
+        });
+    } catch (err) {
+        res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+    try {
+        await knex('users').where('id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- DEPARTMENTS ---
-app.get('/api/departments', (req, res) => {
-    db.all("SELECT * FROM departments", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows); // Return full objects {id, name}
-    });
+app.get('/api/departments', async (req, res) => {
+    try {
+        const rows = await knex('departments');
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/departments', (req, res) => {
-    db.run("INSERT INTO departments (name) VALUES (?)", [req.body.name], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ id: this.lastID });
-    });
+app.post('/api/departments', async (req, res) => {
+    try {
+        const [id] = await knex('departments').insert({ name: req.body.name });
+        res.json({ id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/departments/:id', (req, res) => {
-    const newName = req.body.name;
-    db.get("SELECT * FROM departments WHERE id = ?", [req.params.id], (err, oldDept) => {
-        if (err) console.error("Audit fetch failed for department:", err);
+app.put('/api/departments/:id', async (req, res) => {
+    try {
+        const newName = req.body.name;
+        const deptId = req.params.id;
 
-        db.run("UPDATE departments SET name = ? WHERE id = ?", [newName, req.params.id], async (err) => {
-            if (err) return res.status(500).json({ error: err.message });
+        await knex.transaction(async trx => {
+            const oldDept = await trx('departments').where('id', deptId).first();
+            await trx('departments').where('id', deptId).update({ name: newName });
 
             if (oldDept && oldDept.name !== newName) {
-                await systemLog(null, "Update Department", `Department ID ${req.params.id} name changed: ${oldDept.name} -> ${newName}`, oldDept.name, newName);
+                await systemLog(null, "Update Department", `Department ID ${deptId} name changed: ${oldDept.name} -> ${newName}`, oldDept.name, newName);
             }
-            res.json({ success: true });
         });
-    });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.delete('/api/departments/:id', (req, res) => {
-    db.run("DELETE FROM departments WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.delete('/api/departments/:id', async (req, res) => {
+    try {
+        await knex('departments').where('id', req.params.id).del();
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- ROLES ---
-app.get('/api/roles', (req, res) => {
-    db.all("SELECT * FROM roles", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        // Map DB 'label' -> Frontend 'name' AND DB 'access' -> Frontend 'permissions'
+app.get('/api/roles', async (req, res) => {
+    try {
+        const rows = await knex('roles');
         res.json(rows.map(r => ({
             id: r.id,
             name: r.label,
             permissions: JSON.parse(r.access)
         })));
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/roles', (req, res) => {
-    // Map Frontend 'name' -> DB 'label' AND Frontend 'permissions' -> DB 'access'
-    // Generate simple ID from name if not provided (slugify)
-    const { name, permissions } = req.body;
-    const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
-
-    db.run("INSERT INTO roles (id, label, access) VALUES (?, ?, ?)",
-        [id, name, JSON.stringify(permissions)],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, id });
-        }
-    );
+app.post('/api/roles', async (req, res) => {
+    try {
+        const { name, permissions } = req.body;
+        const id = name.toLowerCase().replace(/[^a-z0-9]/g, '-');
+        await knex('roles').insert({
+            id,
+            label: name,
+            access: JSON.stringify(permissions)
+        });
+        res.json({ success: true, id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/roles/:id', (req, res) => {
-    const { name, permissions } = req.body;
-    const newPermissionsJson = JSON.stringify(permissions);
+app.put('/api/roles/:id', async (req, res) => {
+    try {
+        const { name, permissions } = req.body;
+        const newPermissionsJson = JSON.stringify(permissions);
+        const roleId = req.params.id;
 
-    db.get("SELECT * FROM roles WHERE id = ?", [req.params.id], (err, oldRole) => {
-        if (err) console.error("Audit fetch failed for role:", err);
+        await knex.transaction(async trx => {
+            const oldRole = await trx('roles').where('id', roleId).first();
+            await trx('roles').where('id', roleId).update({
+                label: name,
+                access: newPermissionsJson
+            });
 
-        db.run("UPDATE roles SET label = ?, access = ? WHERE id = ?",
-            [name, newPermissionsJson, req.params.id],
-            async (err) => {
-                if (err) return res.status(500).json({ error: err.message });
+            if (oldRole) {
+                const changes = [];
+                if (oldRole.label !== name) changes.push(`Name: ${oldRole.label} -> ${name}`);
+                if (oldRole.access !== newPermissionsJson) changes.push(`Permissions changed`);
 
-                if (oldRole) {
-                    const changes = [];
-                    if (oldRole.label !== name) changes.push(`Name: ${oldRole.label} -> ${name}`);
-                    if (oldRole.access !== newPermissionsJson) changes.push(`Permissions changed`);
-
-                    if (changes.length > 0) {
-                        await systemLog(null, "Update Role", `Role ID ${req.params.id} updated: ${changes.join(', ')}`, JSON.stringify(oldRole), JSON.stringify({ id: req.params.id, name, permissions }));
-                    }
+                if (changes.length > 0) {
+                    await systemLog(null, "Update Role", `Role ID ${roleId} updated: ${changes.join(', ')}`, JSON.stringify(oldRole), JSON.stringify({ id: roleId, name, permissions }));
                 }
-                res.json({ success: true });
             }
-        );
-    });
+        });
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.delete('/api/roles/:id', (req, res) => {
-    db.run("DELETE FROM roles WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.delete('/api/roles/:id', async (req, res) => {
+    try {
+        await knex('roles').where('id', req.params.id).del();
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- OCR STATUS API ---
@@ -1134,24 +1173,23 @@ app.get('/api/ocr/status', async (req, res) => {
 });
 
 // NEW: Reset OCR Queue Endpoint (Fix Stuck Jobs)
-app.post('/api/ocr/reset', (req, res) => {
-    db.run("UPDATE job_queue SET status = 'waiting' WHERE status = 'active'", [], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.post('/api/ocr/reset', async (req, res) => {
+    try {
+        await knex('job_queue').where('status', 'active').update({ status: 'waiting' });
         res.json({ success: true, message: "Queue reset successfully" });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- INVENTORY ---
-app.get('/api/inventory', (req, res) => {
-    db.all("SELECT * FROM inventory ORDER BY id ASC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        // Map data yang ada berdasarkan ID
+app.get('/api/inventory', async (req, res) => {
+    try {
+        const rows = await knex('inventory').orderBy('id', 'asc');
         const rowMap = {};
-        rows.forEach(r => { rowMap[r.id] = r; });
+        (rows || []).forEach(r => { rowMap[r.id] = r; });
 
         const fullInventory = [];
-        // Pastikan selalu ada 100 slot (Self-Healing jika ada baris yang hilang di DB)
         for (let i = 1; i <= 100; i++) {
             if (rowMap[i]) {
                 const r = rowMap[i];
@@ -1178,50 +1216,47 @@ app.get('/api/inventory', (req, res) => {
                     status: (r.status || 'EMPTY').toUpperCase(),
                     lastUpdated: rawLastUpdated,
                     boxData: parsedBoxData,
-                    history: parsedHistory,
-                    rack: r.rack,
-                    shelf: r.shelf,
-                    position: r.position
+                    history: parsedHistory
                 });
             } else {
-                // Jika baris ID i tidak ada di DB (seperti kasus slot 2 hilang), buat data dummy EMPTY
                 fullInventory.push({ id: i, status: 'EMPTY', boxData: null, history: [], lastUpdated: null });
             }
         }
         res.json(fullInventory);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- INVENTORY ANALYTICS (PREDICTION) ---
-app.get('/api/inventory/analytics', (req, res) => {
-    // Top 10 most moved/retrieved items in log history
-    const sql = `
-        SELECT details as location, COUNT(*) as frequency, MAX(timestamp) as last_access 
-        FROM logs 
-        WHERE (action = 'RETRIEVE' OR action = 'BORROW' OR action = 'MOVE') 
-        GROUP BY details 
-        ORDER BY frequency DESC 
-        LIMIT 10
-    `;
-
-    db.all(sql, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        // Enriched with current inventory status if possible, 
-        // but for now simple log aggregation is enough for the "Heatmap"
+app.get('/api/inventory/analytics', async (req, res) => {
+    try {
+        const rows = await knex('logs')
+            .select('details as location')
+            .count('* as frequency')
+            .max('timestamp as last_access')
+            .whereIn('action', ['RETRIEVE', 'BORROW', 'MOVE'])
+            .groupBy('details')
+            .orderBy('frequency', 'desc')
+            .limit(10);
         res.json(rows);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/inventory/move', (req, res) => {
-    const { sourceId, targetId, user } = req.body;
+app.post('/api/inventory/move', async (req, res) => {
+    try {
+        const { sourceId, targetId, user } = req.body;
 
-    db.get("SELECT * FROM inventory WHERE id = ?", [sourceId], (err, source) => {
-        if (err || !source) return res.status(500).json({ error: "Source slot not found" });
-        if (source.status === 'EMPTY') return res.status(400).json({ error: "Source slot is empty" });
+        await knex.transaction(async trx => {
+            const source = await trx('inventory').where('id', sourceId).first();
+            if (!source) throw new Error("Source slot not found");
+            if (source.status === 'EMPTY') throw new Error("Source slot is empty");
 
-        db.get("SELECT * FROM inventory WHERE id = ?", [targetId], (err, target) => {
-            if (err || !target) return res.status(500).json({ error: "Target slot not found" });
-            if (target.status !== 'EMPTY') return res.status(400).json({ error: "Target slot is not empty" });
+            const target = await trx('inventory').where('id', targetId).first();
+            if (!target) throw new Error("Target slot not found");
+            if (target.status !== 'EMPTY') throw new Error("Target slot is not empty");
 
             const now = new Date().toISOString();
             let sourceHistory = [];
@@ -1247,137 +1282,123 @@ app.post('/api/inventory/move', (req, res) => {
 
             const boxData = source.box_data || source.boxData;
 
-            db.run("UPDATE inventory SET status = ?, box_data = ?, history = ?, lastUpdated = ? WHERE id = ?",
-                [source.status, boxData, JSON.stringify(targetHistory), now, targetId], (err) => {
-                    if (err) return res.status(500).json({ error: err.message });
+            await trx('inventory').where('id', targetId).update({
+                status: source.status,
+                box_data: boxData,
+                history: JSON.stringify(targetHistory),
+                lastUpdated: now
+            });
 
-                    db.run("UPDATE inventory SET status = 'EMPTY', box_data = NULL, history = ?, lastUpdated = ? WHERE id = ?",
-                        [JSON.stringify(sourceHistory), now, sourceId], (err2) => {
-                            if (err2) return res.status(500).json({ error: err2.message });
+            await trx('inventory').where('id', sourceId).update({
+                status: 'EMPTY',
+                box_data: null,
+                history: JSON.stringify(sourceHistory),
+                lastUpdated: now
+            });
 
-                            // Sync relational table: update box's inventory_id
-                            db.run("UPDATE boxes SET inventory_id = ? WHERE inventory_id = ?", [targetId, sourceId], (boxErr) => {
-                                if (boxErr) console.error("Failed to update boxes.inventory_id:", boxErr.message);
-                            });
-
-                            res.json({ success: true });
-                        });
-                });
+            await trx('boxes').where('inventory_id', sourceId).update({ inventory_id: targetId });
         });
-    });
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/inventory/:id', (req, res) => {
-    // FIX: Support box_data (LONGTEXT) dari frontend
-    let { status, lastUpdated, boxData, history, box_data } = req.body;
-    status = (status || 'EMPTY').toUpperCase();
-
-    // 1. Parse & Process Files to Disk
-    let dataObj = null;
+app.put('/api/inventory/:id', async (req, res) => {
     try {
-        const raw = box_data !== undefined ? box_data : boxData;
-        console.log("Processing Inventory Payload:", typeof raw, raw ? "Raw Length: " + raw.length : "Raw is null");
-        if (raw && typeof raw === 'string' && raw.includes('/uploads/')) {
-            console.log("Payload contains /uploads/ path, confirming URL preservation.");
-        }
-        dataObj = typeof raw === 'string' ? JSON.parse(raw) : raw;
-        dataObj = processInventoryFiles(dataObj, req.params.id);
-        console.log("Processed DataObj Invoices:", JSON.stringify(dataObj?.ordners?.[0]?.invoices || []));
-    } catch (e) { console.error("Error processing inventory files:", e); }
+        let { status, lastUpdated, boxData, history, box_data } = req.body;
+        status = (status || 'EMPTY').toUpperCase();
+        const slotId = req.params.id;
 
-    // 2. Prepare for DB
-    const boxDataToSave = dataObj ? JSON.stringify(dataObj) : null;
-    const historyJson = JSON.stringify(history || []);
+        // 1. Parse & Process Files to Disk
+        let dataObj = null;
+        try {
+            const raw = box_data !== undefined ? box_data : boxData;
+            dataObj = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            dataObj = processInventoryFiles(dataObj, slotId);
+        } catch (e) { console.error("Error processing inventory files:", e); }
 
-    // Fetch OLD value
-    db.get("SELECT * FROM inventory WHERE id = ?", [req.params.id], (err, oldItem) => {
-        if (err) return res.status(500).json({ error: err.message });
+        // 2. Prepare for DB
+        const boxDataToSave = dataObj ? JSON.stringify(dataObj) : null;
+        const historyJson = JSON.stringify(history || []);
 
-        // FIX: Primary Update - Save to box_data (LONGTEXT). boxData column is deprecated/dropped.
-        db.run("UPDATE inventory SET status = ?, lastUpdated = ?, box_data = ?, history = ? WHERE id = ?",
-            [status, lastUpdated, boxDataToSave, historyJson, req.params.id],
-            async (err) => {
-                try {
-                    if (err) {
-                        return res.status(500).json({ error: err.message });
-                    }
+        await knex.transaction(async trx => {
+            // Primary Update
+            await trx('inventory').where('id', slotId).update({
+                status,
+                lastUpdated,
+                box_data: boxDataToSave,
+                history: historyJson
+            });
 
-                    // --- SYNC TO RELATIONAL TABLES (boxes, ordners, invoices) ---
-                    const slotId = req.params.id;
+            // SYNC TO RELATIONAL TABLES
+            await trx('boxes').where('inventory_id', slotId).del();
+            await trx('inventory_items').where('inventory_id', slotId).del();
 
-                    // 1. Delete old relational data for this slot
-                    db.run("DELETE FROM boxes WHERE inventory_id = ?", [slotId], (delErr) => {
-                        if (delErr) console.error("Error clearing boxes:", delErr);
-                    });
+            if (dataObj && dataObj.id) {
+                const [boxRefId] = await trx('boxes').insert({
+                    inventory_id: slotId,
+                    box_id: dataObj.id
+                });
 
-                    // Also sync inventory_items for backward compatibility
-                    db.run("DELETE FROM inventory_items WHERE inventory_id = ?", [slotId], (delErr) => {
-                        if (delErr) console.error("Error clearing inventory_items:", delErr);
-                    });
+                if (dataObj.ordners && Array.isArray(dataObj.ordners)) {
+                    for (const ord of dataObj.ordners) {
+                        const [ordnerRefId] = await trx('ordners').insert({
+                            box_ref_id: boxRefId,
+                            no_ordner: ord.noOrdner || '',
+                            period: ord.period || ''
+                        });
 
-                    // 2. Insert new relational data
-                    if (dataObj && dataObj.id) {
-                        db.run("INSERT INTO boxes (inventory_id, box_id) VALUES (?, ?)",
-                            [slotId, dataObj.id], function (bErr) {
-                                if (bErr) { console.error("Box insert err:", bErr.message); return; }
-                                const boxRefId = this.lastID;
+                        if (ord.invoices && Array.isArray(ord.invoices)) {
+                            for (const inv of ord.invoices) {
+                                const invoiceNo = inv.invoiceNo || '';
+                                const vendor = inv.vendor || '';
+                                const paymentDate = inv.paymentDate || null;
+                                const fileUrl = inv.file || '';
+                                const fileName = inv.fileName || '';
+                                const ocrContent = typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || '');
 
-                                if (!dataObj.ordners || !Array.isArray(dataObj.ordners)) return;
+                                await trx('invoices').insert({
+                                    ordner_ref_id: ordnerRefId,
+                                    invoice_no: invoiceNo,
+                                    vendor: vendor,
+                                    payment_date: paymentDate,
+                                    file_url: fileUrl,
+                                    file_name: fileName,
+                                    ocr_content: ocrContent
+                                });
 
-                                dataObj.ordners.forEach(ord => {
-                                    db.run("INSERT INTO ordners (box_ref_id, no_ordner, period) VALUES (?, ?, ?)",
-                                        [boxRefId, ord.noOrdner || '', ord.period || ''], function (oErr) {
-                                            if (oErr) { console.error("Ordner insert err:", oErr.message); return; }
-                                            const ordnerRefId = this.lastID;
-
-                                            if (!ord.invoices || !Array.isArray(ord.invoices)) return;
-
-                                            ord.invoices.forEach(inv => {
-                                                const invoiceNo = inv.invoiceNo || '';
-                                                const vendor = inv.vendor || '';
-                                                const paymentDate = inv.paymentDate || null;
-                                                const fileUrl = inv.file || '';
-                                                const fileName = inv.fileName || '';
-                                                const ocrContent = typeof inv.ocrContent === 'string' ? inv.ocrContent : JSON.stringify(inv.ocrContent || '');
-
-                                                // New normalized table
-                                                db.run(`INSERT INTO invoices (ordner_ref_id, invoice_no, vendor, payment_date, file_url, file_name, ocr_content) 
-                                                        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                                                    [ordnerRefId, invoiceNo, vendor, paymentDate, fileUrl, fileName, ocrContent],
-                                                    (iErr) => { if (iErr) console.error("Invoice insert err:", iErr.message); }
-                                                );
-
-                                                // Legacy inventory_items (for search compatibility)
-                                                const amount = inv.totalAmount ? parseFloat(String(inv.totalAmount).replace(/[^0-9.-]+/g, "")) : 0;
-                                                db.run(`INSERT INTO inventory_items (inventory_id, box_id, ordner_id, invoice_no, vendor, date, amount, file_url, ocr_content) 
-                                                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                                                    [slotId, dataObj.id, ord.noOrdner, invoiceNo, vendor, paymentDate, amount, fileUrl, ocrContent],
-                                                    (insErr) => { if (insErr) console.error("inventory_items sync err:", insErr.message); }
-                                                );
-                                            });
-                                        }
-                                    );
+                                const amount = inv.totalAmount ? parseFloat(String(inv.totalAmount).replace(/[^0-9.-]+/g, "")) : 0;
+                                await trx('inventory_items').insert({
+                                    inventory_id: slotId,
+                                    box_id: dataObj.id,
+                                    ordner_id: ord.no_ordner || ord.noOrdner,
+                                    invoice_no: invoiceNo,
+                                    vendor: vendor,
+                                    date: paymentDate,
+                                    amount: amount,
+                                    file_url: fileUrl,
+                                    ocr_content: ocrContent
                                 });
                             }
-                        );
+                        }
                     }
-
-                    await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${req.params.id}`);
-                    res.json({ success: true, id: req.params.id });
-
-                } catch (e) {
-                    console.error("Critical Error in Update Callback:", e);
-                    if (!res.headersSent) res.status(500).json({ error: e.message });
                 }
             }
-        );
-    });
+        });
+
+        await systemLog(req.body.modifiedBy || "System", "Update Inventory", `Update slot ${slotId}`);
+        res.json({ success: true, id: slotId });
+    } catch (err) {
+        console.error("Critical Error in Inventory Update:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
-app.get('/api/inventory/external', (req, res) => {
-    db.all("SELECT * FROM external_items ORDER BY sentDate DESC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => {
-            // Robust parsing
+app.get('/api/inventory/external', async (req, res) => {
+    try {
+        const rows = await knex('external_items').orderBy('sentDate', 'desc');
+        res.json((rows || []).map(r => {
             let boxData = null;
             let history = [];
             try { boxData = r.boxData ? JSON.parse(r.boxData) : null; } catch (e) { }
@@ -1385,150 +1406,170 @@ app.get('/api/inventory/external', (req, res) => {
             return {
                 ...r,
                 boxData,
-                box_data: boxData, // Add alias for consistency with new schema
+                box_data: boxData,
                 history
             };
         }));
-    });
-});
-
-app.post('/api/inventory/external', (req, res) => {
-    let { boxId, destination, sentDate, sender, boxData, history } = req.body;
-
-    // Process files in boxData before saving
-    if (boxData) {
-        boxData = processInventoryFiles(boxData, 'EXT-' + boxId);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    db.run("INSERT INTO external_items (boxId, destination, sentDate, sender, boxData, history) VALUES (?, ?, ?, ?, ?, ?)",
-        [boxId, destination, sentDate, sender, JSON.stringify(boxData), JSON.stringify(history)],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, id: this.lastID });
-        }
-    );
 });
 
-app.delete('/api/inventory/external/:id', (req, res) => {
-    db.run("DELETE FROM external_items WHERE id = ?", [req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
+app.post('/api/inventory/external', async (req, res) => {
+    try {
+        let { boxId, destination, sentDate, sender, boxData, history } = req.body;
+        if (boxData) {
+            boxData = processInventoryFiles(boxData, 'EXT-' + boxId);
         }
-    );
+
+        const [id] = await knex('external_items').insert({
+            boxId,
+            destination,
+            sentDate,
+            sender,
+            boxData: JSON.stringify(boxData),
+            history: JSON.stringify(history)
+        });
+        res.json({ success: true, id: id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/inventory/external/:id', async (req, res) => {
+    try {
+        await knex('external_items').where('id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- NORMALIZED QUERY ENDPOINTS ---
 
 // Search invoices with filters (vendor, invoice_no, period)
-app.get('/api/invoices', (req, res) => {
-    const { vendor, invoice_no, period, limit = 100, offset = 0 } = req.query;
+app.get('/api/invoices', async (req, res) => {
+    try {
+        const { vendor, invoice_no, period, limit = 100, offset = 0 } = req.query;
 
-    let sql = `
-        SELECT i.*, o.no_ordner, o.period, b.box_id, b.inventory_id
-        FROM invoices i
-        JOIN ordners o ON i.ordner_ref_id = o.id
-        JOIN boxes b ON o.box_ref_id = b.id
-        WHERE 1=1
-    `;
-    const params = [];
+        let query = knex('invoices as i')
+            .select('i.*', 'o.no_ordner', 'o.period', 'b.box_id', 'b.inventory_id')
+            .join('ordners as o', 'i.ordner_ref_id', 'o.id')
+            .join('boxes as b', 'o.box_ref_id', 'b.id');
 
-    if (vendor) {
-        sql += " AND i.vendor LIKE ?";
-        params.push(`%${vendor}%`);
-    }
-    if (invoice_no) {
-        sql += " AND i.invoice_no LIKE ?";
-        params.push(`%${invoice_no}%`);
-    }
-    if (period) {
-        sql += " AND o.period LIKE ?";
-        params.push(`%${period}%`);
-    }
+        if (vendor) query = query.where('i.vendor', 'like', `%${vendor}%`);
+        if (invoice_no) query = query.where('i.invoice_no', 'like', `%${invoice_no}%`);
+        if (period) query = query.where('o.period', 'like', `%${period}%`);
 
-    sql += " ORDER BY i.id DESC LIMIT ? OFFSET ?";
-    params.push(parseInt(limit), parseInt(offset));
-
-    db.all(sql, params, (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+        const rows = await query.orderBy('i.id', 'desc').limit(parseInt(limit)).offset(parseInt(offset));
         res.json(rows || []);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- STATS ---
+app.get('/api/stats', async (req, res) => {
+    try {
+        const [totalInvoices] = await knex('invoices').count('* as count');
+        const [totalValue] = await knex('invoices').sum('total_amount as sum');
+        const [boxCount] = await knex('boxes').count('* as count');
+        const [inventoryCount] = await knex('inventory').whereNot('status', 'EMPTY').count('* as count');
+
+        const monthlyStats = await knex('invoices')
+            .select(knex.raw('strftime("%Y-%m", payment_date) as month'))
+            .count('* as count')
+            .sum('total_amount as total')
+            .groupBy('month')
+            .orderBy('month', 'desc')
+            .limit(6);
+
+        res.json({
+            totalInvoices: totalInvoices.count,
+            totalValue: totalValue.sum || 0,
+            boxCount: boxCount.count,
+            inventoryUsage: inventoryCount.count,
+            monthlyStats
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // Aggregate stats for invoices
-app.get('/api/stats/invoices', (req, res) => {
-    const sql = `
-        SELECT 
-            COUNT(*) as total_invoices,
-            COUNT(DISTINCT b.box_id) as total_boxes,
-            COUNT(DISTINCT o.id) as total_ordners
-        FROM invoices i
-        JOIN ordners o ON i.ordner_ref_id = o.id
-        JOIN boxes b ON o.box_ref_id = b.id
-    `;
+app.get('/api/invoices/stats', async (req, res) => {
+    try {
+        const [stats] = await knex('invoices as i')
+            .select(
+                knex.raw('COUNT(*) as total_invoices'),
+                knex.raw('COUNT(DISTINCT b.box_id) as total_boxes'),
+                knex.raw('COUNT(DISTINCT o.id) as total_ordners')
+            )
+            .join('ordners as o', 'i.ordner_ref_id', 'o.id')
+            .join('boxes as b', 'o.box_ref_id', 'b.id');
 
-    db.get(sql, [], (err, stats) => {
-        if (err) return res.status(500).json({ error: err.message });
+        const topVendors = await knex('invoices')
+            .select('vendor')
+            .count('* as count')
+            .where('vendor', '!=', '')
+            .groupBy('vendor')
+            .orderBy('count', 'desc')
+            .limit(10);
 
-        // Also get top vendors
-        db.all(`
-            SELECT i.vendor, COUNT(*) as count 
-            FROM invoices i 
-            WHERE i.vendor != '' 
-            GROUP BY i.vendor 
-            ORDER BY count DESC 
-            LIMIT 10
-        `, [], (err2, vendors) => {
-            if (err2) return res.status(500).json({ error: err2.message });
+        const byPeriod = await knex('invoices as i')
+            .select('o.period')
+            .count('* as count')
+            .join('ordners as o', 'i.ordner_ref_id', 'o.id')
+            .where('o.period', '!=', '')
+            .groupBy('o.period')
+            .orderBy('count', 'desc')
+            .limit(12);
 
-            // Get invoice count per period
-            db.all(`
-                SELECT o.period, COUNT(*) as count 
-                FROM invoices i 
-                JOIN ordners o ON i.ordner_ref_id = o.id 
-                WHERE o.period != '' 
-                GROUP BY o.period 
-                ORDER BY count DESC 
-                LIMIT 12
-            `, [], (err3, periods) => {
-                if (err3) return res.status(500).json({ error: err3.message });
-
-                res.json({
-                    ...stats,
-                    top_vendors: vendors || [],
-                    by_period: periods || []
-                });
-            });
+        res.json({
+            ...stats,
+            top_vendors: topVendors || [],
+            by_period: byPeriod || []
         });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-// --- LOGS ---
-app.get('/api/logs', (req, res) => {
-    db.all("SELECT * FROM logs ORDER BY id DESC LIMIT 100", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => ({
-            id: r.id,
-            timestamp: r.timestamp,
-            user: r.user,
-            action: r.action,
-            details: r.details
-        })));
-    });
+// --- SYSTEM LOGS ---
+app.get('/api/system/logs', async (req, res) => {
+    try {
+        const rows = await knex('logs').orderBy('timestamp', 'desc').limit(500);
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/system/log', async (req, res) => {
+    try {
+        const { user, action, details, oldValue, newValue } = req.body;
+        await systemLog(user, action, details, oldValue, newValue);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- LOGGING HELPER ---
-const systemLog = (user, action, details, oldValue = null, newValue = null) => {
-    return new Promise((resolve, reject) => {
+const systemLog = async (user, action, details, oldValue = null, newValue = null) => {
+    try {
         const timestamp = new Date().toISOString();
-        db.run("INSERT INTO logs (timestamp, user, action, details, oldValue, newValue) VALUES (?, ?, ?, ?, ?, ?)",
-            [timestamp, user || 'System', action, details, oldValue, newValue],
-            (err) => {
-                if (err) console.error("Logging failed:", err);
-                resolve();
-            }
-        );
-    });
+        await knex('logs').insert({
+            timestamp,
+            user: user || 'System',
+            action,
+            details,
+            oldValue: oldValue ? JSON.stringify(oldValue) : null,
+            newValue: newValue ? JSON.stringify(newValue) : null
+        });
+    } catch (err) {
+        console.error("Logging failed:", err);
+    }
 };
 
 app.post('/api/logs', (req, res) => {
@@ -1544,96 +1585,106 @@ app.post('/api/logs', (req, res) => {
 });
 
 // --- FOLDERS ---
-app.get('/api/folders', (req, res) => {
-    db.all("SELECT * FROM folders", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows.map(r => ({
-            ...r,
-            allowedDepts: JSON.parse(r.allowedDepts || '[]'),
-            allowedUsers: JSON.parse(r.allowedUsers || '[]')
-        })));
-    });
+app.get('/api/folders', async (req, res) => {
+    try {
+        const rows = await knex('folders').orderBy('id', 'asc');
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/folders', (req, res) => {
-    const { parentId, name, privacy, allowedDepts, allowedUsers, owner } = req.body;
-    db.run("INSERT INTO folders (parentId, name, privacy, allowedDepts, allowedUsers, owner) VALUES (?, ?, ?, ?, ?, ?)",
-        [parentId, name, privacy, JSON.stringify(allowedDepts || []), JSON.stringify(allowedUsers || []), owner],
-        async function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            const newId = this.lastID;
-            await systemLog(owner, "Folder", `Membuat folder baru: "${name}"`);
-            res.json({ success: true, id: newId });
-        }
-    );
+app.post('/api/folders', async (req, res) => {
+    try {
+        const { name, parentId, type, color } = req.body;
+        const [id] = await knex('folders').insert({
+            name,
+            parentId: parentId || null,
+            type: type || 'folder',
+            color: color || '#2563eb'
+        });
+        res.json({ id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/folders/:id', (req, res) => {
-    const { name, privacy, allowedDepts, allowedUsers } = req.body;
-    db.run("UPDATE folders SET name = ?, privacy = ?, allowedDepts = ?, allowedUsers = ? WHERE id = ?",
-        [name, privacy, JSON.stringify(allowedDepts), JSON.stringify(allowedUsers), req.params.id],
-        async (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            await systemLog(null, "Folder", `Update folder: "${name}"`);
-            res.json({ success: true });
-        }
-    );
-});
-
-app.delete('/api/folders/:id', (req, res) => {
-    db.run("DELETE FROM folders WHERE id = ?", [req.params.id], async (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        await systemLog(null, "Folder", `Hapus folder ID: ${req.params.id}`);
+app.put('/api/folders/:id', async (req, res) => {
+    try {
+        const { name, color } = req.body;
+        await knex('folders').where('id', req.params.id).update({ name, color });
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/folders/:id', async (req, res) => {
+    try {
+        const folderId = req.params.id;
+        await knex.transaction(async trx => {
+            const folder = await trx('folders').where('id', folderId).first();
+            if (!folder) throw new Error("Folder not found");
+
+            await trx('documents').where('folderId', folderId).update({ folderId: null });
+            await trx('folders').where('id', folderId).del();
+            await systemLog(null, "Delete Folder", `Folder deleted: ${folder.name}`);
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- DOCUMENTS ---
-app.get('/api/documents', (req, res) => {
-    const { auditId, stepIndex, folderId } = req.query;
-    // OPTIMIZATION: Exclude fileData (LONGTEXT) from list view for performance
-    const columns = "id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, status, version, versionsHistory";
-    let sql = `SELECT ${columns} FROM documents`;
-    let params = [];
-    let whereClauses = [];
+app.get('/api/documents', async (req, res) => {
+    try {
+        const { auditId, stepIndex, folderId } = req.query;
+        let query = knex('documents')
+            .select('id', 'title', 'type', 'size', 'uploadDate', 'url', 'folderId', 'department', 'owner', 'ocrContent', 'auditId', 'stepIndex', 'status', 'version', 'versionsHistory')
+            .orderBy('uploadDate', 'desc');
 
-    if (auditId) {
-        whereClauses.push("auditId = ?");
-        params.push(auditId);
-    }
-    const normalizedFolderId = (folderId === "null" || folderId === "") ? null : folderId;
-    if (folderId !== undefined) {
-        if (normalizedFolderId) {
-            whereClauses.push("folderId = ?");
-            params.push(normalizedFolderId);
-        } else {
-            whereClauses.push("folderId IS NULL");
+        if (auditId) {
+            query = query.where('auditId', auditId);
         }
-    }
 
-    if (whereClauses.length > 0) {
-        sql += " WHERE (" + whereClauses.join(" OR ") + ")";
+        const normalizedFolderId = (folderId === "null" || folderId === "") ? null : folderId;
+        if (folderId !== undefined) {
+            if (normalizedFolderId) {
+                query = query.where('folderId', normalizedFolderId);
+            } else {
+                query = query.whereNull('folderId');
+            }
+        }
+
         if (stepIndex !== undefined) {
-            sql += " AND stepIndex = ?";
-            params.push(stepIndex);
+            query = query.where('stepIndex', stepIndex);
         }
-    } else if (stepIndex !== undefined) {
-        sql += " WHERE stepIndex = ?";
-        params.push(stepIndex);
-    }
 
-    db.all(sql, params, (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+        const rows = await query;
         res.json(rows);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.get('/api/documents/:id', (req, res) => {
-    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!row) return res.status(404).json({ error: "Document not found" });
-        res.json(row);
-    });
+app.get('/api/documents/public', async (req, res) => {
+    try {
+        const rows = await knex('documents').where('isPublic', 1).orderBy('uploadDate', 'desc');
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/documents/:id', async (req, res) => {
+    try {
+        const doc = await knex('documents').where('id', req.params.id).first();
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+        res.json(doc);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 import { createRequire } from 'module';
@@ -1702,39 +1753,54 @@ const extractTextFromFile = async (buffer, mimeType) => {
 
 // ... (existing code)
 
-app.post('/api/documents', upload.single('file'), async (req, res) => {
-    const { id, title, type, size, uploadDate, url, folderId, department, owner, auditId, stepIndex, ocrContent } = req.body;
+app.post('/api/documents', async (req, res) => {
+    try {
+        const { title, type, size, uploadDate, folderId, owner, ocrContent, isPublic } = req.body;
+        const [id] = await knex('documents').insert({
+            title,
+            type,
+            size,
+            uploadDate,
+            folderId: folderId || null,
+            owner,
+            ocrContent,
+            isPublic: isPublic ? 1 : 0
+        });
 
-    let fileUrl = url;
-    let absoluteFilePath = null;
-    let finalType = type;
-    let finalSize = size;
-    let finalTitle = title;
-
-    if (req.file) {
-        fileUrl = `/uploads/${req.file.filename}`;
-        absoluteFilePath = req.file.path;
-        finalType = req.file.mimetype;
-        finalSize = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
-        if (!finalTitle) finalTitle = req.file.originalname;
+        const doc = await knex('documents').where('id', id).first();
+        await systemLog(owner, "Document", `Upload dokumen: "${title}"`);
+        res.json({ success: true, id, document: doc });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
+});
 
-    // --- AUTOMATIC REVISION CHECK ---
-    // Check if a document with same name exists in the same folder
-    const normalizedFolderId = (folderId === "null" || folderId === "" || !folderId) ? null : folderId;
-    const checkSql = "SELECT * FROM documents WHERE title = ? AND (" + (normalizedFolderId ? "folderId = ?" : "folderId IS NULL") + ")";
-    const checkParams = normalizedFolderId ? [finalTitle, normalizedFolderId] : [finalTitle];
+app.post('/api/documents/upload', upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-    db.get(checkSql, checkParams, async (err, existingDoc) => {
-        if (err) {
-            console.error("Duplicate check error:", err);
-            return res.status(500).json({ error: "Check duplicate failed" });
-        }
+        const { folderId, owner, isPublic } = req.body;
+        const title = req.body.title || req.file.originalname;
+        const type = req.file.mimetype;
+        const size = (req.file.size / 1024).toFixed(1) + ' KB';
+        const uploadDate = new Date().toISOString();
+
+        // --- AUTOMATIC REVISION CHECK ---
+        const normalizedFolderId = (folderId === "null" || folderId === "" || !folderId) ? null : folderId;
+        const existingDoc = await knex('documents')
+            .where('title', title)
+            .andWhere(function () {
+                if (normalizedFolderId) {
+                    this.where('folderId', normalizedFolderId);
+                } else {
+                    this.whereNull('folderId');
+                }
+            })
+            .first();
 
         if (existingDoc) {
             console.log(`Duplicate found: ${title} in folder ${folderId || 'Root'}. Creating revision for ID: ${existingDoc.id}`);
 
-            // Re-use versioning logic similar to PUT /api/documents/:id
             let versionsHistory = [];
             try { versionsHistory = existingDoc.versionsHistory ? JSON.parse(existingDoc.versionsHistory) : []; } catch (e) { }
 
@@ -1775,176 +1841,144 @@ app.post('/api/documents', upload.single('file'), async (req, res) => {
                 user: existingDoc.owner || 'System'
             });
 
-            // 1. File Handling (Multer req.file is already on disk)
-            if (req.file) {
-                // fileUrl and absoluteFilePath are already set at the top of the function
-            } else if (url && url.startsWith('/uploads/')) {
-                absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
-            }
-
+            const fileUrl = `/uploads/${req.file.filename}`;
+            const absoluteFilePath = req.file.path;
+            const finalType = req.file.mimetype;
+            const finalSize = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
             const initialOcr = req.body.ocrContent || '';
             const status = initialOcr ? 'done' : 'processing';
 
-            db.run("UPDATE documents SET title = ?, type = ?, size = ?, uploadDate = ?, url = ?, ocrContent = ?, fileData = NULL, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-                [finalTitle, finalType, finalSize, uploadDate, fileUrl, initialOcr, JSON.stringify(versionsHistory), status, existingDoc.id],
-                async (updateErr) => {
-                    if (updateErr) return res.status(500).json({ error: "Revision update failed: " + updateErr.message });
+            await knex('documents')
+                .where('id', existingDoc.id)
+                .update({
+                    title: title,
+                    type: finalType,
+                    size: finalSize,
+                    uploadDate: uploadDate,
+                    url: fileUrl,
+                    ocrContent: initialOcr,
+                    fileData: null,
+                    versionsHistory: JSON.stringify(versionsHistory),
+                    version: knex.raw('COALESCE(version, 1) + 1'),
+                    status: status
+                });
 
-                    if (absoluteFilePath) {
-                        try {
-                            await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', finalTitle);
-                        } catch (qErr) { console.error("Queue Error:", qErr); }
-                    }
+            if (absoluteFilePath) {
+                try {
+                    await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', title);
+                } catch (qErr) { console.error("Queue Error:", qErr); }
+            }
 
-                    await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${finalTitle}" v${existingDoc.version + 1}`);
-                    res.json({ success: true, id: existingDoc.id, version: existingDoc.version + 1, isRevision: true });
-                }
-            );
-            return;
+            await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${title}" v${existingDoc.version + 1}`);
+            return res.json({ success: true, id: existingDoc.id, version: existingDoc.version + 1, isRevision: true });
         }
 
         // --- ORIGINAL INSERT LOGIC ---
-        // 1. File Handling (Multer req.file is already on disk)
-        if (req.file) {
-            // fileUrl and absoluteFilePath are already set at the top of the function
-        } else if (url && url.startsWith('/uploads/')) {
-            absoluteFilePath = path.join(UPLOADS_DIR, path.basename(url));
-        }
-
-        // Sanitize for DB (Knex doesn't allow undefined)
-        const dbId = id || String(Date.now());
-        const dbUploadDate = uploadDate || new Date().toISOString();
-        const dbFolderId = normalizedFolderId;
-        const dbDepartment = department || null;
-        const dbOwner = owner || 'System';
-        const dbAuditId = auditId || null;
-        const dbStepIndex = stepIndex || null;
+        const fileUrl = `/uploads/${req.file.filename}`;
+        const absoluteFilePath = req.file.path;
+        const finalType = req.file.mimetype;
+        const finalSize = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
 
         const initialOcr = req.body.ocrContent || '';
         const status = initialOcr ? 'done' : 'processing';
 
-        db.run("INSERT INTO documents (id, title, type, size, uploadDate, url, folderId, department, owner, ocrContent, auditId, stepIndex, fileData, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)",
-            [dbId, finalTitle, finalType, finalSize, dbUploadDate, fileUrl, dbFolderId, dbDepartment, dbOwner, initialOcr, dbAuditId, dbStepIndex, status],
-            async (err) => {
-                if (err) {
-                    console.error("DB INSERT ERROR:", err.message);
-                    return res.status(500).json({ error: "Database Insert Failed: " + err.message });
-                }
+        const [id] = await knex('documents').insert({
+            title: title,
+            type: finalType,
+            size: finalSize,
+            uploadDate: uploadDate,
+            url: fileUrl,
+            folderId: normalizedFolderId,
+            department: req.body.department || null,
+            owner: owner || 'System',
+            ocrContent: initialOcr,
+            auditId: req.body.auditId || null,
+            stepIndex: req.body.stepIndex || null,
+            fileData: null,
+            status: status,
+            isPublic: isPublic === 'true' ? 1 : 0
+        });
 
-                if (absoluteFilePath) {
-                    try {
-                        await addOCRJob(dbId, absoluteFilePath, finalType || 'application/octet-stream', finalTitle);
-                    } catch (qErr) {
-                        console.error("Queue Error:", qErr);
-                    }
-                }
-
-                await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
-
-                res.json({
-                    id, title, type, size, uploadDate, url: fileUrl, folderId, department, owner,
-                    ocrContent: initialOcr, auditId, stepIndex, status: 'processing'
-                });
+        if (absoluteFilePath) {
+            try {
+                await addOCRJob(id, absoluteFilePath, finalType || 'application/octet-stream', title);
+            } catch (qErr) {
+                console.error("Queue Error:", qErr);
             }
-        );
-    });
+        }
+
+        await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
+
+        res.json({
+            id, title, type: finalType, size: finalSize, uploadDate, url: fileUrl, folderId, department: req.body.department, owner,
+            ocrContent: initialOcr, auditId: req.body.auditId, stepIndex: req.body.stepIndex, status: 'processing'
+        });
+    } catch (err) {
+        console.error("DB INSERT ERROR:", err.message);
+        res.status(500).json({ error: "Database Insert Failed: " + err.message });
+    }
 });
 
-app.put('/api/documents/:id', upload.single('file'), (req, res) => {
-    const { title, folderId, department, ocrContent, size, type, uploadDate, owner } = req.body;
+app.put('/api/documents/:id', upload.single('file'), async (req, res) => {
+    try {
+        const { title, folderId, isPublic, ocrContent, versionsHistory: historyInput } = req.body;
+        const subId = req.params.id;
 
-    // Generate Embedding (Async)
-    const textToEmbed = (title + " " + (ocrContent || "")).substring(0, 1000);
-    getEmbedding(textToEmbed).then(vector => {
-        if (vector) {
-            db.run("UPDATE documents SET vector = ? WHERE id = ?", [JSON.stringify(vector), req.params.id], (err) => {
-                if (err) console.error("Failed to save vector:", err);
-            });
-        }
-    });
+        await knex.transaction(async trx => {
+            const existing = await trx('documents').where('id', subId).first();
+            if (!existing) throw new Error("Document not found");
 
-    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, oldDoc) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!oldDoc) return res.status(404).json({ error: "Document not found" });
-
-        let versionsHistory = [];
-        try { versionsHistory = oldDoc.versionsHistory ? JSON.parse(oldDoc.versionsHistory) : []; } catch (e) { }
-
-        let fileUrl = oldDoc.url;
-        let absoluteFilePath = null;
-        let finalType = type || oldDoc.type;
-        let finalSize = size || oldDoc.size;
-
-        if (req.file) {
-            // Archive current version only if new file is uploaded
-            let archivedUrl = oldDoc.url;
-            if (oldDoc.url && oldDoc.url.startsWith('/uploads/')) {
-                const ext = (oldDoc.title || '').split('.').pop() || 'bin';
-                const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
-                const newFilePath = path.join(UPLOADS_DIR, filename);
-                const oldFilePath = path.join(UPLOADS_DIR, path.basename(oldDoc.url));
-                try {
-                    if (fs.existsSync(oldFilePath)) {
-                        fs.copyFileSync(oldFilePath, newFilePath);
-                        archivedUrl = `/uploads/${filename}`;
-                    }
-                } catch (e) { console.error("Archiving failed:", e); }
-            } else if (oldDoc.fileData && oldDoc.fileData.startsWith('data:')) {
-                const ext = (oldDoc.title || '').split('.').pop() || 'bin';
-                try {
-                    const matches = oldDoc.fileData.match(/^data:([A-Za-z0-9-+\\/.]+);base64,(.+)$/);
-                    if (matches && matches.length === 3) {
-                        const buffer = Buffer.from(matches[2], 'base64');
-                        const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
-                        const filePath = path.join(UPLOADS_DIR, filename);
-                        fs.writeFileSync(filePath, buffer);
-                        archivedUrl = `/uploads/${filename}`;
-                    }
-                } catch (e) { console.error("Legacy archiving failed:", e); }
+            let versionsHistory = [];
+            try {
+                versionsHistory = typeof historyInput === 'string' ? JSON.parse(historyInput) : (historyInput || []);
+            } catch (e) {
+                versionsHistory = existing.versionsHistory ? JSON.parse(existing.versionsHistory) : [];
             }
+
+            const now = new Date().toISOString();
+            const currentVersion = existing.version || 1;
 
             versionsHistory.push({
-                timestamp: oldDoc.uploadDate || new Date().toISOString(),
-                size: oldDoc.size,
-                type: oldDoc.type,
-                fileData: null,
-                url: archivedUrl,
-                title: oldDoc.title,
-                user: oldDoc.owner || 'System'
+                id: Date.now(),
+                version: currentVersion,
+                timestamp: now,
+                url: existing.url,
+                title: existing.title,
+                size: existing.size,
+                user: req.body.owner || 'System'
             });
 
-            fileUrl = `/uploads/${req.file.filename}`;
-            absoluteFilePath = req.file.path;
-            finalType = req.file.mimetype;
-            finalSize = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
-        }
+            const updateData = {
+                title: title || existing.title,
+                folderId: (folderId === "null" || folderId === "" || !folderId) ? null : folderId,
+                isPublic: isPublic === 'true' || isPublic === true || isPublic === 1 ? 1 : 0,
+                ocrContent: ocrContent || existing.ocrContent,
+                uploadDate: now,
+                version: currentVersion + 1,
+                versionsHistory: JSON.stringify(versionsHistory)
+            };
 
-        let newStatus = oldDoc.status;
-        let newOcrContent = ocrContent !== undefined ? ocrContent : oldDoc.ocrContent;
+            if (req.file) {
+                updateData.url = `/uploads/${req.file.filename}`;
+                updateData.size = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
+                updateData.status = 'processing';
+                updateData.fileData = null;
 
-        if (req.file) {
-            newOcrContent = ocrContent || '';
-            newStatus = newOcrContent ? 'done' : 'processing';
-        }
-
-        db.run("UPDATE documents SET title = ?, type = ?, size = ?, folderId = ?, department = ?, ocrContent = ?, fileData = NULL, url = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ? WHERE id = ?",
-            [title || oldDoc.title, finalType, finalSize, folderId !== undefined ? (folderId === "null" ? null : folderId) : oldDoc.folderId, department || oldDoc.department, newOcrContent, fileUrl, JSON.stringify(versionsHistory), newStatus, req.params.id],
-            async (err) => {
-                if (err) return res.status(500).json({ error: err.message });
-
-                if (absoluteFilePath) {
-                    try {
-                        await addOCRJob(req.params.id, absoluteFilePath, finalType || 'application/octet-stream', title || oldDoc.title);
-                    } catch (qErr) { console.error("Queue Error:", qErr); }
-                }
-
-                await systemLog(owner || oldDoc.owner, "Update Documentation", `Update/Revisi dokumen: "${title || oldDoc.title}"`);
-                res.json({ success: true, id: req.params.id });
+                const absolutePath = path.resolve(req.file.path);
+                addOCRJob(subId, absolutePath, req.file.mimetype, req.file.originalname)
+                    .catch(e => console.error("OCR Queue Error (Revision):", e));
             }
-        );
-    });
-});
 
+            await trx('documents').where('id', subId).update(updateData);
+            await systemLog(req.body.owner || "System", "Update Document", `Memperbarui dokumen ID ${subId} ke v${currentVersion + 1}`);
+        });
+
+        const updatedDoc = await knex('documents').where('id', subId).first();
+        res.json({ success: true, document: updatedDoc });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 // --- MANAGEMENT OPS (COPY/MOVE) ---
 app.post('/api/documents/copy', (req, res) => {
@@ -2035,9 +2069,10 @@ app.post('/api/folders/copy', async (req, res) => {
     }
 });
 
-app.delete('/api/documents/:id', (req, res) => {
-    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, doc) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.delete('/api/documents/:id', async (req, res) => {
+    try {
+        const subId = req.params.id;
+        const doc = await knex('documents').where('id', subId).first();
         if (!doc) return res.status(404).json({ error: "Document not found" });
 
         // Delete main file if exists on disk
@@ -2049,93 +2084,91 @@ app.delete('/api/documents/:id', (req, res) => {
             }
         }
 
-        // OPTIONAL: Clean up version history files? 
-        // For now, keep them as "Archive" or implement lazy cleanup later.
-
-        db.run("DELETE FROM documents WHERE id = ?", [req.params.id], (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        });
-    });
+        await knex('documents').where('id', subId).del();
+        await knex('job_queue').where('context_id', subId).del(); // Clean up any pending OCR jobs
+        await systemLog(null, "Delete Document", `Menghapus dokumen: "${doc.title}"`);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/documents/:id/restore', (req, res) => {
-    const { versionTimestamp } = req.body;
+// --- REVISIONS ---
+app.get('/api/documents/:id/revisions', async (req, res) => {
+    try {
+        const doc = await knex('documents').where('id', req.params.id).first();
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+        const history = doc.versionsHistory ? JSON.parse(doc.versionsHistory) : [];
+        res.json(history);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
-    db.get("SELECT * FROM documents WHERE id = ?", [req.params.id], (err, doc) => {
-        if (err || !doc) return res.status(404).json({ error: "Document not found" });
+app.post('/api/documents/:id/revisions', async (req, res) => {
+    try {
+        const { versionId, user } = req.body;
+        const subId = req.params.id;
 
-        let versions = [];
-        try { versions = JSON.parse(doc.versionsHistory || '[]'); } catch (e) { }
+        await knex.transaction(async trx => {
+            const doc = await trx('documents').where('id', subId).first();
+            if (!doc) throw new Error("Document not found");
 
-        const versionToRestore = versions.find(v => v.timestamp === versionTimestamp);
-        if (!versionToRestore) return res.status(404).json({ error: "Version not found" });
+            const history = doc.versionsHistory ? JSON.parse(doc.versionsHistory) : [];
+            const version = history.find(v => v.id == versionId);
+            if (!version) throw new Error("Version not found");
 
-        // Backup current before restore
-        let currentArchivedUrl = doc.url;
-        if (doc.url && doc.url.startsWith('/uploads/')) {
-            const ext = (doc.title || '').split('.').pop() || 'bin';
-            const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
-            const newFilePath = path.join(UPLOADS_DIR, filename);
-            const oldFilePath = path.join(UPLOADS_DIR, path.basename(doc.url));
-            try {
-                if (fs.existsSync(oldFilePath)) {
-                    fs.copyFileSync(oldFilePath, newFilePath);
-                    currentArchivedUrl = `/uploads/${filename}`;
+            const now = new Date().toISOString();
+            const currentVersion = doc.version || 1;
+
+            // Archive current state before restoring
+            const newHistory = history.filter(v => v.id != versionId); // Remove the version being restored from history
+            newHistory.push({
+                id: Date.now(),
+                version: currentVersion,
+                timestamp: doc.uploadDate || now,
+                url: doc.url,
+                title: doc.title,
+                size: doc.size,
+                type: doc.type,
+                user: doc.owner || 'System'
+            });
+
+            // Update document with restored version data
+            await trx('documents').where('id', subId).update({
+                url: version.url,
+                title: version.title,
+                size: version.size,
+                type: version.type,
+                uploadDate: now,
+                version: currentVersion + 1,
+                versionsHistory: JSON.stringify(newHistory),
+                status: 'processing', // Re-process OCR for restored file
+                ocrContent: '', // Clear OCR content to force re-OCR
+                fileData: null // Ensure fileData is null if using URL
+            });
+
+            // If the restored version has a file URL, add an OCR job
+            if (version.url && version.url.startsWith('/uploads/')) {
+                const absoluteFilePath = path.join(UPLOADS_DIR, path.basename(version.url));
+                if (fs.existsSync(absoluteFilePath)) {
+                    await addOCRJob(subId, absoluteFilePath, version.type || 'application/octet-stream', version.title);
+                } else {
+                    console.warn(`Restored file not found on disk: ${absoluteFilePath}. OCR job skipped.`);
+                    await trx('documents').where('id', subId).update({ status: 'error', ocrContent: 'File not found for OCR' });
                 }
-            } catch (e) { console.error("Archiving failed:", e); }
-        } else if (doc.fileData && doc.fileData.startsWith('data:')) {
-            // If current is BLOB, migrate to disk before archiving
-            const ext = (doc.title || '').split('.').pop() || 'bin';
-            try {
-                const matches = doc.fileData.match(/^data:([A-Za-z0-9-+\\/.]+);base64,(.+)$/);
-                if (matches && matches.length === 3) {
-                    const buffer = Buffer.from(matches[2], 'base64');
-                    const filename = `ARCHIVE-${req.params.id}-${Date.now()}.${ext}`;
-                    const filePath = path.join(UPLOADS_DIR, filename);
-                    fs.writeFileSync(filePath, buffer);
-                    currentArchivedUrl = `/uploads/${filename}`;
-                }
-            } catch (e) { console.error("Legacy archiving failed:", e); }
-        }
+            } else {
+                await trx('documents').where('id', subId).update({ status: 'done' }); // No file to OCR
+            }
 
-        versions.push({
-            timestamp: doc.uploadDate || new Date().toISOString(),
-            size: doc.size,
-            type: doc.type,
-            fileData: null,
-            url: currentArchivedUrl,
-            title: doc.title,
-            user: doc.owner || 'System',
-            restoredFrom: versionTimestamp
+            await systemLog(user, "Restore", `Restore dokumen "${doc.title}" ke versi ${version.version}`);
         });
 
-        // Perform Restore
-        // If restoring a BLOB version, we could migrate it now, but respecting the history format is safer.
-        // If restoring a File version, fileData is null, url is set.
-        const newUrl = versionToRestore.url || doc.url; // Use restored URL or keep current if undefined (legacy)
-        const newFileData = null; // Never restore base64 into DB
-
-        const absoluteFilePath = newUrl && newUrl.startsWith('/uploads/')
-            ? path.join(UPLOADS_DIR, path.basename(newUrl))
-            : null;
-
-        db.run("UPDATE documents SET fileData = NULL, url = ?, size = ?, type = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = ?, ocrContent = '' WHERE id = ?",
-            [newUrl, versionToRestore.size, versionToRestore.type, JSON.stringify(versions), absoluteFilePath ? 'processing' : 'ready', req.params.id],
-            async (err) => {
-                if (err) return res.status(500).json({ error: err.message });
-
-                if (absoluteFilePath) {
-                    try {
-                        await addOCRJob(req.params.id, absoluteFilePath, versionToRestore.type || 'application/octet-stream', doc.title);
-                    } catch (qErr) { console.error("Queue Error:", qErr); }
-                }
-
-                await systemLog(null, "Restore Version", `Restore file "${doc.title}" ke versi ${new Date(versionTimestamp).toLocaleString()}`);
-                res.json({ success: true });
-            }
-        );
-    });
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Error restoring document version:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- TAX AUDITS ---
@@ -2176,144 +2209,190 @@ app.delete('/api/tax-audits/:id', (req, res) => {
 });
 
 // --- TAX SUMMARIES ---
-app.get('/api/tax-summaries', (req, res) => {
-    db.all("SELECT * FROM tax_summaries", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/tax-summaries', async (req, res) => {
+    try {
+        const rows = await knex('tax_summaries').orderBy('year', 'desc').orderBy('month', 'desc');
         res.json(rows.map(r => ({
             ...r,
             data: typeof r.data === 'string' ? JSON.parse(r.data || '{}') : (r.data || {})
         })));
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/tax-summaries', (req, res) => {
-    const { id, type, month, year, pembetulan, data } = req.body;
-    const finalPembetulan = pembetulan || 0;
+app.post('/api/tax-summaries', async (req, res) => {
+    try {
+        const { month, year, pph21, pph23, pph25, pph4_2, ppn, status, data } = req.body;
 
-    // Logic: Upsert based on Type, Month, Year, and Pembetulan
-    db.get(
-        "SELECT id FROM tax_summaries WHERE type = ? AND month = ? AND year = ? AND pembetulan = ?",
-        [type, month, year, finalPembetulan],
-        (err, existing) => {
-            if (err) return res.status(500).json({ error: err.message });
-
+        await knex.transaction(async trx => {
+            const existing = await trx('tax_summaries').where({ month, year }).first();
             if (existing) {
-                // Update existing record
-                db.run(
-                    "UPDATE tax_summaries SET data = ? WHERE id = ?",
-                    [JSON.stringify(data), existing.id],
-                    (updateErr) => {
-                        if (updateErr) return res.status(500).json({ error: updateErr.message });
-                        res.json({ id: existing.id, action: 'updated' });
-                    }
-                );
+                await trx('tax_summaries').where('id', existing.id).update({
+                    pph21,
+                    pph23,
+                    pph25,
+                    pph4_2,
+                    ppn,
+                    status,
+                    data: JSON.stringify(data || {})
+                });
             } else {
-                // Insert new record
-                db.run(
-                    "INSERT INTO tax_summaries (id, type, month, year, pembetulan, data) VALUES (?, ?, ?, ?, ?, ?)",
-                    [id || Date.now().toString(), type, month, year, finalPembetulan, JSON.stringify(data)],
-                    function (insertErr) {
-                        if (insertErr) return res.status(500).json({ error: insertErr.message });
-                        res.json({ id: this.lastID, action: 'inserted' });
-                    }
-                );
+                await trx('tax_summaries').insert({
+                    month,
+                    year,
+                    pph21,
+                    pph23,
+                    pph25,
+                    pph4_2,
+                    ppn,
+                    status,
+                    data: JSON.stringify(data || {})
+                });
             }
-        }
-    );
-});
-
-app.put('/api/tax-summaries/:id', (req, res) => {
-    const { type, month, year, pembetulan, data } = req.body;
-    db.run("UPDATE tax_summaries SET type = ?, month = ?, year = ?, pembetulan = ?, data = ? WHERE id = ?",
-        [type, month, year, pembetulan, JSON.stringify(data), req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
-});
-
-app.delete('/api/tax-summaries/:id', (req, res) => {
-    db.run("DELETE FROM tax_summaries WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+        });
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/tax-summaries/:id', async (req, res) => {
+    try {
+        const { type, month, year, pembetulan, data } = req.body;
+        await knex('tax_summaries').where('id', req.params.id).update({
+            type,
+            month,
+            year,
+            pembetulan,
+            data: JSON.stringify(data)
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/tax-summaries/:id', async (req, res) => {
+    try {
+        await knex('tax_summaries').where('id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- TAX OBJECTS (DATABASE WP) ---
 // Table is created in db.js initDb()
 
-app.get('/api/tax-objects', (req, res) => {
-    db.all("SELECT * FROM tax_objects ORDER BY created_at DESC", [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/boxes', async (req, res) => {
+    try {
+        const rows = await knex('boxes as b')
+            .select('b.*', 'i.status', 'i.lastUpdated')
+            .join('inventory as i', 'b.inventory_id', 'i.id')
+            .orderBy('b.box_id', 'asc');
         res.json(rows);
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.post('/api/tax-objects', (req, res) => {
-    const { idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet } = req.body;
-
-    // Logic: Check for exact match (NPWP + Type + Code) or empty match (NPWP with no Type/Code)
-    db.all("SELECT id, tax_type, tax_object_code FROM tax_objects WHERE identity_number = ?", [identityNumber], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        const exactMatch = rows.find(r => String(r.tax_type) === String(taxType) && String(r.tax_object_code) === String(taxObjectCode));
-        const emptyMatch = rows.find(r => !r.tax_type || r.tax_type === '' || !r.tax_object_code || r.tax_object_code === '');
-
-        if (exactMatch || emptyMatch) {
-            const targetId = exactMatch ? exactMatch.id : emptyMatch.id;
-            db.run(`UPDATE tax_objects SET 
-                id_type = ?, name = ?, email = ?, tax_type = ?, 
-                tax_object_code = ?, tax_object_name = ?, dpp = ?, rate = ?, pph = ?, ppn = ?, total_payable = ?, discount = ?, dpp_net = ?
-                WHERE id = ?`,
-                [idType, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet, targetId],
-                function (err) {
-                    if (err) return res.status(500).json({ error: err.message });
-                    res.json({ success: true, id: targetId, updated: true });
-                }
-            );
-        } else {
-            db.run(`INSERT INTO tax_objects (
-                id_type, identity_number, name, email, tax_type, 
-                tax_object_code, tax_object_name, dpp, rate, pph, ppn, total_payable, discount, dpp_net
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                [idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet],
-                function (err) {
-                    if (err) return res.status(500).json({ error: err.message });
-                    res.json({ success: true, id: this.lastID });
-                }
-            );
-        }
-    });
+app.get('/api/tax-objects', async (req, res) => {
+    try {
+        const rows = await knex('tax_objects').orderBy('created_at', 'desc');
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
-app.put('/api/tax-objects/:id', (req, res) => {
-    const { idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet } = req.body;
+app.post('/api/tax-objects', async (req, res) => {
+    try {
+        const { idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet } = req.body;
 
-    db.run(`UPDATE tax_objects SET 
-        id_type = ?, identity_number = ?, name = ?, email = ?, tax_type = ?, 
-        tax_object_code = ?, tax_object_name = ?, dpp = ?, rate = ?, pph = ?, ppn = ?, total_payable = ?, discount = ?, dpp_net = ?
-        WHERE id = ?`,
-        [idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet, req.params.id],
-        (err) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
-});
-
-app.delete('/api/tax-objects-all', (req, res) => {
-    db.run("DELETE FROM tax_objects", [], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, message: "Seluruh data database WP telah dihapus." });
-    });
-});
-
-app.delete('/api/tax-objects/:id', (req, res) => {
-    db.run("DELETE FROM tax_objects WHERE id = ?", [req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
+        await knex.transaction(async trx => {
+            const existing = await trx('tax_objects').where('identity_number', identityNumber).first();
+            if (existing) {
+                await trx('tax_objects').where('id', existing.id).update({
+                    id_type: idType,
+                    name,
+                    email,
+                    tax_type: taxType,
+                    tax_object_code: taxObjectCode,
+                    tax_object_name: taxObjectName,
+                    dpp,
+                    rate,
+                    pph,
+                    ppn,
+                    total_payable: totalPayable,
+                    discount,
+                    dpp_net: dppNet
+                });
+            } else {
+                await trx('tax_objects').insert({
+                    id_type: idType,
+                    identity_number: identityNumber,
+                    name,
+                    email,
+                    tax_type: taxType,
+                    tax_object_code: taxObjectCode,
+                    tax_object_name: taxObjectName,
+                    dpp,
+                    rate,
+                    pph,
+                    ppn,
+                    total_payable: totalPayable,
+                    discount,
+                    dpp_net: dppNet
+                });
+            }
+        });
         res.json({ success: true });
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+app.put('/api/tax-objects/:id', async (req, res) => {
+    try {
+        const { idType, identityNumber, name, email, taxType, taxObjectCode, taxObjectName, dpp, rate, pph, ppn, totalPayable, discount, dppNet } = req.body;
+        await knex('tax_objects').where('id', req.params.id).update({
+            id_type: idType,
+            identity_number: identityNumber,
+            name,
+            email,
+            tax_type: taxType,
+            tax_object_code: taxObjectCode,
+            tax_object_name: taxObjectName,
+            dpp,
+            rate,
+            pph,
+            ppn,
+            total_payable: totalPayable,
+            discount,
+            dpp_net: dppNet
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/tax-objects-all', async (req, res) => {
+    try {
+        await knex('tax_objects').del();
+        res.json({ success: true, message: "Seluruh data database WP telah dihapus." });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/tax-objects/:id', async (req, res) => {
+    try {
+        await knex('tax_objects').where('id', req.params.id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.get('/api/tax-objects/export', (req, res) => {
@@ -2627,20 +2706,24 @@ app.post('/api/documents/:id/comments', upload.single('attachment'), (req, res) 
     );
 });
 
-app.post('/api/documents/:id/promote-comment-attachment', (req, res) => {
+app.post('/api/documents/:id/promote-comment-attachment', async (req, res) => {
     const { commentId } = req.body;
     const docId = req.params.id;
 
-    db.get("SELECT * FROM comments WHERE id = ?", [commentId], (err, comment) => {
-        if (err || !comment || !comment.attachmentUrl) return res.status(404).json({ error: "Attachment not found" });
+    try {
+        await knex.transaction(async trx => {
+            const comment = await trx('comments').where('id', commentId).first();
+            if (!comment || !comment.attachmentUrl) throw new Error("Attachment not found in comment");
 
-        db.get("SELECT * FROM documents WHERE id = ?", [docId], (err, doc) => {
-            if (err || !doc) return res.status(404).json({ error: "Document not found" });
+            const doc = await trx('documents').where('id', docId).first();
+            if (!doc) throw new Error("Document not found");
 
             let versionsHistory = [];
-            try { versionsHistory = JSON.parse(doc.versionsHistory || '[]'); } catch (e) { }
+            try { versionsHistory = doc.versionsHistory ? JSON.parse(doc.versionsHistory) : []; } catch (e) { }
 
             versionsHistory.push({
+                id: Date.now(),
+                version: doc.version || 1,
                 timestamp: doc.uploadDate || new Date().toISOString(),
                 size: doc.size,
                 type: doc.type,
@@ -2652,18 +2735,33 @@ app.post('/api/documents/:id/promote-comment-attachment', (req, res) => {
 
             const absoluteFilePath = path.join(UPLOADS_DIR, path.basename(comment.attachmentUrl));
 
-            db.run("UPDATE documents SET url = ?, type = ?, size = ?, title = ?, uploadDate = ?, versionsHistory = ?, version = COALESCE(version, 1) + 1, status = 'processing', fileData = NULL, ocrContent = '' WHERE id = ?",
-                [comment.attachmentUrl, comment.attachmentType, comment.attachmentSize, comment.attachmentName, new Date().toISOString(), JSON.stringify(versionsHistory), docId],
-                async (updateErr) => {
-                    if (updateErr) return res.status(500).json({ error: updateErr.message });
-                    try {
-                        await addOCRJob(docId, absoluteFilePath, comment.attachmentType, comment.attachmentName);
-                    } catch (qErr) { console.error("Queue Error:", qErr); }
-                    res.json({ success: true });
-                }
-            );
+            await trx('documents').where('id', docId).update({
+                url: comment.attachmentUrl,
+                type: comment.attachmentType,
+                size: comment.attachmentSize,
+                title: comment.attachmentName,
+                uploadDate: new Date().toISOString(),
+                versionsHistory: JSON.stringify(versionsHistory),
+                version: knex.raw('COALESCE(version, 1) + 1'),
+                status: 'processing',
+                fileData: null,
+                ocrContent: ''
+            });
+
+            if (fs.existsSync(absoluteFilePath)) {
+                await addOCRJob(docId, absoluteFilePath, comment.attachmentType, comment.attachmentName);
+            } else {
+                console.warn(`Promoted attachment file not found on disk: ${absoluteFilePath}. OCR job skipped.`);
+                await trx('documents').where('id', docId).update({ status: 'error', ocrContent: 'File not found for OCR' });
+            }
+
+            await systemLog(comment.user || 'System', "Promote Attachment", `Promote attachment "${comment.attachmentName}" from comment ${commentId} to document ${docId}`);
         });
-    });
+        res.json({ success: true });
+    } catch (err) {
+        console.error("Error promoting comment attachment:", err);
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- TAX AUDIT NOTES API ---
