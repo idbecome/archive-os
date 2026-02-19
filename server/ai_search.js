@@ -1,17 +1,19 @@
 import { pipeline } from '@xenova/transformers';
 
-let embedder = null;
+// Singleton Promise mechanism to prevent race conditions
+let embedderPromise = null;
 
-/**
- * Initialize the embedding pipeline.
- */
 async function initEmbedder() {
-    if (!embedder) {
-        console.log('[AI Search] Initializing sentence-transformer model...');
-        embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    if (!embedderPromise) {
+        embedderPromise = (async () => {
+            console.log('[AI Search] Initializing sentence-transformer model...');
+            // Enable local files if possible, but default is remote
+            return await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+        })();
     }
-    return embedder;
+    return embedderPromise;
 }
+
 
 /**
  * Generate a vector embedding for a given text.
@@ -220,14 +222,16 @@ export async function parseIntent(query, queryVector = null) {
 }
 
 
-let generator = null;
+let generatorPromise = null;
 
 async function initGenerator() {
-    if (!generator) {
-        console.log('[AI Search] Initializing text-generation model (flan-t5-small)...');
-        generator = await pipeline('text2text-generation', 'Xenova/flan-t5-small');
+    if (!generatorPromise) {
+        generatorPromise = (async () => {
+            console.log('[AI Search] Initializing text-generation model (flan-t5-small)...');
+            return await pipeline('text2text-generation', 'Xenova/flan-t5-small');
+        })();
     }
-    return generator;
+    return generatorPromise;
 }
 
 /**

@@ -2,7 +2,7 @@
 import React from 'react';
 import {
     LayoutDashboard,
-    Grid3X3,
+    Grid3x3,
     FileStack,
     ShieldCheck,
     PieChart,
@@ -93,7 +93,7 @@ const Sidebar = ({
                     {
                         category: 'Document',
                         items: [
-                            { id: 'inventory', icon: Grid3X3, label: 'Filling' },
+                            { id: 'inventory', icon: Grid3x3, label: 'Filling' },
                             { id: 'documents', icon: FileStack, label: 'Documents' },
                             { id: 'approvals', icon: FileCheck, label: 'Approvals' },
                         ]

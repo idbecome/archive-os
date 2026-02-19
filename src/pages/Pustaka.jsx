@@ -292,7 +292,7 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
 
 export default function Pustaka({ currentUser, hasPermission, users = [], departments = [] }) {
     const getFullUrl = (url) => {
-        if (typeof url !== 'string') return url;
+        if (!url || typeof url !== 'string') return '';
         if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
 
         const { hostname, port, protocol } = window.location;
@@ -336,19 +336,12 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
 
     const fetchGuides = () => {
         api.getPustakaGuides().then(data => {
-            if (data.length === 0) {
-                setGuides([
-                    { id: 1, title: 'Alur Pengarsipan Fisik', description: 'Cara menyimpan dokumen ke rak gudang dengan benar.', category: 'Operasional', icon: 'Package' },
-                    { id: 2, title: 'Panduan OCR Digital', description: 'Tips agar ekstraksi teks dokumen lebih akurat.', category: 'Teknis', icon: 'ScanLine' },
-                    { id: 3, title: 'Etika Keamanan Data', description: 'Prosedur menjaga kerahasiaan dokumen perusahaan.', category: 'Compliance', icon: 'ShieldCheck' }
-                ]);
-            } else {
-                setGuides(data);
-            }
+            setGuides(data || []);
         });
 
         api.getPustakaCategories().then(data => {
             if (data.length === 0) {
+                // Keep default categories if none exist, or fetch from simplified default
                 setCategories([{ id: 1, name: 'Operasional' }, { id: 2, name: 'Teknis' }, { id: 3, name: 'Compliance' }]);
                 if (!newGuide.category) setNewGuide(prev => ({ ...prev, category: 'Operasional' }));
             } else {
@@ -381,12 +374,8 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
 
         const data = await api.getGuideSlides(guide.id);
         if (data.length === 0) {
-            // Mock slides
-            setSlides([
-                { title: 'Persiapan Dokumen', content: 'Pastikan dokumen dalam kondisi rapi dan tidak terlipat sebelum di-scan.', image: 'https://images.unsplash.com/photo-1586769852044-692d6e3703f0?q=80&w=500' },
-                { title: 'Input ke Sistem', content: 'Gunakan fitur "Upload" pada menu Documents dan pilih folder yang sesuai.', image: 'https://images.unsplash.com/photo-1614850523296-d8c1af93d400?q=80&w=500' },
-                { title: 'Verifikasi OCR', content: 'Periksa kembali hasil pembacaan teks otomatis untuk memastikan nomor invoice benar.', image: 'https://images.unsplash.com/photo-1563986768609-322da13575f3?q=80&w=500' }
-            ]);
+            // No slides available - show empty state instead of confusing mock data
+            setSlides([{ title: 'Belum ada slide', content: 'Panduan ini belum memiliki konten.', image: '' }]);
         } else {
             setSlides(data);
         }
@@ -428,7 +417,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
             const res = await api.uploadFile(file);
             if (res.success) {
                 const updated = [...newGuide.slides];
-                updated[index].image = res.url;
+                updated[index] = { ...updated[index], image: res.url || '' };
                 setNewGuide({ ...newGuide, slides: updated });
                 setAssistantMsg("Gambar berhasil terpasang di slide!");
             }
@@ -475,7 +464,14 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
             allowed_depts: guide.allowed_depts || [],
             allowed_users: guide.allowed_users || [],
             icon: guide.icon || 'BookOpen',
-            slides: guideSlides.length > 0 ? guideSlides : [{ title: '', content: '', image: '' }]
+            slides: guideSlides.length > 0
+                ? guideSlides.map(s => ({
+                    ...s,
+                    title: s.title || '',
+                    content: s.content || '',
+                    image: s.image || '' // Ensure image is populated for edit
+                }))
+                : [{ title: '', content: '', image: '' }]
         });
         setAssistantMsg(`Mari kita perbarui panduan "${guide.title}".`);
     };
@@ -483,10 +479,16 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
     const handleDeleteGuide = async (id, e) => {
         e.stopPropagation();
         if (!window.confirm("Hapus panduan ini secara permanen?")) return;
-        await api.deletePustakaGuide(id);
-        setAssistantMsg("Panduan telah dihapus dari perpustakaan.");
-        fetchGuides();
-        if (selectedGuide?.id === id) setSelectedGuide(null);
+
+        try {
+            await api.deletePustakaGuide(id);
+            setAssistantMsg("Panduan telah dihapus dari perpustakaan.");
+            fetchGuides();
+            if (selectedGuide?.id === id) setSelectedGuide(null);
+        } catch (error) {
+            console.error("Delete Error:", error);
+            setAssistantMsg(`Gagal menghapus: ${error.message || "Terjadi kesalahan"}`);
+        }
     };
 
     const handleSaveGuide = async () => {
@@ -532,7 +534,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                         guide_id: guideId,
                         title: slide.title,
                         content: slide.content,
-                        image: slide.image || 'https://images.unsplash.com/photo-1454165833767-027ff33027ef?q=80&w=500',
+                        image_url: slide.image, // Send as image_url to match controller preference
                         step_order: idx + 1
                     })
                 );
@@ -543,9 +545,12 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                 setEditingGuideId(null);
                 setNewGuide({ title: '', category: 'Operasional', description: '', icon: 'BookOpen', privacy: 'public', allowed_depts: [], allowed_users: [], slides: [{ title: '', content: '', image: '' }] });
                 fetchGuides();
+            } else {
+                throw new Error("Gagal mendapatkan ID panduan. Silakan coba lagi.");
             }
         } catch (e) {
-            setAssistantMsg("Maaf, terjadi kesalahan saat menyimpan. Coba lagi nanti ya.");
+            console.error("Save Guide Error:", e);
+            setAssistantMsg(`Gagal menyimpan: ${e.message || "Terjadi kesalahan sistem."}`);
         } finally {
             setIsSaving(false);
         }
@@ -924,7 +929,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
                                                                 {isUploading === idx ? (
                                                                     <RefreshCw size={24} className="animate-spin text-indigo-500" />
                                                                 ) : slide.image ? (
-                                                                    <img src={getFullUrl(slide.image)} className="w-full h-full object-cover opacity-50" alt="Preview" />
+                                                                    <img src={getFullUrl(slide.image)} className="w-full h-full object-cover rounded-xl shadow-sm" alt="Preview" />
                                                                 ) : (
                                                                     <>
                                                                         <Upload size={24} className="mb-1 group-hover:text-indigo-500" />

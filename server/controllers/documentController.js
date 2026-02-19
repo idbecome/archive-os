@@ -1,0 +1,490 @@
+import path from 'path';
+import fs from 'fs';
+import { knex } from '../db.js';
+import { systemLog } from '../utils/logger.js';
+import { addOCRJob } from '../queue.js';
+import { UPLOADS_DIR } from '../config/upload.js';
+
+export const getDocuments = async (req, res) => {
+    try {
+        const { folderId } = req.query;
+        let query = knex('documents').select('*');
+
+        if (folderId !== undefined) {
+            if (folderId && folderId !== 'null' && folderId !== '') {
+                query = query.where('folderId', folderId);
+            } else {
+                query = query.whereNull('folderId').orWhere('folderId', '');
+            }
+        }
+
+        const rows = await query;
+        res.json(rows);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const getDocumentById = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const doc = await knex('documents').where('id', id).first();
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+        return res.json(doc);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const uploadDocument = async (req, res) => {
+    try {
+        if (!req.file && !req.body.url) return res.status(400).json({ error: 'No file uploaded or URL provided' });
+
+        const { folderId, owner, url } = req.body;
+        const title = req.body.title || (req.file ? req.file.originalname : 'Document');
+        const type = req.file ? req.file.mimetype : (req.body.type || 'application/octet-stream');
+        const size = req.file ? (req.file.size / 1024 / 1024).toFixed(2) + ' MB' : (req.body.size || '0 MB');
+        const uploadDate = req.body.uploadDate || new Date().toISOString();
+
+        // Check for duplicate title in same folder (Auto Revision)
+        const normalizedFolderId = (folderId === "null" || folderId === "" || !folderId) ? null : folderId;
+        const existingDoc = await knex('documents')
+            .where('title', title)
+            .where(builder => {
+                if (normalizedFolderId) builder.where('folderId', normalizedFolderId);
+                else builder.whereNull('folderId');
+            })
+            .first();
+
+        // --- REVISION LOGIC ---
+        if (existingDoc) {
+            console.log(`Duplicate found: ${title}. Creating revision.`);
+
+            let versionsHistory = [];
+            try { versionsHistory = existingDoc.versionsHistory ? JSON.parse(existingDoc.versionsHistory) : []; } catch (e) { }
+
+            // Archive current version
+            let archivedUrl = existingDoc.url;
+            if (existingDoc.url && existingDoc.url.startsWith('/uploads/')) {
+                const ext = existingDoc.title.split('.').pop() || 'bin';
+                const filename = `ARCHIVE-${existingDoc.id}-${Date.now()}.${ext}`;
+                const newFilePath = path.join(UPLOADS_DIR, filename);
+                const oldFilePath = path.join(UPLOADS_DIR, path.basename(existingDoc.url));
+                try {
+                    if (fs.existsSync(oldFilePath)) {
+                        fs.copyFileSync(oldFilePath, newFilePath);
+                        archivedUrl = `/uploads/${filename}`;
+                    }
+                } catch (e) { console.error("Archiving failed:", e); }
+            }
+
+            versionsHistory.push({
+                timestamp: existingDoc.uploadDate || new Date().toISOString(),
+                size: existingDoc.size,
+                type: existingDoc.type,
+                fileData: null,
+                url: archivedUrl,
+                title: existingDoc.title,
+                user: existingDoc.owner || 'System',
+                version: existingDoc.version || 1
+            });
+
+            const fileUrl = req.file ? `/uploads/${req.file.filename}` : (url || existingDoc.url);
+            if (req.file) {
+                console.log(`[Revision] New file received: ${req.file.originalname} -> ${req.file.filename}`);
+                console.log(`[Revision] Path: ${req.file.path}`);
+                console.log(`[Revision] Exists? ${fs.existsSync(req.file.path)}`);
+            }
+            const absoluteFilePath = req.file ? req.file.path : null;
+            const finalType = req.file ? req.file.mimetype : (req.body.type || existingDoc.type);
+            const finalSize = req.file ? (req.file.size / 1024 / 1024).toFixed(2) + ' MB' : (req.body.size || existingDoc.size);
+            const initialOcr = req.body.ocrContent || '';
+            const status = initialOcr ? 'done' : 'processing';
+
+            await knex('documents')
+                .where('id', existingDoc.id)
+                .update({
+                    title: title,
+                    type: finalType,
+                    size: finalSize,
+                    uploadDate: uploadDate,
+                    url: fileUrl,
+                    ocrContent: initialOcr,
+                    fileData: null,
+                    versionsHistory: JSON.stringify(versionsHistory),
+                    version: knex.raw('COALESCE(version, 1) + 1'),
+                    status: status
+                });
+
+            if (absoluteFilePath) {
+                try {
+                    await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', title);
+                } catch (qErr) { console.error("Queue Error:", qErr); }
+            }
+
+            await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${title}" v${(existingDoc.version || 1) + 1}`);
+            return res.json({ success: true, id: existingDoc.id, version: (existingDoc.version || 1) + 1, isRevision: true, url: fileUrl });
+        }
+
+        // --- NEW DOCUMENT ---
+        if (req.file) {
+            console.log(`[Upload] New file received: ${req.file.originalname} -> ${req.file.filename}`);
+            console.log(`[Upload] Path: ${req.file.path}`);
+            console.log(`[Upload] Exists? ${fs.existsSync(req.file.path)}`);
+        }
+        const fileUrl = req.file ? `/uploads/${req.file.filename}` : (url || '');
+        const absoluteFilePath = req.file ? req.file.path : null;
+        const finalType = req.file ? req.file.mimetype : (req.body.type || 'application/octet-stream');
+        const finalSize = req.file ? (req.file.size / 1024 / 1024).toFixed(2) + ' MB' : (req.body.size || '0 MB');
+        const initialOcr = req.body.ocrContent || '';
+        const status = initialOcr ? 'done' : 'processing';
+
+        const newDocId = `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        await knex('documents').insert({
+            id: newDocId,
+            title: title,
+            type: finalType,
+            size: finalSize,
+            uploadDate: uploadDate,
+            url: fileUrl,
+            folderId: normalizedFolderId,
+            department: req.body.department || null,
+            owner: owner || 'System',
+            ocrContent: initialOcr,
+            auditId: req.body.auditId || null,
+            stepIndex: req.body.stepIndex || null,
+            fileData: null,
+            status: status
+        });
+
+        if (absoluteFilePath) {
+            try {
+                await addOCRJob(newDocId, absoluteFilePath, finalType || 'application/octet-stream', title);
+            } catch (qErr) {
+                console.error("Queue Error:", qErr);
+            }
+        }
+
+        await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
+
+        res.json({
+            success: true,
+            id: newDocId,
+            url: fileUrl, // For Pustaka compatibility
+            document: {
+                id: newDocId,
+                title,
+                type: finalType,
+                size: finalSize,
+                uploadDate,
+                url: fileUrl,
+                status
+            }
+        });
+    } catch (err) {
+        console.error("DB INSERT ERROR:", err.message);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const deleteDocument = async (req, res) => {
+    try {
+        const subId = req.params.id;
+        const doc = await knex('documents').where('id', subId).first();
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+
+        // Delete main file if exists on disk
+        if (doc.url && doc.url.startsWith('/uploads/')) {
+            const filePath = path.join(UPLOADS_DIR, path.basename(doc.url));
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                console.log("Deleted file from disk:", filePath);
+            }
+        }
+
+        // Manual Cascade Delete
+        await knex('document_comments').where('documentId', subId).del();
+        await knex('document_approvals').where('title', doc.title).del(); // Approx match or needs better link? 
+        // Note: document_approvals doesn't seem to have documentId FK in schema, just title? 
+        // Based on schema: document_approvals has 'id', 'title', 'attachment_url' etc.
+        // It seems approvals are separate entities.
+
+        // Clean up job_queue
+        await knex('job_queue').where('data', 'like', `%"docId":"${subId}"%`).del();
+
+        await knex('documents').where('id', subId).del();
+        await systemLog(null, "Delete Document", `Menghapus dokumen: "${doc.title}"`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("[Delete Error] Failed to delete document:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const moveDocument = async (req, res) => {
+    try {
+        const id = req.params.id || req.body.id;
+        let { targetFolderId, owner } = req.body;
+
+        // Normalize targetFolderId
+        if (targetFolderId === "null" || targetFolderId === "" || targetFolderId === "undefined") {
+            targetFolderId = null;
+        }
+
+        console.log(`[Move] Request: ID=${id}, Target=${targetFolderId}, Owner=${owner}`);
+
+        const result = await knex('documents').where('id', id).update({ folderId: targetFolderId });
+
+        if (result === 0) {
+            console.warn(`[Move] Document not found or no change: ID=${id}`);
+            // Don't return 404 here as it might just be no change, but good to know
+        }
+
+        await systemLog(owner || 'System', "Move", `Pindah file ID: ${id} ke folder: ${targetFolderId || 'Root'}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error("[Move] Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const copyDocument = async (req, res) => {
+    try {
+        const id = req.params.id || req.body.id;
+        let { targetFolderId, owner } = req.body;
+
+        // Normalize targetFolderId
+        if (targetFolderId === "null" || targetFolderId === "" || targetFolderId === "undefined") {
+            targetFolderId = null;
+        }
+
+        console.log(`[Copy] Request: ID=${id}, Target=${targetFolderId}, Owner=${owner}`);
+
+        const doc = await knex('documents').where('id', id).first();
+        if (!doc) {
+            console.error(`[Copy] Document not found: ID=${id}`);
+            return res.status(404).json({ error: "Document not found" });
+        }
+
+        const newDocId = `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+        // Remove ID from copy and set new ID
+        const { id: _, ...docData } = doc;
+
+        await knex('documents').insert({
+            ...docData,
+            id: newDocId,
+            folderId: targetFolderId,
+            title: "Copy of " + doc.title,
+            uploadDate: new Date().toISOString()
+        });
+
+        await systemLog(owner || doc.owner || 'System', "Copy", `Salin file: "${doc.title}" ke folder: ${targetFolderId || 'Root'}`);
+        res.json({ success: true, newId: newDocId });
+    } catch (err) {
+        console.error("[Copy] Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const restoreVersion = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { timestamp, user } = req.body; // identify version by timestamp
+
+        const doc = await knex('documents').where('id', id).first();
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+
+        let history = [];
+        try { history = JSON.parse(doc.versionsHistory || '[]'); } catch (e) { }
+
+        const versionToRestore = history.find(v => v.timestamp === timestamp);
+        if (!versionToRestore) return res.status(404).json({ error: "Version not found" });
+
+        // Push current state to history before restoring
+        history.push({
+            timestamp: doc.uploadDate,
+            size: doc.size,
+            type: doc.type,
+            fileData: null,
+            url: doc.url,
+            title: doc.title,
+            user: doc.owner || 'System',
+            version: doc.version
+        });
+
+        // If restoring a file that is archived on disk
+        let restoredUrl = versionToRestore.url;
+        let restoredType = versionToRestore.type;
+
+        // Trigger OCR if useful
+        if (restoredUrl && restoredUrl.startsWith('/uploads/')) {
+            const absolutePath = path.join(UPLOADS_DIR, path.basename(restoredUrl));
+            // Optionally re-queue OCR
+            await addOCRJob(id, absolutePath, restoredType || 'application/octet-stream', versionToRestore.title);
+        }
+
+        await knex('documents').where('id', id).update({
+            title: versionToRestore.title,
+            size: versionToRestore.size,
+            type: restoredType,
+            url: restoredUrl,
+            uploadDate: new Date().toISOString(),
+            version: knex.raw('version + 1'),
+            versionsHistory: JSON.stringify(history),
+            status: 'restored' // or 'processing' if OCR queued
+        });
+
+        await systemLog(user, "Restore", `Restore dokumen "${doc.title}" ke versi tanggal ${timestamp}`);
+        res.json({ success: true });
+
+    } catch (err) {
+        console.error("[Restore Error]:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+export const updateDocument = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { title, folderId, department, auditId, stepIndex } = req.body;
+        const owner = req.body.owner || 'System';
+
+        const existingDoc = await knex('documents').where('id', id).first();
+        if (!existingDoc) return res.status(404).json({ error: "Dokumen tidak ditemukan" });
+
+        const updateData = {
+            title: title || existingDoc.title,
+            folderId: (folderId === "null" || folderId === "") ? null : (folderId !== undefined ? folderId : existingDoc.folderId),
+            department: department || existingDoc.department,
+            auditId: auditId || existingDoc.auditId,
+            stepIndex: stepIndex || existingDoc.stepIndex
+        };
+
+        // Handle File Update (Revision)
+        if (req.file) {
+            console.log(`[Update] Revision for: ${existingDoc.title}. New file: ${req.file.originalname}`);
+
+            // 1. Archive Old File
+            let versionsHistory = [];
+            try { versionsHistory = existingDoc.versionsHistory ? JSON.parse(existingDoc.versionsHistory) : []; } catch (e) { }
+
+            let archivedUrl = existingDoc.url;
+            if (existingDoc.url && existingDoc.url.startsWith('/uploads/')) {
+                const ext = existingDoc.title.split('.').pop() || 'bin';
+                const filename = `ARCHIVE-${existingDoc.id}-${Date.now()}.${ext}`;
+                const newFilePath = path.join(UPLOADS_DIR, filename);
+                const oldFilePath = path.join(UPLOADS_DIR, path.basename(existingDoc.url));
+                try {
+                    if (fs.existsSync(oldFilePath)) {
+                        fs.copyFileSync(oldFilePath, newFilePath);
+                        archivedUrl = `/uploads/${filename}`;
+                    }
+                } catch (e) { console.error("Archiving failed:", e); }
+            }
+
+            versionsHistory.push({
+                timestamp: existingDoc.uploadDate || new Date().toISOString(),
+                size: existingDoc.size,
+                type: existingDoc.type,
+                fileData: null,
+                url: archivedUrl,
+                title: existingDoc.title,
+                user: existingDoc.owner || 'System',
+                version: existingDoc.version || 1
+            });
+
+            // 2. Update File Fields
+            updateData.url = `/uploads/${req.file.filename}`;
+            updateData.type = req.file.mimetype;
+            updateData.size = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
+            updateData.uploadDate = new Date().toISOString();
+            updateData.versionsHistory = JSON.stringify(versionsHistory);
+            updateData.version = (existingDoc.version || 1) + 1;
+            updateData.status = 'processing';
+            updateData.ocrContent = ''; // Reset OCR for new file
+
+            // 3. Trigger OCR
+            try {
+                await addOCRJob(id, req.file.path, req.file.mimetype, updateData.title);
+            } catch (qErr) { console.error("Queue Error:", qErr); }
+        }
+
+        await knex('documents').where('id', id).update(updateData);
+        await systemLog(owner, "Update Dokumen", `Update ${title || existingDoc.title} ${req.file ? '(Revisi File)' : ''}`);
+
+        res.json({ success: true, id, ...updateData });
+    } catch (err) {
+        console.error("Update Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+// --- COMMENT LOGIC ---
+export const getComments = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const comments = await knex('document_comments')
+            .where('documentId', id)
+            .orderBy('timestamp', 'asc');
+        res.json(comments);
+    } catch (err) {
+        console.error("[GetComments Error]:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const addComment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { user, text, attachment } = req.body;
+
+        const newComment = {
+            id: `cmt-${Date.now()}`,
+            documentId: id,
+            user: user || 'System',
+            text: text || '',
+            timestamp: new Date().toISOString(),
+            attachment: attachment || null
+        };
+
+        if (req.file) {
+            newComment.attachment = JSON.stringify({
+                name: req.file.originalname,
+                url: `/uploads/${req.file.filename}`,
+                type: req.file.mimetype
+            });
+        }
+
+        await knex('document_comments').insert(newComment);
+        res.json({ success: true, comment: newComment });
+    } catch (err) {
+        console.error("[AddComment Error]:", err);
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const streamDocument = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const doc = await knex('documents').where('id', id).first();
+        if (!doc) return res.status(404).json({ error: "Document not found" });
+
+        if (doc.url && doc.url.startsWith('/uploads/')) {
+            const fileBasename = path.basename(doc.url);
+            const filePath = path.join(UPLOADS_DIR, fileBasename);
+            if (fs.existsSync(filePath)) {
+                res.setHeader('Content-Type', doc.type || 'application/pdf');
+                res.setHeader('Content-Disposition', `inline; filename="${doc.title}"`);
+                const stream = fs.createReadStream(filePath);
+                stream.pipe(res);
+            } else {
+                console.warn(`[Stream] File not found: ${filePath}`);
+                res.status(404).json({ error: "File not found on disk" });
+            }
+        } else {
+            res.redirect(doc.url);
+        }
+    } catch (err) {
+        console.error("[Stream Error]:", err);
+        res.status(500).json({ error: err.message });
+    }
+};

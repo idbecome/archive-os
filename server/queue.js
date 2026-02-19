@@ -1,7 +1,5 @@
-import db from './db.js';
-import * as XLSX from 'xlsx'; // Fixed for ESM
-import fs from 'fs';
-import path from 'path';
+import { knex } from './db.js';
+
 // Simple MySQL-based Queue Replacement for BullMQ
 class DbQueue {
     constructor(name) {
@@ -9,52 +7,60 @@ class DbQueue {
     }
 
     async add(name, data, opts) {
-        return new Promise((resolve, reject) => {
-            const sql = "INSERT INTO job_queue (name, data, status, created_at) VALUES (?, ?, 'waiting', NOW())";
-            db.run(sql, [name, JSON.stringify(data)], function (err) {
-                if (err) reject(err);
-                else resolve({ id: this.lastID, name, data });
+        try {
+            const [id] = await knex('job_queue').insert({
+                name,
+                data: JSON.stringify(data),
+                status: 'waiting',
+                created_at: knex.fn.now()
             });
-        });
+            return { id, name, data };
+        } catch (err) {
+            console.error("Queue Add Error:", err);
+            throw err;
+        }
     }
 
-    async getJobCounts(...statuses) {
-        return new Promise((resolve, reject) => {
-            db.all("SELECT status, COUNT(*) as count FROM job_queue GROUP BY status", [], (err, rows) => {
-                if (err) return reject(err);
-                const counts = { active: 0, waiting: 0, completed: 0, failed: 0 };
-                if (rows) {
-                    rows.forEach(r => {
-                        if (counts[r.status] !== undefined) counts[r.status] = r.count;
-                    });
-                }
-                resolve(counts);
+    async getJobCounts() {
+        try {
+            const rows = await knex('job_queue')
+                .select('status')
+                .count('* as count')
+                .groupBy('status');
+
+            const counts = { active: 0, waiting: 0, completed: 0, failed: 0 };
+            rows.forEach(r => {
+                if (counts[r.status] !== undefined) counts[r.status] = r.count;
             });
-        });
+            return counts;
+        } catch (err) {
+            console.error("Queue Counts Error:", err);
+            return { active: 0, waiting: 0, completed: 0, failed: 0 };
+        }
     }
 
     async getJobs(types, start, end, asc) {
-        return new Promise((resolve, reject) => {
-            if (!types || types.length === 0) return resolve([]);
-            const placeholders = types.map(() => '?').join(',');
-            const limit = (end - start) + 1;
-            const offset = start;
-            const order = asc ? 'ASC' : 'DESC';
+        try {
+            if (!types || types.length === 0) return [];
 
-            const sql = `SELECT * FROM job_queue WHERE status IN (${placeholders}) ORDER BY created_at ${order} LIMIT ? OFFSET ?`;
-            const params = [...types, limit, offset];
+            const rows = await knex('job_queue')
+                .whereIn('status', types)
+                .orderBy('created_at', asc ? 'asc' : 'desc')
+                .limit((end - start) + 1)
+                .offset(start);
 
-            db.all(sql, params, (err, rows) => {
-                if (err) return reject(err);
-                resolve((rows || []).map(r => ({
-                    id: r.id,
-                    data: JSON.parse(r.data),
-                    progress: r.progress || 0,
-                    status: r.status,
-                    finishedOn: r.finished_at ? new Date(r.finished_at).getTime() : null
-                })));
-            });
-        });
+            return rows.map(r => ({
+                id: r.id,
+                data: typeof r.data === 'string' ? JSON.parse(r.data) : r.data,
+                progress: r.progress || 0,
+                status: r.status,
+                finishedOn: r.finished_at ? new Date(r.finished_at).getTime() : null,
+                error: r.error
+            }));
+        } catch (err) {
+            console.error("Queue GetJobs Error:", err);
+            return [];
+        }
     }
 }
 
@@ -62,35 +68,35 @@ export const ocrQueue = new DbQueue('OCR_QUEUE');
 
 // Helper to add jobs (with deduplication)
 export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {
-    // DEDUP CHECK: Skip if a job for this docId is already waiting or active
-    // We use LIKE to search within the JSON string for the specific docId
-    const existing = await new Promise((resolve) => {
-        const checkSql = "SELECT id, data FROM job_queue WHERE status IN ('waiting', 'active') AND data LIKE ?";
-        db.get(checkSql, [`%"docId":"${docId}"%`], (err, row) => {
-            if (err) return resolve(null);
-            resolve(row);
+    try {
+        // DEDUP CHECK: Skip if a job for this docId is already waiting or active
+        const existing = await knex('job_queue')
+            .whereIn('status', ['waiting', 'active'])
+            .where('data', 'like', `%"docId":"${docId}"%`)
+            .first();
+
+        if (existing) {
+            console.log(`[Queue] DEDUP: Job for DocID ${docId} already in queue (Job #${existing.id}). Skipping.`);
+            return {
+                id: existing.id,
+                name: 'process-ocr',
+                data: typeof existing.data === 'string' ? JSON.parse(existing.data) : existing.data,
+                deduplicated: true
+            };
+        }
+
+        console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}, File: ${originalName}`);
+
+        return await ocrQueue.add('process-ocr', {
+            docId,
+            filePath,
+            fileType,
+            originalName,
+            context
         });
-    });
-
-    if (existing) {
-        console.log(`[Queue] DEDUP: Job for DocID ${docId} already in queue (Job #${existing.id}). Skipping.`);
-        return { id: existing.id, name: 'process-ocr', data: JSON.parse(existing.data), deduplicated: true };
+    } catch (err) {
+        console.error("AddOCRJob Error:", err);
+        // Fallback or re-throw
+        return null;
     }
-
-    console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}, File: ${originalName}`);
-    return await ocrQueue.add('process-ocr', {
-        docId,
-        filePath,
-        fileType,
-        originalName,
-        context // NEW: Metadata for worker (e.g. inventory slot/ordner/invoice IDs)
-    }, {
-        attempts: 3,
-        backoff: {
-            type: 'exponential',
-            delay: 1000,
-        },
-        removeOnComplete: true, // Keep cleaner
-        removeOnFail: 100 // Keep some history for debugging
-    });
 };

@@ -5,52 +5,8 @@ dotenv.config();
 
 const knex = knexLib(knexConfig.development);
 
-// Wrapper to mimic SQLite API (compat layer)
+// Wrapper to mimic SQLite API (compat layer) - DEPRECATED: Use knex directly
 const db = {
-    run: (sql, params, callback) => {
-        // Handle INSERT lastID context
-        knex.raw(sql, params || []) // Standard binding
-            .then(result => {
-                if (callback) {
-                    const context = {
-                        lastID: result[0] ? result[0].insertId : 0,
-                        changes: result[0] ? result[0].affectedRows : 0
-                    };
-                    callback.call(context, null);
-                }
-            })
-            .catch(err => {
-                if (callback) callback(err);
-            });
-    },
-    // More robust raw query wrapper for standard library calls
-    raw: async (sql, params) => {
-        const [rows] = await knex.raw(sql, params);
-        return rows;
-    },
-    all: (sql, params, callback) => {
-        knex.raw(sql, params || [])
-            .then(result => {
-                const rows = result[0];
-                if (callback) callback(null, rows);
-            })
-            .catch(err => {
-                if (callback) callback(err, null);
-            });
-    },
-    get: (sql, params, callback) => {
-        knex.raw(sql, params || [])
-            .then(result => {
-                const row = result[0] ? result[0][0] : null;
-                if (callback) callback(null, row);
-            })
-            .catch(err => {
-                if (callback) callback(err, null);
-            });
-    },
-    close: () => {
-        knex.destroy();
-    },
     // Helper methods for Worker (Promise-based)
     getDocumentById: async (id) => {
         return await knex('documents').where('id', id).first();

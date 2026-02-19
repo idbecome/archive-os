@@ -8,7 +8,7 @@ import {
     LayoutGrid, List
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
-import { db as api } from '../services/database';
+import { db as api, API_URL } from '../services/database';
 import Modal from '../components/common/Modal';
 import PdfViewer from '../components/ui/PdfViewer';
 
@@ -130,13 +130,24 @@ export default function Documents({
         if (content && typeof content === 'string') {
             try {
                 let buffer;
-                const normalizedUrl = getFullUrl(content);
+                // IDM Bypass: Use Stream Endpoint for PDFs
+                let effectiveUrl = content;
+                if (isPdf && fullDoc.id) {
+                    // Check if it's already a full URL or local path
+                    if (content.startsWith('/uploads/') || !content.startsWith('http')) {
+                        // Use stream endpoint
+                        effectiveUrl = `${API_URL}/documents/${fullDoc.id}/stream`;
+                        console.log('[Preview] Using Stream Endpoint for PDF:', effectiveUrl);
+                    }
+                }
+                const normalizedUrl = effectiveUrl.startsWith('http') ? effectiveUrl : getFullUrl(effectiveUrl);
+
                 console.log('[Preview] Normalized URL:', normalizedUrl);
 
                 if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
                     console.log('[Preview] Fetching buffer from URL...');
                     const response = await fetch(normalizedUrl);
-                    if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
+                    if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText} (${normalizedUrl})`);
                     buffer = await response.arrayBuffer();
                     console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
                 } else if (content.includes('base64,') || content.length > 1000) {
@@ -162,7 +173,10 @@ export default function Documents({
                     const firstSheet = wb.Sheets[wb.SheetNames[0]];
                     setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
                 }
-            } catch (e) { console.error("Preview error:", e); }
+            } catch (e) {
+                console.error("Preview error:", e);
+                alert(`Gagal memuat preview dokumen: ${e.message}`);
+            }
         }
         setIsGeneratingPreview(false);
     };
@@ -228,10 +242,11 @@ export default function Documents({
 
         try {
             if (mgmtOp.itemType === 'file') {
+                const owner = currentUser?.name || currentUser?.username || 'System';
                 if (mgmtOp.type === 'copy') {
-                    await api.copyDocument(mgmtOp.item.id, targetFolderId);
+                    await api.copyDocument(mgmtOp.item.id, targetFolderId, owner);
                 } else {
-                    await api.moveDocument(mgmtOp.item.id, targetFolderId);
+                    await api.moveDocument(mgmtOp.item.id, targetFolderId, owner);
                 }
             } else {
                 if (mgmtOp.type === 'copy') {
@@ -287,7 +302,8 @@ export default function Documents({
 
         setIsBulkDeleting(true);
         try {
-            const promises = Array.from(selectedDocIds).map(id => api.deleteDocument(id));
+            const validIds = Array.from(selectedDocIds).filter(id => id);
+            const promises = validIds.map(id => api.deleteDocument(id));
             await Promise.all(promises);
             setSelectedDocIds(new Set());
             if (onRefresh) onRefresh();

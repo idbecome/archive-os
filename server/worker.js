@@ -7,7 +7,7 @@ const pdf = require('pdf-parse');
 import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
-import db from './db.js';
+import { knex } from './db.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { generateEmbedding } from './ai_search.js';
 
@@ -169,12 +169,10 @@ async function processOCRJob(job) {
         }
 
         // --- CHECK FOR EXISTING CLIENT-SIDE OCR ---
-        const existingData = await new Promise((resolve) => {
-            db.get("SELECT ocrContent FROM documents WHERE id = ?", [docId], (err, row) => {
-                if (err) return resolve(null);
-                resolve(row);
-            });
-        });
+        const existingData = await knex('documents')
+            .select('ocrContent')
+            .where('id', docId)
+            .first();
 
         let extractedText = "";
         let shouldProcess = true;
@@ -357,86 +355,59 @@ async function processOCRJob(job) {
             const ordnerId = context.ordnerId;
             const invoiceId = context.invoiceId;
 
-            await new Promise((resolve, reject) => {
-                db.get("SELECT box_data FROM inventory WHERE id = ?", [slotId], (err, row) => {
-                    if (err) return reject(new Error(`[Worker] Failed to fetch inventory ${slotId}: ${err.message}`));
-                    if (!row) return reject(new Error(`[Worker] Inventory ${slotId} not found`));
+            const row = await knex('inventory').select('box_data').where('id', slotId).first();
+            if (!row) throw new Error(`[Worker] Inventory ${slotId} not found`);
 
-                    let box;
-                    try {
-                        const raw = row.box_data;
-                        box = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                    } catch (e) {
-                        return reject(new Error(`[Worker] Corrupt Inventory JSON for ${slotId}`));
-                    }
+            let box;
+            try {
+                const raw = row.box_data;
+                box = typeof raw === 'string' ? JSON.parse(raw) : raw;
+            } catch (e) {
+                throw new Error(`[Worker] Corrupt Inventory JSON for ${slotId}`);
+            }
 
-                    try {
-                        let updated = false;
-
-                        if (box && box.ordners) {
-                            box.ordners.forEach(ord => {
-                                if (ord.id == ordnerId && ord.invoices) {
-                                    ord.invoices.forEach(inv => {
-                                        if (inv.id == invoiceId) {
-                                            inv.ocrContent = extractedText;
-                                            updated = true;
-                                        }
-                                    });
+            try {
+                let updated = false;
+                if (box && box.ordners) {
+                    box.ordners.forEach(ord => {
+                        if (ord.id == ordnerId && ord.invoices) {
+                            ord.invoices.forEach(inv => {
+                                if (inv.id == invoiceId) {
+                                    inv.ocrContent = extractedText;
+                                    updated = true;
                                 }
                             });
-
-                            if (updated) {
-                                db.run("UPDATE inventory SET box_data = ? WHERE id = ?",
-                                    [JSON.stringify(box), slotId],
-                                    (upErr) => {
-                                        if (upErr) reject(new Error(`[Worker] Failed to update inventory ${slotId} with OCR: ${upErr.message}`));
-                                        else {
-                                            console.log(`[Worker] Inventory OCR Completed & Saved: Slot ${slotId}, Invoice ${invoiceId}`);
-                                            resolve();
-                                        }
-                                    }
-                                );
-                            } else {
-                                console.warn(`[Worker] Invoice ${invoiceId} not found in Ordner ${ordnerId}`);
-                                resolve(); // Treat as success to avoid retry loops for logical errors
-                            }
-                        } else {
-                            resolve();
                         }
-                    } catch (pe) {
-                        reject(new Error(`[Worker] Processing error for inventory: ${pe.message}`));
+                    });
+
+                    if (updated) {
+                        await knex('inventory')
+                            .where('id', slotId)
+                            .update({ box_data: JSON.stringify(box) });
+                        console.log(`[Worker] Inventory OCR Completed & Saved: Slot ${slotId}, Invoice ${invoiceId}`);
+                    } else {
+                        console.warn(`[Worker] Invoice ${invoiceId} not found in Ordner ${ordnerId}`);
                     }
-                });
-            });
+                }
+            } catch (pe) {
+                throw new Error(`[Worker] Processing error for inventory: ${pe.message}`);
+            }
 
         } else if (context && context.type === 'approval') {
             const approvalId = context.approvalId;
-            await new Promise((resolve, reject) => {
-                db.run("UPDATE document_approvals SET ocr_content = ? WHERE id = ?",
-                    [extractedText, approvalId],
-                    (err) => {
-                        if (err) reject(new Error(`[Worker] Failed to update approval ${approvalId} with OCR: ${err.message}`));
-                        else {
-                            console.log(`[Worker] Approval OCR Completed: ${approvalId}`);
-                            resolve();
-                        }
-                    }
-                );
-            });
+            await knex('document_approvals')
+                .where('id', approvalId)
+                .update({ ocr_content: extractedText });
+            console.log(`[Worker] Approval OCR Completed: ${approvalId}`);
         } else {
             // Standard Document Logic
-            await new Promise((resolve, reject) => {
-                db.run("UPDATE documents SET ocrContent = ?, status = 'done' WHERE id = ?",
-                    [extractedText, docId],
-                    (err) => {
-                        if (err) reject(new Error(`[Worker] Failed to update document ${docId} with OCR: ${err.message}`));
-                        else {
-                            console.log(`[Worker] Document OCR Completed & Saved: ${docId}`);
-                            resolve();
-                        }
-                    }
-                );
-            });
+            await knex('documents')
+                .where('id', docId)
+                .update({
+                    ocrContent: extractedText,
+                    status: 'done'
+                });
+            console.log(`[Worker] Document OCR Completed & Saved: ${docId}`);
         }
 
         // 4. Generate & Save AI Embedding (Background)
@@ -447,10 +418,18 @@ async function processOCRJob(job) {
 
                 if (isInventory) {
                     // Update vector in the relational 'invoices' table
-                    db.run("UPDATE invoices SET vector = ? WHERE invoice_no = ? AND ordner_ref_id IN (SELECT id FROM ordners WHERE box_ref_id IN (SELECT id FROM boxes WHERE inventory_id = ?))",
-                        [vectorJson, context.invoiceId, context.slotId]);
+                    await knex('invoices')
+                        .where('invoice_no', context.invoiceId)
+                        .whereIn('ordner_ref_id', function () {
+                            this.select('id').from('ordners').whereIn('box_ref_id', function () {
+                                this.select('id').from('boxes').where('inventory_id', context.slotId);
+                            });
+                        })
+                        .update({ vector: vectorJson });
                 } else {
-                    db.run("UPDATE documents SET vector = ? WHERE id = ?", [vectorJson, docId]);
+                    await knex('documents')
+                        .where('id', docId)
+                        .update({ vector: vectorJson });
                 }
                 console.log(`[Worker] AI Embedding Generated for: ${docId}`);
             } catch (vErr) {
@@ -468,66 +447,82 @@ async function startPolling() {
     console.log("[Worker] Starting MySQL Polling (No Redis)...");
 
     // FIX: Reset stuck jobs on startup (Active -> Waiting)
-    db.run("UPDATE job_queue SET status = 'waiting' WHERE status = 'active'", [], (err) => {
-        if (err) console.error("[Worker] Failed to reset stuck jobs:", err);
-        else console.log("[Worker] Startup: Reset stuck 'active' jobs to 'waiting'.");
-    });
+    await knex('job_queue')
+        .where('status', 'active')
+        .update({ status: 'waiting' });
+    console.log("[Worker] Startup: Reset stuck 'active' jobs to 'waiting'.");
 
     const poll = async () => {
         try {
             // 1. Fetch one waiting job
-            db.get("SELECT * FROM job_queue WHERE status = 'waiting' ORDER BY created_at ASC LIMIT 1", [], async (err, row) => {
-                if (err) {
-                    console.error("[Worker] Poll Error:", err);
-                    return setTimeout(poll, 5000);
-                }
+            const row = await knex('job_queue')
+                .where('status', 'waiting')
+                .orderBy('created_at', 'asc')
+                .first();
 
-                if (row) {
-                    // 2. Mark as Active
-                    db.run("UPDATE job_queue SET status = 'active', processed_at = NOW() WHERE id = ?", [row.id], async () => {
-
-                        // Construct Job Object
-                        let jobData;
-                        try {
-                            jobData = JSON.parse(row.data || '{}');
-                        } catch (e) {
-                            console.error(`[Worker] Job ${row.id} has corrupt JSON data. Marking failed.`);
-                            db.run("UPDATE job_queue SET status = 'failed', error = 'Corrupt JSON Data' WHERE id = ?", [row.id]);
-                            return setTimeout(poll, 100);
-                        }
-
-                        const job = {
-                            id: row.id,
-                            data: jobData,
-                            updateProgress: async (progress) => {
-                                db.run("UPDATE job_queue SET progress = ? WHERE id = ?", [progress, row.id], () => { });
-                            }
-                        };
-
-                        try {
-                            // Race against timeout (3 minutes)
-                            await Promise.race([
-                                processOCRJob(job),
-                                new Promise((_, reject) => setTimeout(() => reject(new Error("Job Timeout (3m)")), 180000))
-                            ]);
-
-                            // 3. Mark Completed
-                            db.run("UPDATE job_queue SET status = 'completed', finished_at = NOW(), progress = 100 WHERE id = ?", [row.id], () => {
-                                setTimeout(poll, 100); // Process next immediately
-                            });
-                        } catch (e) {
-                            // 4. Mark Failed
-                            console.error(`[Worker] Job ${row.id} Failed or Timed Out:`, e.message);
-                            db.run("UPDATE job_queue SET status = 'failed', finished_at = NOW(), error = ? WHERE id = ?", [e.message, row.id], () => {
-                                setTimeout(poll, 1000);
-                            });
-                        }
+            if (row) {
+                // 2. Mark as Active
+                await knex('job_queue')
+                    .where('id', row.id)
+                    .update({
+                        status: 'active',
+                        processed_at: knex.fn.now()
                     });
-                } else {
-                    // No jobs, wait 2 seconds
-                    setTimeout(poll, 2000);
+
+                // Construct Job Object
+                let jobData;
+                try {
+                    jobData = JSON.parse(row.data || '{}');
+                } catch (e) {
+                    console.error(`[Worker] Job ${row.id} has corrupt JSON data. Marking failed.`);
+                    await knex('job_queue')
+                        .where('id', row.id)
+                        .update({ status: 'failed', error: 'Corrupt JSON Data' });
+                    return setTimeout(poll, 100);
                 }
-            });
+
+                const job = {
+                    id: row.id,
+                    data: jobData,
+                    updateProgress: async (progress) => {
+                        await knex('job_queue')
+                            .where('id', row.id)
+                            .update({ progress });
+                    }
+                };
+
+                try {
+                    // Race against timeout (3 minutes)
+                    await Promise.race([
+                        processOCRJob(job),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error("Job Timeout (3m)")), 180000))
+                    ]);
+
+                    // 3. Mark Completed
+                    await knex('job_queue')
+                        .where('id', row.id)
+                        .update({
+                            status: 'completed',
+                            finished_at: knex.fn.now(),
+                            progress: 100
+                        });
+                    setTimeout(poll, 100); // Process next immediately
+                } catch (e) {
+                    // 4. Mark Failed
+                    console.error(`[Worker] Job ${row.id} Failed or Timed Out:`, e.message);
+                    await knex('job_queue')
+                        .where('id', row.id)
+                        .update({
+                            status: 'failed',
+                            finished_at: knex.fn.now(),
+                            error: e.message
+                        });
+                    setTimeout(poll, 1000);
+                }
+            } else {
+                // No jobs, wait 2 seconds
+                setTimeout(poll, 2000);
+            }
         } catch (e) {
             console.error("[Worker] Critical Error:", e);
             setTimeout(poll, 5000);

@@ -8,7 +8,7 @@ const getApiUrl = () => {
     }
     return '/api';
 };
-const API_URL = getApiUrl();
+export const API_URL = getApiUrl();
 
 export const db = {
     async getInventory() {
@@ -400,6 +400,10 @@ export const db = {
     },
 
     async deleteDocument(id) {
+        if (!id) {
+            console.error("Gagal hapus dokumen: ID tidak valid", id);
+            return;
+        }
         try {
             await fetch(`${API_URL}/documents/${id}`, { method: 'DELETE' });
         } catch (e) { console.error("Gagal hapus dokumen", e); }
@@ -424,13 +428,16 @@ export const db = {
             payload.boxData = null; // Kosongkan kolom legacy agar tidak truncate
         }
 
-        try {
-            await fetch(`${API_URL}/inventory/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-        } catch (e) { console.error("Gagal update inventory", e); }
+        const response = await fetch(`${API_URL}/inventory/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || `Error ${response.status}`);
+        }
     },
 
     async moveInventory(sourceId, targetId, user) {
@@ -511,12 +518,12 @@ export const db = {
         }
     },
 
-    async copyDocument(id, targetFolderId) {
+    async copyDocument(id, targetFolderId, owner) {
         try {
             const response = await fetch(`${API_URL}/documents/copy`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, targetFolderId })
+                body: JSON.stringify({ id, targetFolderId, owner })
             });
             if (!response.ok) throw new Error('Gagal menyalin dokumen');
             return await response.json();
@@ -526,12 +533,12 @@ export const db = {
         }
     },
 
-    async moveDocument(id, targetFolderId) {
+    async moveDocument(id, targetFolderId, owner) {
         try {
             const response = await fetch(`${API_URL}/documents/move`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id, targetFolderId })
+                body: JSON.stringify({ id, targetFolderId, owner })
             });
             if (!response.ok) throw new Error('Gagal memindahkan dokumen');
             return await response.json();
@@ -684,7 +691,12 @@ export const db = {
         try {
             const response = await fetch(`${API_URL}/approval-flows`);
             if (!response.ok) return [];
-            return await response.json();
+            const data = await response.json();
+            return data.map(flow => ({
+                ...flow,
+                steps: typeof flow.steps === 'string' ? JSON.parse(flow.steps) : (flow.steps || []),
+                visual_config: typeof flow.visual_config === 'string' ? JSON.parse(flow.visual_config) : (flow.visual_config || null)
+            }));
         } catch { return []; }
     },
 
@@ -740,8 +752,10 @@ export const db = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
-            return await response.json();
-        } catch (e) { console.error(e); return { success: false }; }
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Gagal membuat panduan');
+            return result;
+        } catch (e) { console.error("createPustakaGuide Error:", e); throw e; }
     },
 
     async createPustakaSlide(data) {
@@ -751,8 +765,10 @@ export const db = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
-            return await response.json();
-        } catch (e) { console.error(e); return { success: false }; }
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Gagal membuat slide');
+            return result;
+        } catch (e) { console.error("createPustakaSlide Error:", e); throw e; }
     },
 
     async updatePustakaGuide(id, data) {
@@ -762,15 +778,19 @@ export const db = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
-            return await response.json();
-        } catch (e) { console.error(e); return { success: false }; }
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Gagal update panduan');
+            return result;
+        } catch (e) { console.error("updatePustakaGuide Error:", e); throw e; }
     },
 
     async deletePustakaGuide(id) {
         try {
             const response = await fetch(`${API_URL}/pustaka/guides/${id}`, { method: 'DELETE' });
-            return await response.json();
-        } catch (e) { console.error(e); return { success: false }; }
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Gagal menghapus panduan');
+            return result;
+        } catch (e) { console.error("deletePustakaGuide Error:", e); throw e; }
     },
 
     async deleteSlidesByGuideId(guideId) {
@@ -803,8 +823,10 @@ export const db = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ name })
             });
-            return await response.json();
-        } catch (e) { console.error(e); return { success: false }; }
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || 'Gagal membuat kategori');
+            return result;
+        } catch (e) { console.error("createPustakaCategory Error:", e); throw e; }
     },
 
     // --- NORMALIZED QUERY ENDPOINTS ---

@@ -13,7 +13,7 @@ import WorkflowDesigner from './components/workflow/WorkflowDesigner';
 import {
   Package,
   LayoutDashboard,
-  Grid3X3,
+  Grid3x3,
   History,
   Search,
   Plus,
@@ -670,6 +670,10 @@ export default function App() {
       }
 
       const dataBoxId = dataBoxFolder?.id || null;
+
+      if (!dataBoxId) {
+        throw new Error("Folder sistem 'DataBox' tidak ditemukan dan gagal dibuat. Hubungi administrator.");
+      }
 
       // Helper function untuk mencari folder di parent tertentu
       const findInParent = (list, pId) => list.find(f => {
@@ -1514,6 +1518,7 @@ export default function App() {
           const updatedSlot = {
             ...currentSlot,
             status: 'IMPORTED',
+            box_id: data.boxId, // SYNC COLUMN: Ensure the top-level box_id is updated for searching/filtering
             boxData: boxData,
             lastUpdated: new Date().toISOString(),
             history: [...(Array.isArray(currentSlot.history) ? currentSlot.history : []), createHistoryItem('IMPORTED', `Import: ${data.boxId}`)]
@@ -2027,6 +2032,10 @@ export default function App() {
 
   const handleDeleteDoc = async (e, docId) => {
     e.stopPropagation();
+    if (!docId) {
+      alert("Error: ID dokumen tidak valid.");
+      return;
+    }
     if (window.confirm('Hapus dokumen?')) {
       try {
         await api.deleteDocument(docId);
@@ -2718,6 +2727,7 @@ export default function App() {
                 docStats={docStats}
                 logs={logs}
                 TOTAL_SLOTS={TOTAL_SLOTS}
+                Grid3x3={Grid3x3}
                 isDarkMode={isDarkMode}
                 handleViewDoc={handleViewDoc}
                 handleNavigateToFolder={handleNavigateToFolder}

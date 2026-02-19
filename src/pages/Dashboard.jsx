@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Grid3X3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock, Eye, Info, MessageSquare, BookOpen, FileCheck, ClipboardCheck, ChevronLeft, ChevronRight, User } from 'lucide-react';
+import { Grid3x3, ScanLine, History, PieChart, FileText, FileDigit, ChevronDown, ChevronUp, ArrowRight, Package, Truck, FileBarChart, Download, X, CheckCircle2, FileSearch, FolderOpen, Users, Sparkles, Clock, Eye, Info, MessageSquare, BookOpen, FileCheck, ClipboardCheck, ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { Card, SummaryCard } from '../components/ui/Card';
 import QueueStatus from '../components/ui/QueueStatus';
 import WarehouseMap from '../components/WarehouseMap';
@@ -381,7 +381,7 @@ export default function Dashboard({
                     title="Gudang Internal"
                     value={`${(stats?.occupancy || 0).toFixed(0)}%`}
                     subtext={`${stats?.empty || 0} Slot Tersedia`}
-                    icon={Grid3X3}
+                    icon={Grid3x3}
                     colorClass="bg-indigo-100 text-indigo-600 dark:bg-indigo-900/20 dark:text-indigo-400"
                 />
                 <SummaryCard
