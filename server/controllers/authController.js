@@ -60,6 +60,7 @@ export const createUser = async (req, res) => {
         await systemLog('Admin', "Create User", `Created user: ${username}`);
         res.json({ id });
     } catch (e) {
+        console.error("CRITICAL: createUser failed:", e);
         res.status(500).json({ error: e.message });
     }
 };
@@ -78,6 +79,7 @@ export const updateUser = async (req, res) => {
         await systemLog('Admin', "Update User", `Updated user ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
+        console.error("CRITICAL: updateUser failed:", e);
         res.status(500).json({ error: e.message });
     }
 };
@@ -88,6 +90,7 @@ export const deleteUser = async (req, res) => {
         await systemLog('Admin', "Delete User", `Deleted user ID: ${req.params.id}`);
         res.json({ success: true });
     } catch (e) {
+        console.error("CRITICAL: deleteUser failed:", e);
         res.status(500).json({ error: e.message });
     }
 };
@@ -129,6 +132,7 @@ export const updateProfile = async (req, res) => {
         await systemLog(user.username, "Profile Update", "User updated their profile");
         res.json({ success: true });
     } catch (err) {
+        console.error("CRITICAL: updateProfile failed:", err);
         res.status(500).json({ error: err.message });
     }
 };

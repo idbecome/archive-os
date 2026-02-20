@@ -201,9 +201,11 @@ export const db = {
             const response = await fetch(`${API_URL}/tax-summaries`);
             if (!response.ok) throw new Error('Gagal mengambil data pajak');
             const data = await response.json();
-            // Backend sudah melakukan parsing JSON di server/index.js, 
-            // tapi kita pastikan id tetap string untuk konsistensi frontend
-            return data.map(item => ({ ...item, id: String(item.id) }));
+            return data.map(item => ({
+                ...item,
+                id: String(item.id),
+                data: typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {})
+            }));
         } catch (error) {
             console.error("DB Error (TaxSummaries):", error);
             return JSON.parse(localStorage.getItem('tax_summaries') || '[]');

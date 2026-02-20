@@ -116,7 +116,7 @@ export const uploadDocument = async (req, res) => {
                     status: status
                 });
 
-            if (absoluteFilePath) {
+            if (absoluteFilePath && !initialOcr) {
                 try {
                     await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', title);
                 } catch (qErr) { console.error("Queue Error:", qErr); }
@@ -139,7 +139,7 @@ export const uploadDocument = async (req, res) => {
         const initialOcr = req.body.ocrContent || '';
         const status = initialOcr ? 'done' : 'processing';
 
-        const newDocId = `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const newDocId = req.body.id || `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         await knex('documents').insert({
             id: newDocId,
             title: title,
@@ -157,7 +157,7 @@ export const uploadDocument = async (req, res) => {
             status: status
         });
 
-        if (absoluteFilePath) {
+        if (absoluteFilePath && !initialOcr) {
             try {
                 await addOCRJob(newDocId, absoluteFilePath, finalType || 'application/octet-stream', title);
             } catch (qErr) {
@@ -346,7 +346,7 @@ export const restoreVersion = async (req, res) => {
 export const updateDocument = async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, folderId, department, auditId, stepIndex } = req.body;
+        const { title, folderId, department, auditId, stepIndex, ocrContent } = req.body;
         const owner = req.body.owner || 'System';
 
         const existingDoc = await knex('documents').where('id', id).first();
@@ -400,13 +400,18 @@ export const updateDocument = async (req, res) => {
             updateData.uploadDate = new Date().toISOString();
             updateData.versionsHistory = JSON.stringify(versionsHistory);
             updateData.version = (existingDoc.version || 1) + 1;
-            updateData.status = 'processing';
-            updateData.ocrContent = ''; // Reset OCR for new file
+
+            // Gunakan hasil OCR dari client jika tersedia agar status langsung 'done'
+            const initialOcr = ocrContent || '';
+            updateData.ocrContent = initialOcr;
+            updateData.status = initialOcr ? 'done' : 'processing';
 
             // 3. Trigger OCR
-            try {
-                await addOCRJob(id, req.file.path, req.file.mimetype, updateData.title);
-            } catch (qErr) { console.error("Queue Error:", qErr); }
+            if (!initialOcr) {
+                try {
+                    await addOCRJob(id, req.file.path, req.file.mimetype, updateData.title);
+                } catch (qErr) { console.error("Queue Error:", qErr); }
+            }
         }
 
         await knex('documents').where('id', id).update(updateData);
@@ -466,23 +471,42 @@ export const streamDocument = async (req, res) => {
     try {
         const { id } = req.params;
         const doc = await knex('documents').where('id', id).first();
-        if (!doc) return res.status(404).json({ error: "Document not found" });
+        if (!doc || !doc.url) { // Added !doc.url check
+            return res.status(404).json({ error: "Document not found or has no URL" });
+        }
 
-        if (doc.url && doc.url.startsWith('/uploads/')) {
+        // If it's an absolute URL, redirect
+        if (doc.url.startsWith('http')) {
+            return res.redirect(doc.url);
+        }
+
+        // Standard case: /uploads/filename.ext
+        if (doc.url.startsWith('/uploads/')) {
             const fileBasename = path.basename(doc.url);
             const filePath = path.join(UPLOADS_DIR, fileBasename);
+
             if (fs.existsSync(filePath)) {
                 res.setHeader('Content-Type', doc.type || 'application/pdf');
                 res.setHeader('Content-Disposition', `inline; filename="${doc.title}"`);
-                const stream = fs.createReadStream(filePath);
-                stream.pipe(res);
+                return fs.createReadStream(filePath).pipe(res); // Added return and simplified
             } else {
                 console.warn(`[Stream] File not found: ${filePath}`);
-                res.status(404).json({ error: "File not found on disk" });
+                return res.status(404).json({ error: "File not found on disk" });
             }
-        } else {
-            res.redirect(doc.url);
         }
+        
+        // Fallback for legacy data: URL is just the filename
+        const filePath = path.join(UPLOADS_DIR, doc.url);
+        if (fs.existsSync(filePath)) {
+            res.setHeader('Content-Type', doc.type || 'application/pdf');
+            res.setHeader('Content-Disposition', `inline; filename="${doc.title}"`);
+            return fs.createReadStream(filePath).pipe(res);
+        }
+
+        // If we reach here, we can't find the file.
+        console.warn(`[Stream] Could not resolve URL to a file: ${doc.url}`);
+        res.status(404).json({ error: "File cannot be located" });
+
     } catch (err) {
         console.error("[Stream Error]:", err);
         res.status(500).json({ error: err.message });

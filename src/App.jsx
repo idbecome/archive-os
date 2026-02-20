@@ -1,8 +1,8 @@
-﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
-import { db as api } from './services/database';
+import { db as api, API_URL } from './services/database';
 import { TOTAL_SLOTS, getStatusStyle } from './utils/constants'; // Import constants
 import { checkPermission, APP_MODULES } from './utils/permissions';
 import { performAdvancedOCR } from './utils/ocr';
@@ -86,17 +86,8 @@ import AiChatAssistant from './components/AiChatAssistant';
 
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
-const getApiUrl = () => {
-  const { hostname, port, protocol } = window.location;
-  if (port === '5173' || port === '3000' || hostname === 'localhost') {
-    return `${protocol}//${hostname}:5000/api`;
-  }
-  return '/api';
-};
-const API_URL = getApiUrl();
-// The `db` object definition is removed here as it is imported.
-// The `// --- DATABASE ADAPTER (LAYER DATA) ---` block is removed.
-
+console.log("App.jsx: API_URL imported as:", API_URL);
+const API_BASE = API_URL;
 
 // Database adapter imported from ./services/database
 
@@ -439,7 +430,8 @@ export default function App() {
 
     const fetchOcrStatus = async () => {
       try {
-        const res = await fetch(`/api/ocr/status`);
+        const url = `${API_BASE}/ocr/status`;
+        const res = await fetch(url);
         if (!res.ok) return;
         const data = await res.json();
 
@@ -3131,7 +3123,7 @@ export default function App() {
                 onClick={async () => {
                   if (window.confirm("Yakin ingin mereset antrian yang macet? Ini akan memulai ulang proses yang gagal.")) {
                     try {
-                      await fetch(`/api/ocr/reset`, { method: 'POST' });
+                      await fetch(`${API_BASE}/ocr/reset`, { method: 'POST' });
                       toast.success('Antrian berhasil direset.');
                       // Wait a bit then reload
                       setTimeout(() => window.location.reload(), 1500);
@@ -3753,7 +3745,7 @@ export default function App() {
                         onChange={e => setUserForm({ ...userForm, role: e.target.value })}
                         className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
                       >
-                        {roles.map(r => <option key={r.id} value={r.name}>{r.name}</option>)}
+                        {roles.map(r => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
                       </select>
                       <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
                         <ChevronRight size={16} className="rotate-90" />
@@ -4264,4 +4256,3 @@ export default function App() {
     </div>
   );
 }
-

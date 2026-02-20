@@ -1,4 +1,9 @@
-import { pipeline } from '@xenova/transformers';
+import { pipeline, env } from '@xenova/transformers';
+
+// Suppress ONNX Runtime warnings
+if (env && env.onnx) {
+    env.onnx.logLevel = 'error';
+}
 
 // Singleton Promise mechanism to prevent race conditions
 let embedderPromise = null;
@@ -6,9 +11,10 @@ let embedderPromise = null;
 async function initEmbedder() {
     if (!embedderPromise) {
         embedderPromise = (async () => {
-            console.log('[AI Search] Initializing sentence-transformer model...');
-            // Enable local files if possible, but default is remote
-            return await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+            console.log('[AI Search] Initializing sentence-transformer model (all-MiniLM-L6-v2)...');
+            const p = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+            console.log('[AI Search] Sentence-transformer model loaded.');
+            return p;
         })();
     }
     return embedderPromise;
@@ -21,8 +27,10 @@ async function initEmbedder() {
  * @returns {Promise<Array<number>>}
  */
 export async function generateEmbedding(text) {
+    console.log(`[AI Search] Generating embedding for: "${text.substring(0, 50)}..."`);
     const pipe = await initEmbedder();
     const output = await pipe(text, { pooling: 'mean', normalize: true });
+    console.log('[AI Search] Embedding generated.');
     return Array.from(output.data);
 }
 
@@ -80,6 +88,14 @@ const ANCHOR_QUERIES = {
         "kode objek pajak jasa teknik",
         "penjelasan mengenai pph pasal 4 ayat 2",
         "daftar objek pajak pph 21"
+    ],
+    over_under_payment: [
+        "apakah kita lebih bayar bulan ini",
+        "kapan terakhir kali kurang bayar",
+        "status lebih bayar tahun 2024",
+        "berapa kurang bayar pph",
+        "kapan kita mulai lb",
+        "apakah ada kb pph bulan januari"
     ]
 };
 
@@ -148,6 +164,8 @@ export async function parseIntent(query, queryVector = null) {
         intent.type = 'audit_status';
     } else if (q.includes('apa itu') || q.includes('tarif') || q.includes('rate') || q.includes('kode') || q.includes('objek pajak')) {
         intent.type = 'tax_lookup';
+    } else if (q.includes('lebih bayar') || q.includes('kurang bayar') || q.includes(' lb ') || q.includes(' kb ')) {
+        intent.type = 'over_under_payment';
     }
 
     // 2. Semantic Classification (Fallback or refinement)
@@ -213,8 +231,8 @@ export async function parseIntent(query, queryVector = null) {
 
     // 6. Final check for aggregation if no other intent found
     if (!intent.type) {
-        if (q.includes('total') || q.includes('berapa') || q.includes('jumlah')) {
-            if (intent.taxType) intent.type = 'aggregation';
+        if (q.includes('total') || q.includes('berapa') || q.includes('jumlah') || q.includes('hitung')) {
+            if (intent.taxType || q.includes('pajak') || q.includes('uang') || q.includes('bayar')) intent.type = 'aggregation';
         }
     }
 
@@ -228,7 +246,9 @@ async function initGenerator() {
     if (!generatorPromise) {
         generatorPromise = (async () => {
             console.log('[AI Search] Initializing text-generation model (flan-t5-small)...');
-            return await pipeline('text2text-generation', 'Xenova/flan-t5-small');
+            const p = await pipeline('text2text-generation', 'Xenova/flan-t5-small');
+            console.log('[AI Search] Text-generation model loaded.');
+            return p;
         })();
     }
     return generatorPromise;
@@ -244,19 +264,33 @@ export async function generateAnswer(query, contexts) {
     try {
         const gen = await initGenerator();
 
-        // Prepare context (limit to ~1000 chars to avoid token limits of small model)
-        const contextText = contexts.slice(0, 3).join("\n").substring(0, 1000);
+        // Prepare context (limit to ~1500 chars)
+        const contextText = contexts.length > 0
+            ? contexts.slice(0, 5).join("\n").substring(0, 1500)
+            : "Data tidak ditemukan di sistem.";
 
-        // Construct Prompt suitable for Flan-T5
-        const prompt = `question: ${query} context: ${contextText}`;
+        // Construct Prompt suitable for Flan-T5 with specific instructions
+        const prompt = `System: Anda adalah asisten AI Archive-OS yang profesional dan membantu. Jawablah dalam Bahasa Indonesia yang ramah dan humanis. 
+Jika pertanyaan bisa dijawab dengan "Ya" atau "Tidak", mulailah jawaban dengan kata tersebut diikuti penjelasan singkat.
+Jika informasi tidak ada dalam konteks, katakan bahwa data tidak ditemukan.
+Context: ${contextText}
+Question: ${query}
+Answer:`;
 
+        console.log('[AI Search] Running text generation...');
         const output = await gen(prompt, {
-            max_new_tokens: 128,
-            temperature: 0.5,
+            max_new_tokens: 160,
+            temperature: 0.3, // Lower temperature for more factual responses
             repetition_penalty: 1.2
         });
+        console.log('[AI Search] Text generation complete.');
 
-        return output[0].generated_text;
+        let reply = output[0].generated_text;
+
+        // Clean up common prefix issues if the model repeats "Answer:"
+        reply = reply.replace(/^Answer:\s*/i, '').trim();
+
+        return reply;
     } catch (e) {
         console.error("Content Generation Error:", e);
         return "Maaf, saya tidak dapat membuat ringkasan saat ini.";

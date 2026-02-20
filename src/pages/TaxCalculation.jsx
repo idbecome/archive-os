@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Calculator, User, FileText, Building2, CreditCard, Database, Save, Trash2, Search, Upload, Download, Sparkles, TrendingUp, AlertCircle, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
+import { API_URL } from '../services/database';
 
 export default function TaxCalculation({ onCopy, hasPermission }) {
     const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database'
@@ -64,7 +65,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     const fetchDatabase = async () => {
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/tax-objects`);
+            const res = await fetch(`${API_URL}/tax/wp`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setSavedData(data);
@@ -80,7 +81,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     const fetchMasterData = async () => {
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/master-tax-objects`);
+            const res = await fetch(`${API_URL}/tax/objects`);
             const data = await res.json();
             if (Array.isArray(data)) {
                 setMasterData(data);
@@ -111,11 +112,11 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     // --- DATABASE WP HANDLERS ---
     const handleDownloadDatabaseTemplate = () => {
-        window.open(`http://${window.location.hostname}:5000/api/tax-objects/template`, '_blank');
+        window.open(`${API_URL}/tax/wp/template`, '_blank');
     };
 
     const handleExportDatabase = () => {
-        window.open(`http://${window.location.hostname}:5000/api/tax-objects/export`, '_blank');
+        window.open(`${API_URL}/tax/wp/export`, '_blank');
     };
 
     const handleImportDatabase = async (e) => {
@@ -127,7 +128,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
         setIsImporting(true);
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/tax-objects/import`, {
+            const res = await fetch(`${API_URL}/tax/wp/import`, {
                 method: 'POST',
                 body: formData
             });
@@ -149,7 +150,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     // --- MASTER DATA HANDLERS (Objek Pajak) ---
     const handleDownloadMasterTemplate = () => {
-        window.open(`http://${window.location.hostname}:5000/api/master-tax-objects/template`, '_blank');
+        window.open(`${API_URL}/tax/objects/template`, '_blank');
     };
 
     const handleImportMaster = async (e) => {
@@ -161,7 +162,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
         setIsImporting(true);
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/master-tax-objects/import`, {
+            const res = await fetch(`${API_URL}/tax/objects/import`, {
                 method: 'POST',
                 body: formData
             });
@@ -210,8 +211,8 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             };
 
             const url = editingId
-                ? `http://${window.location.hostname}:5000/api/tax-objects/${editingId}`
-                : `http://${window.location.hostname}:5000/api/tax-objects`;
+                ? `${API_URL}/tax/wp/${editingId}`
+                : `${API_URL}/tax/wp`;
 
             const method = editingId ? 'PUT' : 'POST';
 
@@ -286,7 +287,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
         setIsLoading(true);
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/tax-objects-all`, {
+            const res = await fetch(`${API_URL}/tax/wp-all`, {
                 method: 'DELETE'
             });
             if (res.ok) {
@@ -307,7 +308,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         if (!window.confirm('Yakin ingin menghapus data ini?')) return;
         if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
         try {
-            await fetch(`http://${window.location.hostname}:5000/api/tax-objects/${id}`, { method: 'DELETE' });
+            await fetch(`${API_URL}/tax/wp/${id}`, { method: 'DELETE' });
             fetchDatabase();
         } catch (error) {
             console.error("Error deleting data:", error);
@@ -631,8 +632,8 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                             ) : (
                                                 masterData.filter(item => {
                                                     const search = (formData.taxObjectName || '').toLowerCase();
-                                                    const matchesSearch = (item.name || '').toLowerCase().includes(search) || 
-                                                                        (item.code || '').toLowerCase().includes(search);
+                                                    const matchesSearch = (item.name || '').toLowerCase().includes(search) ||
+                                                        (item.code || '').toLowerCase().includes(search);
                                                     const matchesType = String(item.tax_type) === String(formData.taxType);
                                                     const ktpRestriction = !(formData.idType === 'KTP' && String(item.tax_type) === '23');
                                                     return matchesSearch && matchesType && ktpRestriction;

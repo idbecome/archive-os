@@ -46,8 +46,7 @@ export const retryOCRJob = async (req, res) => {
         await knex('job_queue').where('id', id).update({
             status: 'pending',
             attempts: 0,
-            error_log: null,
-            updated_at: knex.fn.now()
+            error_log: null
         });
         res.json({ success: true });
     } catch (err) {

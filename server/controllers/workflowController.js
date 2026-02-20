@@ -17,7 +17,8 @@ export const createApprovalFlow = async (req, res) => {
 
         const [flowId] = await knex('approval_flows').insert({
             name,
-            description
+            description,
+            steps: JSON.stringify(steps || [])
         });
 
         if (steps && steps.length > 0) {
@@ -127,12 +128,17 @@ export const approveStep = async (req, res) => {
             // for now, trust the payload or check generic admin role if implemented
         }
 
+        const fileUrl = req.file ? `/uploads/${req.file.filename}` : null;
+        const fileName = req.file ? req.file.originalname : null;
+
         if (action === 'Reject') {
             // Update step status
             await knex('approval_steps').where('id', currentStep.id).update({
                 status: 'Rejected',
                 action_date: knex.fn.now(),
-                note: note
+                note: note,
+                attachment_url: fileUrl,
+                attachment_name: fileName
             });
 
             // Update approval status
@@ -149,7 +155,9 @@ export const approveStep = async (req, res) => {
         await knex('approval_steps').where('id', currentStep.id).update({
             status: 'Approved',
             action_date: knex.fn.now(),
-            note: note
+            note: note,
+            attachment_url: fileUrl,
+            attachment_name: fileName
         });
 
         // Check if there is a next step
@@ -173,6 +181,56 @@ export const approveStep = async (req, res) => {
 
     } catch (e) {
         console.error("Approve Step Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const updateApproval = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            title, description, division,
+            requester_name, requester_username,
+            attachment_url, attachment_name,
+            steps, flow_id
+        } = req.body;
+
+        // Validation
+        if (!title || !steps || steps.length === 0) {
+            return res.status(400).json({ error: "Missing required fields (title, steps)" });
+        }
+
+        // Update document_approvals
+        await knex('document_approvals').where('id', id).update({
+            title,
+            description,
+            division,
+            attachment_url,
+            attachment_name,
+            flow_id: flow_id || null,
+            status: 'Pending',
+            current_step_index: 0,
+            // Specifically for resubmission, we might want to log it
+        });
+
+        // Reset steps: Delete old ones and insert new ones
+        await knex('approval_steps').where('approval_id', id).del();
+
+        const stepInserts = steps.map((s, idx) => ({
+            approval_id: id,
+            step_index: idx,
+            approver_username: s.username,
+            approver_name: s.name,
+            status: 'Pending',
+            note: ''
+        }));
+
+        await knex('approval_steps').insert(stepInserts);
+
+        await systemLog(requester_username || 'System', "Resubmit Approval", `Resubmitted approval: ${title} (ID: ${id})`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Update Approval Error:", e);
         res.status(500).json({ error: e.message });
     }
 };
@@ -226,6 +284,60 @@ export const deleteApproval = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Delete Approval Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const deleteApprovalFlow = async (req, res) => {
+    try {
+        const { id } = req.params;
+
+        // First delete associated steps in approval_steps (where flow_id is matched)
+        await knex('approval_steps').where('flow_id', id).del();
+
+        const deleted = await knex('approval_flows').where('id', id).del();
+
+        if (!deleted) {
+            return res.status(404).json({ error: "Flow template not found" });
+        }
+
+        await systemLog('Admin', "Delete Workflow", `Deleted workflow template ID: ${id}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Delete Approval Flow Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const updateApprovalFlow = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, description, steps } = req.body;
+
+        await knex('approval_flows').where('id', id).update({
+            name,
+            description,
+            steps: JSON.stringify(steps || [])
+        });
+
+        if (steps) {
+            // Simple approach: delete old steps and insert new ones
+            await knex('approval_steps').where('flow_id', id).del();
+            if (steps.length > 0) {
+                const inserts = steps.map(s => ({
+                    flow_id: id,
+                    step_name: s.step_name,
+                    approver_role: s.approver_role,
+                    order_index: s.order_index
+                }));
+                await knex('approval_steps').insert(inserts);
+            }
+        }
+
+        await systemLog('Admin', "Update Workflow", `Updated workflow template: ${name}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Update Approval Flow Error:", e);
         res.status(500).json({ error: e.message });
     }
 };

@@ -445,6 +445,32 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
                                     <ShieldCheck className="text-indigo-600" /> Keputusan Anda Diperlukan
                                 </h4>
                                 <textarea className="w-full p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl mb-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white" placeholder="Tambahkan catatan (opsional)..." value={actionNote} onChange={e => setActionNote(e.target.value)} />
+
+                                <div className="mb-4">
+                                    <label className="flex items-center gap-3 px-4 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-2xl cursor-pointer hover:bg-slate-100 transition-all group">
+                                        <Paperclip size={16} className="text-slate-400 group-hover:text-indigo-500" />
+                                        <span className="text-[10px] font-bold text-slate-500 truncate">{actionAttachment ? actionAttachment.name : 'Tambahkan Lampiran (Opsional)...'}</span>
+                                        <input type="file" className="hidden" onChange={e => setActionAttachment(e.target.files[0])} />
+                                    </label>
+                                    {actionAttachment && (
+                                        <div
+                                            onClick={() => setPreviewFile({ url: URL.createObjectURL(actionAttachment), name: actionAttachment.name, isLocal: true })}
+                                            className="mt-3 relative h-24 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-900 flex items-center justify-center cursor-zoom-in group"
+                                        >
+                                            {actionAttachment.type.startsWith('image/') ? (
+                                                <img src={URL.createObjectURL(actionAttachment)} alt="Preview" className="max-w-full max-h-full object-contain" />
+                                            ) : (
+                                                <FileText size={24} className="text-slate-400" />
+                                            )}
+                                            <div className="absolute inset-0 bg-black/0 group-hover:bg-black/5 flex items-center justify-center transition-all opacity-0 group-hover:opacity-100">
+                                                <div className="p-1.5 bg-white/90 dark:bg-slate-900/90 rounded-lg shadow-sm text-indigo-600">
+                                                    <Eye size={14} />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
                                 <div className="flex gap-3">
                                     <button onClick={() => handleAction('Reject')} className="flex-1 py-3 bg-red-50 text-red-600 rounded-xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-all">Tolak</button>
                                     <button onClick={() => handleAction('Approve')} className="flex-[2] py-3 bg-indigo-600 text-white rounded-xl font-black text-xs uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 transition-all">Setujui</button>
@@ -491,6 +517,36 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
                                                         {step?.action_date && <span className="text-[9px] font-bold text-slate-400">{new Date(step.action_date).toLocaleDateString()}</span>}
                                                     </div>
                                                     {step?.note && <p className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-2 border-l-2 border-slate-200 dark:border-slate-700 pl-3">"{step.note}"</p>}
+
+                                                    {step?.attachment_url && (
+                                                        <div className="mt-3 flex items-center justify-between gap-3 p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm animate-in slide-in-from-top-2">
+                                                            <div className="flex items-center gap-2 overflow-hidden">
+                                                                <div className="p-2 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-lg">
+                                                                    <Paperclip size={12} />
+                                                                </div>
+                                                                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 truncate max-w-[150px]">{step.attachment_name}</span>
+                                                            </div>
+                                                            <div className="flex gap-1 shrink-0">
+                                                                <button
+                                                                    onClick={() => setPreviewFile({ url: step.attachment_url, name: step.attachment_name })}
+                                                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                                                    title="Zoom Preview"
+                                                                >
+                                                                    <Eye size={12} />
+                                                                </button>
+                                                                <a
+                                                                    href={getFullUrl(step.attachment_url)}
+                                                                    target="_blank"
+                                                                    download={step.attachment_name}
+                                                                    className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-all"
+                                                                    title="Download File"
+                                                                >
+                                                                    <Download size={12} />
+                                                                </a>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
                                                     {step?.approver_username === currentUser?.username && step?.status !== 'Pending' && selectedApproval?.status !== 'Approved' && (
                                                         <button onClick={() => handleResetStep(idx)} className="mt-3 text-[9px] font-black uppercase text-amber-600 hover:underline flex items-center gap-1"><Edit3 size={10} /> Ubah Keputusan</button>
                                                     )}

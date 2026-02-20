@@ -47,6 +47,79 @@ export const getDepartments = async (req, res) => {
     }
 };
 
+export const createRole = async (req, res) => {
+    try {
+        const { id, name, label, access } = req.body;
+        // Use id, or name if id is missing, as the primary key string
+        const roleId = id || name || label?.toLowerCase().replace(/\s+/g, '_');
+
+        await knex('roles').insert({
+            id: roleId,
+            label: label || name || roleId,
+            access: typeof access === 'string' ? access : JSON.stringify(access || {})
+        });
+        res.json({ id: roleId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const updateRole = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { label, access } = req.body;
+        await knex('roles').where('id', id).update({
+            label,
+            access: typeof access === 'string' ? access : JSON.stringify(access || {})
+        });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const deleteRole = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await knex('roles').where('id', id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+// --- DEPARTMENTS ---
+export const createDepartment = async (req, res) => {
+    try {
+        const { name } = req.body;
+        const [id] = await knex('departments').insert({ name });
+        res.json({ id });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const updateDepartment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name } = req.body;
+        await knex('departments').where('id', id).update({ name });
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
+export const deleteDepartment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await knex('departments').where('id', id).del();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+};
+
 // --- FOLDERS ---
 export const getFolders = async (req, res) => {
     try {

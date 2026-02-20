@@ -3,7 +3,13 @@ import {
     getLogs,
     createLog,
     getRoles,
+    createRole,
+    updateRole,
+    deleteRole,
     getDepartments,
+    createDepartment,
+    updateDepartment,
+    deleteDepartment,
     getFolders,
     getFolderById,
     createFolder,
@@ -18,7 +24,14 @@ const router = express.Router();
 router.get('/logs', getLogs);
 router.post('/logs', createLog);
 router.get('/roles', getRoles);
+router.post('/roles', createRole);
+router.put('/roles/:id', updateRole);
+router.delete('/roles/:id', deleteRole);
+
 router.get('/departments', getDepartments);
+router.post('/departments', createDepartment);
+router.put('/departments/:id', updateDepartment);
+router.delete('/departments/:id', deleteDepartment);
 router.get('/folders', getFolders);
 router.get('/folders/:id', getFolderById);
 router.post('/folders', createFolder);

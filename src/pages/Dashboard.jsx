@@ -4,6 +4,7 @@ import { Card, SummaryCard } from '../components/ui/Card';
 import QueueStatus from '../components/ui/QueueStatus';
 import WarehouseMap from '../components/WarehouseMap';
 import TaxAnalytics from '../components/TaxAnalytics';
+import { API_URL } from '../services/database';
 
 export default function Dashboard({
     stats: propStats,
@@ -49,10 +50,6 @@ export default function Dashboard({
         setCurrentPage(1);
         try {
             // Use the new AI Search Endpoint
-            const { hostname, port, protocol } = window.location;
-            const API_URL = (port === '5173' || port === '3000' || hostname === 'localhost')
-                ? `${protocol}//${hostname}:5000/api`
-                : '/api';
             const res = await fetch(`${API_URL}/search/ai`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

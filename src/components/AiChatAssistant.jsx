@@ -27,6 +27,7 @@ const ResultCard = ({ result, isDarkMode, onNavigate, onLocationClick }) => {
         document: { icon: FileText, color: 'from-blue-500 to-indigo-600', bg: 'bg-blue-50 dark:bg-blue-900/20', label: 'Dokumen' },
         invoice: { icon: FileSpreadsheet, color: 'from-emerald-500 to-green-600', bg: 'bg-emerald-50 dark:bg-emerald-900/20', label: 'Invoice' },
         external: { icon: Package, color: 'from-amber-500 to-orange-600', bg: 'bg-amber-50 dark:bg-amber-900/20', label: 'Eksternal' },
+        tax_summary: { icon: Bot, color: 'from-purple-500 to-pink-600', bg: 'bg-purple-50 dark:bg-purple-900/20', label: 'Pajak' },
     };
     const config = typeConfig[result.type] || typeConfig.document;
     const Icon = config.icon;
@@ -229,7 +230,7 @@ export default function AiChatAssistant({
         setIsLoading(true);
 
         try {
-            const res = await fetch(`${API_URL}/chat`, {
+            const res = await fetch(`${API_URL}/search/chat`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ message: msg })
@@ -261,32 +262,48 @@ export default function AiChatAssistant({
     };
 
     const handleResultClick = (result) => {
-        if (result.type === 'document' && onNavigateToDoc) {
-            onNavigateToDoc(result);
-        } else if (result.type === 'invoice' && onNavigateToInvoice) {
-            onNavigateToInvoice(result);
-        }
+        // Dashboard style: Detail always calls handleViewDoc (onNavigateToDoc)
+        // handleViewDoc in App.jsx already handles all matchTypes (invoice, tax, etc.)
+        onNavigateToDoc?.(result);
+        setIsOpen(false);
     };
 
     const handleLocationClick = (result) => {
         console.log("Navigating to location for result:", result);
+        const matchType = result.matchType || result.type;
 
-        if (result.type === 'invoice' || result.slotId) {
+        if (matchType === 'invoice') {
             setActiveTab('inventory');
-            setActiveInvTab('internal');
-            // Logic can be added here to auto-select the box in Inventory page
-            setIsOpen(false);
-        } else if (result.type === 'external') {
+            if (setActiveInvTab) setActiveInvTab('internal');
+        } else if (matchType === 'external_item') {
             setActiveTab('inventory');
-            setActiveInvTab('external');
-            setIsOpen(false);
-        } else if ((result.folderId || result.folderId === null) && handleNavigateToFolder) {
-            console.log("Targeting folderId:", result.folderId);
-            handleNavigateToFolder(result.folderId);
-            setIsOpen(false);
+            if (setActiveInvTab) setActiveInvTab('external');
+        } else if (matchType === 'tax_summary') {
+            setActiveTab('tax-summary');
+        } else if (matchType === 'tax_monitoring') {
+            setActiveTab('tax-monitoring');
+        } else if (matchType === 'approval') {
+            setActiveTab('approvals');
+        } else if (matchType === 'pustaka') {
+            setActiveTab('pustaka');
+        } else if (matchType === 'tax_object') {
+            setActiveTab('tax-calculation');
+        } else if (matchType === 'note') {
+            if (result.parentType === 'audit') {
+                setActiveTab('tax-monitoring');
+            } else {
+                setActiveTab('documents');
+                if (result.folderId) handleNavigateToFolder?.(result.folderId);
+            }
         } else {
-            console.warn("No valid location found for result:", result);
+            // Default to documents/folder
+            if ((result.folderId || result.folderId === null) && handleNavigateToFolder) {
+                handleNavigateToFolder(result.folderId);
+            } else {
+                setActiveTab('documents');
+            }
         }
+        setIsOpen(false);
     };
 
     const clearChat = () => {

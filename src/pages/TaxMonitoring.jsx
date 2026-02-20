@@ -46,6 +46,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const [editingAudit, setEditingAudit] = useState(null);
     const [newAuditTitle, setNewAuditTitle] = useState('');
     const [newAuditLetter, setNewAuditLetter] = useState('');
+    const [newAuditAuditor, setNewAuditAuditor] = useState('');
     const [newAuditDate, setNewAuditDate] = useState(new Date().toISOString().split('T')[0]);
     const [newAuditFile, setNewAuditFile] = useState(null);
     const [isSaving, setIsSaving] = useState(false);
@@ -241,14 +242,20 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
             // Jika data file lokal kosong, coba ambil paksa dari server
             if (!base64Content || (typeof base64Content === 'string' && base64Content.length < 50)) {
-                console.log("Data file lokal kosong di TaxMonitoring, mencoba fetch ulang...", file.id);
-                try {
-                    const fullDoc = await api.getDocumentById(file.id);
-                    if (fullDoc) {
-                        base64Content = fullDoc.fileData || fullDoc.file_data || fullDoc.filedata;
+                // Jangan panggil API jika ini adalah lampiran catatan (ID diawali 'note-')
+                if (file.id && String(file.id).startsWith('note-')) {
+                    console.log("Downloading note attachment directly from URL...");
+                    downloadUrl = getFullUrl(file.url);
+                } else {
+                    console.log("Data file lokal kosong di TaxMonitoring, mencoba fetch ulang...", file.id);
+                    try {
+                        const fullDoc = await api.getDocumentById(file.id);
+                        if (fullDoc) {
+                            base64Content = fullDoc.fileData || fullDoc.file_data || fullDoc.filedata;
+                        }
+                    } catch (err) {
+                        console.error("Gagal fetch ulang di TaxMonitoring:", err);
                     }
-                } catch (err) {
-                    console.error("Gagal fetch ulang di TaxMonitoring:", err);
                 }
             }
 
@@ -320,6 +327,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         setEditingAudit(null);
         setNewAuditTitle('');
         setNewAuditLetter('');
+        setNewAuditAuditor('');
         setNewAuditFile(null);
         setIsCreateModalOpen(true);
     };
@@ -328,6 +336,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         setEditingAudit(audit);
         setNewAuditTitle(audit.title || '');
         setNewAuditLetter(audit.letterNumber || '');
+        setNewAuditAuditor(audit.auditor || '');
         setNewAuditDate(audit.startDate ? new Date(audit.startDate).toISOString().split('T')[0] : '');
         setNewAuditFile(null);
         setIsCreateModalOpen(true);
@@ -349,6 +358,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     ...editingAudit,
                     title: newAuditTitle,
                     letterNumber: payload_letterNumber,
+                    auditor: newAuditAuditor,
                     startDate: payload_startDate
                 };
                 await api.updateTaxAudit(updatedAudit.id, updatedAudit);
@@ -364,6 +374,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     status: 'On Progress',
                     currentStep: 1,
                     letterNumber: payload_letterNumber,
+                    auditor: newAuditAuditor,
                     startDate: payload_startDate,
                     steps: Array(7).fill({ notes: [], status: 'Pending', startDate: null, endDate: null }).map((s, i) => i === 0 ? { ...s, status: 'On Progress', startDate: payload_startDate } : s)
                 };
@@ -396,6 +407,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             setIsCreateModalOpen(false);
             setNewAuditTitle('');
             setNewAuditLetter('');
+            setNewAuditAuditor('');
             setNewAuditFile(null);
             if (onRefresh) onRefresh();
         } catch (e) {
@@ -517,7 +529,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             // --- CLIENT-SIDE OCR INTEGRATION ---
             let ocrResult = '';
             // Try OCR if it's a File object (from handleFileSelect)
-            if (uploadForm.file instanceof File) {
+            if (uploadForm.file instanceof window.File) {
                 try {
                     updateToast(toastId, { message: `Menjalankan OCR: ${uploadForm.title}...`, type: 'loading' });
                     ocrResult = await performAdvancedOCR(uploadForm.file, (msg) => {
@@ -1022,23 +1034,50 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                                 </button>
 
                                                 <div className="flex-1 min-w-0">
-                                                    <p className={`text-sm font-bold transition-all ${note.isChecked ? 'text-slate-400 line-through opacity-60' : 'text-slate-700 dark:text-slate-200'}`}>
-                                                        {note.text}
-                                                    </p>
+                                                    {editingNoteId === note.id ? (
+                                                        <div className="flex flex-col gap-2 p-1">
+                                                            <input
+                                                                autoFocus
+                                                                className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-indigo-200 dark:border-indigo-900 rounded-xl px-4 py-2 text-sm font-bold dark:text-white outline-none focus:border-indigo-500"
+                                                                value={editingNoteText}
+                                                                onChange={e => setEditingNoteText(e.target.value)}
+                                                                onKeyDown={e => { if (e.key === 'Enter') handleUpdateNote(note.id); if (e.key === 'Escape') setEditingNoteId(null); }}
+                                                            />
+                                                            <input
+                                                                className="w-full bg-slate-50 dark:bg-slate-800 border-2 border-indigo-200 dark:border-indigo-900 rounded-xl px-4 py-1.5 text-[10px] font-black uppercase dark:text-white outline-none focus:border-indigo-500"
+                                                                value={editingNotePic}
+                                                                onChange={e => setEditingNotePic(e.target.value)}
+                                                                placeholder="PIC"
+                                                            />
+                                                        </div>
+                                                    ) : (
+                                                        <p className={`text-sm font-bold transition-all ${note.isChecked ? 'text-slate-400 line-through opacity-60' : 'text-slate-700 dark:text-slate-200'}`}>
+                                                            {note.text}
+                                                        </p>
+                                                    )}
                                                 </div>
 
                                                 <div className="flex items-center gap-3">
-                                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-inner">
-                                                        <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-[8px] font-black text-white shadow-sm">
-                                                            {note.pic?.substring(0, 2).toUpperCase() || '??'}
+                                                    {editingNoteId === note.id ? (
+                                                        <div className="flex gap-1">
+                                                            <button onClick={() => handleUpdateNote(note.id)} className="p-2 bg-emerald-500 text-white rounded-xl shadow-lg shadow-emerald-500/20 hover:bg-emerald-400 transition-all"><Save size={14} /></button>
+                                                            <button onClick={() => setEditingNoteId(null)} className="p-2 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl hover:bg-slate-300 dark:hover:bg-slate-600 transition-all"><X size={14} /></button>
                                                         </div>
-                                                        <span className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-tight">{note.pic || 'N/A'}</span>
-                                                    </div>
+                                                    ) : (
+                                                        <>
+                                                            <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-inner">
+                                                                <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-[8px] font-black text-white shadow-sm">
+                                                                    {note.pic?.substring(0, 2).toUpperCase() || '??'}
+                                                                </div>
+                                                                <span className="text-[10px] font-black text-slate-600 dark:text-slate-400 uppercase tracking-tight">{note.pic || 'N/A'}</span>
+                                                            </div>
 
-                                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
-                                                        <button onClick={() => { setEditingNoteId(note.id); setEditingNoteText(note.text); setEditingNotePic(note.pic); }} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl transition-all"><Edit3 size={14} /></button>
-                                                        <button onClick={() => handleDeleteNote(note.id)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-all"><Trash2 size={14} /></button>
-                                                    </div>
+                                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0">
+                                                                <button onClick={() => { setEditingNoteId(note.id); setEditingNoteText(note.text); setEditingNotePic(note.pic); }} className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl transition-all"><Edit3 size={14} /></button>
+                                                                <button onClick={() => handleDeleteNote(note.id)} className="p-2 text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-xl transition-all"><Trash2 size={14} /></button>
+                                                            </div>
+                                                        </>
+                                                    )}
                                                 </div>
                                             </div>
                                         ))}
@@ -1247,6 +1286,16 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                             />
                         </div>
 
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">Auditor / PIC (Opsional)</label>
+                            <input
+                                className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-xl focus:border-indigo-500 transition-all outline-none dark:text-white font-bold"
+                                placeholder="Nama Tim Pemeriksa / PIC"
+                                value={newAuditAuditor}
+                                onChange={e => setNewAuditAuditor(e.target.value)}
+                            />
+                        </div>
+
                         <div className="grid grid-cols-2 gap-4">
                             <div className="space-y-2">
                                 <label className="text-[10px] font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest ml-1">Tanggal Mulai</label>
@@ -1357,6 +1406,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                             <button
                                 onClick={async () => {
                                     // REGENERATE / REFRESH ACTION
+                                    if (selectedFileDetail?.id && String(selectedFileDetail.id).startsWith('note-')) {
+                                        alert("Data catatan (note) tidak memerlukan refresh OCR.");
+                                        return;
+                                    }
                                     try {
                                         const refreshedDoc = await api.getDocumentById(selectedFileDetail.id);
                                         if (refreshedDoc) {
