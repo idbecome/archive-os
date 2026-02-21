@@ -56,14 +56,20 @@ export const chatWithAI = async (req, res) => {
             rawSummaries = taxObjects;
             contextData = taxObjects.map(t => `${t.name}: ${t.description} (${t.rate}%)`);
             answer = await generateAnswer(text, contextData);
-        } else if (['aggregation', 'comparison', 'over_under_payment'].includes(intent.type)) {
+        } else if (['aggregation', 'comparison', 'over_under_payment', 'over_under_payment_timeline'].includes(intent.type)) {
             // Fetch relevant tax summaries
             let queryBuilder = knex('tax_summaries');
             if (intent.taxType) queryBuilder = queryBuilder.where('type', intent.taxType);
-            if (intent.year) queryBuilder = queryBuilder.where('year', intent.year);
-            // If it's a comparison, we might need all years/months
-            if (intent.type === 'comparison') {
-                if (intent.years.length > 0) queryBuilder = queryBuilder.whereIn('year', intent.years);
+
+            // Handle multiple months/years filtering securely
+            if (intent.years && intent.years.length > 0) {
+                queryBuilder = queryBuilder.whereIn('year', intent.years);
+            }
+
+            if (intent.months && intent.months.length > 0) {
+                const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+                const selectedMonthNames = intent.months.map(m => monthNames[m - 1]);
+                queryBuilder = queryBuilder.whereIn('month', selectedMonthNames);
             }
 
             rawSummaries = await queryBuilder.select('*');
@@ -82,11 +88,18 @@ export const chatWithAI = async (req, res) => {
                     } else {
                         const inTotal = Object.values(s.data.ppnIn || {}).reduce((a, b) => a + b, 0);
                         const outTotal = Object.values(s.data.ppnOut || {}).reduce((a, b) => a + b, 0);
-                        detail = `PPN Masukan: Rp ${inTotal.toLocaleString()}, PPN Keluaran: Rp ${outTotal.toLocaleString()}, Net: Rp ${(outTotal - inTotal).toLocaleString()}`;
+
+                        if (intent.ppnTarget === 'IN') {
+                            detail = `Total PPN Masukan: Rp ${inTotal.toLocaleString()}`;
+                        } else if (intent.ppnTarget === 'OUT') {
+                            detail = `Total PPN Keluaran: Rp ${outTotal.toLocaleString()}`;
+                        } else {
+                            detail = `PPN Masukan: Rp ${inTotal.toLocaleString()}, PPN Keluaran: Rp ${outTotal.toLocaleString()}, Net: Rp ${(outTotal - inTotal).toLocaleString()}`;
+                        }
                     }
                     return `${s.month} ${s.year} (${s.type}) -> ${detail}`;
                 });
-            } else if (intent.type === 'over_under_payment') {
+            } else if (intent.type === 'over_under_payment' || intent.type === 'over_under_payment_timeline') {
                 contextData = summaries
                     .filter(s => s.type === 'PPN')
                     .map(s => {
@@ -105,15 +118,19 @@ export const chatWithAI = async (req, res) => {
                     } else {
                         const inT = Object.values(s.data.ppnIn || {}).reduce((a, b) => a + b, 0);
                         const outT = Object.values(s.data.ppnOut || {}).reduce((a, b) => a + b, 0);
-                        return `${label}: In=Rp ${inT.toLocaleString()}, Out=Rp ${outT.toLocaleString()}, Net=Rp ${(outT - inT).toLocaleString()}`;
+                        return `${label}: In=Rp ${inT.toLocaleString()}, Out=Rp ${outT.toLocaleString()}, Net=Rp ${(outT - inT).toLocaleString()} (Status: ${outT - inT > 0 ? 'Kurang Bayar' : 'Lebih Bayar'})`;
                     }
                 });
             }
 
             if (contextData.length === 0) {
-                answer = "Maaf, saya tidak menemukan data pajak yang sesuai dengan kriteria tersebut di basis data.";
+                answer = "Maaf, saya tidak menemukan data pajak yang sesuai dengan kriteria yang diminta di basis data.";
             } else {
-                answer = await generateAnswer(text, contextData);
+                if (intent.type === 'comparison' || intent.type === 'aggregation') {
+                    answer = "Berikut adalah rangkuman data pajak yang Anda minta:\n" + contextData.map(c => `- ${c}`).join("\n");
+                } else {
+                    answer = await generateAnswer(text, contextData);
+                }
             }
         } else {
             // Default RAG
@@ -128,12 +145,20 @@ export const chatWithAI = async (req, res) => {
             intent: intent.type,
             context: contextData.slice(0, 3),
             results: rawSummaries.map(s => {
-                const isTaxSummary = !!s.type; // Tax summaries have a 'type' field (PPN/PPH)
+                let finalMatchType = 'document';
+                if (intent.type === 'tax_lookup') {
+                    finalMatchType = 'tax_object';
+                } else if (['aggregation', 'comparison', 'over_under_payment'].includes(intent.type)) {
+                    finalMatchType = 'tax_summary';
+                } else {
+                    finalMatchType = s.category || 'document';
+                }
+
                 return {
                     id: s.id,
-                    title: s.title || `${s.month} ${s.year} (${s.type})`,
-                    type: isTaxSummary ? 'tax_summary' : (s.category || 'document'),
-                    matchType: isTaxSummary ? 'tax_summary' : 'document', // Restore for App.jsx compatibility
+                    title: s.title || s.name || (s.month ? `${s.month} ${s.year} (${s.type})` : 'Untitled'),
+                    type: finalMatchType,
+                    matchType: finalMatchType,
                     vendor: s.vendor || (s.type === 'PPN' ? 'Pajak Pertambahan Nilai' : (s.type === 'PPH' ? 'Pajak Penghasilan' : '')),
                     amount: s.amount || 0,
                     folderId: s.folderId,

@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     MessageCircle, X, Send, FileText, FileSpreadsheet,
     Package, Sparkles, Search, ArrowRight, Loader2,
-    ChevronDown, Bot, User
+    ChevronDown, Bot, User, Eye
 } from 'lucide-react';
 
 const getApiUrl = () => {
@@ -71,26 +71,40 @@ const ResultCard = ({ result, isDarkMode, onNavigate, onLocationClick }) => {
                     </div>
                 </div>
 
-                <div className="flex gap-2 justify-end pt-2 border-t border-slate-100 dark:border-white/5">
+                <div className="flex gap-2 relative z-10 pt-2 border-t border-slate-100 dark:border-white/5">
                     <button
-                        onClick={() => onNavigate?.(result)}
-                        className={`px-3 py-1.5 rounded-lg transition-all font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode
-                            ? 'bg-indigo-500/20 text-indigo-300 hover:bg-indigo-500/40'
-                            : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100 border border-indigo-100'}`}
+                        onClick={(e) => { e.stopPropagation(); onNavigate?.(result); }}
+                        className="flex-1 text-xs bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 py-2 rounded-lg transition-all font-bold flex items-center justify-center gap-1.5 border border-indigo-100 dark:border-indigo-800 hover:bg-indigo-100"
                     >
-                        Detail <ArrowRight size={12} />
+                        <Eye size={14} /> {result.matchType === 'note' ? 'Lihat Konteks' : 'Preview'}
                     </button>
-                    {onLocationClick && (
+                </div>
+                {onLocationClick && (
+                    <div className="mt-2 relative z-10">
                         <button
                             onClick={(e) => { e.stopPropagation(); onLocationClick(result); }}
-                            className={`px-3 py-1.5 rounded-lg transition-all font-bold text-[10px] uppercase tracking-wider flex items-center gap-1.5 ${isDarkMode
-                                ? 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/40'
-                                : 'bg-amber-50 text-amber-600 hover:bg-amber-100 border border-amber-100'}`}
+                            className={`w-full text-[10px] py-1.5 rounded-lg transition-colors font-bold flex items-center justify-center gap-1 uppercase tracking-wider
+                                ${result.matchType === 'invoice' ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-600 hover:bg-amber-100' :
+                                    result.matchType === 'external_item' ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 hover:bg-emerald-100' :
+                                        result.matchType === 'tax_summary' ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-600 hover:bg-purple-100' :
+                                            result.matchType === 'tax_monitoring' ? 'bg-orange-50 dark:bg-orange-900/20 text-orange-600 hover:bg-orange-100' :
+                                                result.matchType === 'approval' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 hover:bg-rose-100' :
+                                                    result.matchType === 'pustaka' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-100' :
+                                                        result.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400' :
+                                                            'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
                         >
-                            Lokasi <Search size={12} />
+                            {result.matchType === 'invoice' ? `📦 ${result.folderName || 'Finance'}` :
+                                result.matchType === 'external_item' ? `🚚 ${result.folderName || 'Eksternal'}` :
+                                    result.matchType === 'tax_summary' ? `📊 ${result.folderName || 'Pajak'}` :
+                                        result.matchType === 'tax_monitoring' ? `🔍 ${result.folderName || 'Pemeriksaan'}` :
+                                            result.matchType === 'note' ? `💬 ${result.folderName || 'Diskusi'}` :
+                                                result.matchType === 'approval' ? `✅ ${result.folderName || 'Approval'}` :
+                                                    result.matchType === 'pustaka' ? `📚 ${result.folderName || 'Pustaka'}` :
+                                                        result.matchType === 'tax_object' ? `👥 ${result.folderName || 'Database WP'}` :
+                                                            `📂 ${result.folderName || 'General'}`}
                         </button>
-                    )}
-                </div>
+                    </div>
+                )}
             </div>
         </motion.div>
     );
@@ -181,10 +195,10 @@ const MarkdownRenderer = ({ content, isDarkMode }) => {
 
 // Quick action suggestions
 const quickActions = [
-    "Bandingkan PPH Jan vs Feb 2024",
-    "Analisa trend PPN depan",
+    "Bandingkan PPN bulan ini vs bulan lalu",
+    "Berapa total PPN masukan tahun ini",
+    "Kapan terakhir kali kurang bayar?",
     "Status pemeriksaan pajak",
-    "Cari invoice > 5jt",
 ];
 
 export default function AiChatAssistant({
@@ -237,10 +251,21 @@ export default function AiChatAssistant({
             });
             const data = await res.json();
 
+            let mappedResults = [];
+            if (data.results) {
+                mappedResults = data.results.map(item => ({
+                    ...item,
+                    title: item.title || item.name || 'Untitled',
+                    uploadDate: item.uploadDate || item.date,
+                    size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
+                    folderName: item.folderName || (item.matchType === 'invoice' ? 'Finance' : 'General'),
+                }));
+            }
+
             setMessages(prev => [...prev, {
                 role: 'assistant',
                 text: data.reply || 'Maaf, tidak ada respons.',
-                results: data.results || [],
+                results: mappedResults,
                 intent: data.intent
             }]);
         } catch (error) {

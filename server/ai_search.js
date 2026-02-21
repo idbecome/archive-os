@@ -164,8 +164,11 @@ export async function parseIntent(query, queryVector = null) {
         intent.type = 'audit_status';
     } else if (q.includes('apa itu') || q.includes('tarif') || q.includes('rate') || q.includes('kode') || q.includes('objek pajak')) {
         intent.type = 'tax_lookup';
-    } else if (q.includes('lebih bayar') || q.includes('kurang bayar') || q.includes(' lb ') || q.includes(' kb ')) {
+    } else if (q.includes('lebih bayar') || q.includes('kurang bayar') || q.includes(' lb ') || q.includes(' kb ') || q.includes('nihil')) {
         intent.type = 'over_under_payment';
+    } else if (q.includes('kapan')) {
+        // "Kapan kita mulai lebih bayar", "kapan kita kurang bayar"
+        intent.type = 'over_under_payment_timeline';
     }
 
     // 2. Semantic Classification (Fallback or refinement)
@@ -195,24 +198,69 @@ export async function parseIntent(query, queryVector = null) {
         }
     }
 
-    // 3. Parse Date/Month (Improved for Multi-entity)
+    // 3. Parse Date/Month (Improved for Multi-entity & Relative Times)
     const monthPatterns = ['januari', 'februari', 'maret', 'april', 'mei', 'juni', 'juli', 'agustus', 'september', 'oktober', 'november', 'desember',
         'jan', 'feb', 'mar', 'apr', 'mei', 'jun', 'jul', 'agt', 'sep', 'okt', 'nov', 'des'];
 
-    // Find all month occurrences
+    const currentDate = new Date();
+    const currentMonth = currentDate.getMonth() + 1; // 1-12
+    const currentYear = currentDate.getFullYear();
+
+    // Check Relative Time Keywords
+    let relativeMonthAdded = false;
+    let relativeYearAdded = false;
+
+    if (q.includes('bulan ini')) {
+        intent.months.push(currentMonth);
+        intent.years.push(currentYear);
+        relativeMonthAdded = true;
+    }
+    if (q.includes('bulan lalu') || q.includes('kemarin')) {
+        let lastMonth = currentMonth - 1;
+        let y = currentYear;
+        if (lastMonth === 0) {
+            lastMonth = 12;
+            y--;
+        }
+        intent.months.push(lastMonth);
+        intent.years.push(currentYear);
+        relativeMonthAdded = true;
+    }
+    if (q.includes('tahun ini')) {
+        if (!intent.years.includes(currentYear)) intent.years.push(currentYear);
+        relativeYearAdded = true;
+    }
+    if (q.includes('tahun lalu')) {
+        if (!intent.years.includes(currentYear - 1)) intent.years.push(currentYear - 1);
+        relativeYearAdded = true;
+    }
+
+    // Find all explicitly stated month occurrences
     monthPatterns.forEach((m, idx) => {
+        // Regex word boundary, but ensure it's not part of another word
         const regex = new RegExp(`\\b${m}\\b`, 'gi');
         if (q.match(regex)) {
             const mVal = (idx % 12) + 1;
             if (!intent.months.includes(mVal)) intent.months.push(mVal);
         }
     });
+
+    // If a month is found but no year is specified and it wasn't a relative "bulan lalu", default to current year
+    if (intent.months.length > 0 && intent.years.length === 0 && !relativeYearAdded) {
+        intent.years.push(currentYear);
+    }
+
     if (intent.months.length > 0) intent.month = intent.months[0];
 
-    // Find all years
+    // Find all explicitly stated years
     const yearMatches = q.match(/\b(20\d{2})\b/g);
     if (yearMatches) {
-        intent.years = yearMatches.map(y => parseInt(y));
+        yearMatches.forEach(y => {
+            const yInt = parseInt(y);
+            if (!intent.years.includes(yInt)) intent.years.push(yInt);
+        });
+        intent.year = intent.years[0];
+    } else if (intent.years.length > 0) {
         intent.year = intent.years[0];
     }
 
@@ -232,8 +280,16 @@ export async function parseIntent(query, queryVector = null) {
     // 6. Final check for aggregation if no other intent found
     if (!intent.type) {
         if (q.includes('total') || q.includes('berapa') || q.includes('jumlah') || q.includes('hitung')) {
-            if (intent.taxType || q.includes('pajak') || q.includes('uang') || q.includes('bayar')) intent.type = 'aggregation';
+            if (intent.taxType || q.includes('pajak') || q.includes('uang') || q.includes('bayar') || q.includes('masukan') || q.includes('keluaran')) {
+                intent.type = 'aggregation';
+            }
         }
+    }
+
+    // Optional: refine further if asking specifically for input/output PPN
+    if (intent.taxType === 'PPN') {
+        if (q.includes('masukan') || q.includes('input')) intent.ppnTarget = 'IN';
+        if (q.includes('keluaran') || q.includes('output')) intent.ppnTarget = 'OUT';
     }
 
     return intent;
