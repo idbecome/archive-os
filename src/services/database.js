@@ -510,7 +510,10 @@ export const db = {
             const response = await fetch(`${API_URL}/documents/${id}/restore`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ versionTimestamp })
+                body: JSON.stringify({
+                    timestamp: versionTimestamp,
+                    user: localStorage.getItem('currentUser') ? JSON.parse(localStorage.getItem('currentUser')).username : 'System'
+                })
             });
             if (!response.ok) throw new Error('Gagal restore versi');
             return await response.json();

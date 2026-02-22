@@ -79,7 +79,7 @@ export default function Documents({
     }, [comments, selectedDocPreview]);
 
     const getFullUrl = (url) => {
-        if (typeof url !== 'string') return url;
+        if (!url || typeof url !== 'string') return null;
         if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
 
         const { hostname, port, protocol } = window.location;
@@ -132,7 +132,7 @@ export default function Documents({
                 let buffer;
                 // IDM Bypass: Use Stream Endpoint for PDFs
                 let effectiveUrl = content;
-                if (isPdf && fullDoc.id) {
+                if (isPdf && fullDoc.id && !isAttachment) {
                     // Check if it's already a full URL or local path
                     if (content.startsWith('/uploads/') || !content.startsWith('http')) {
                         // Use stream endpoint
@@ -1433,18 +1433,18 @@ export default function Documents({
                     setPdfBlobUrl(null);
                 }}
                 title="Preview Dokumen & OCR"
-                size="max-w-6xl"
+                size="max-w-[95vw]"
             >
-                <div className="flex flex-col md:flex-row gap-6 h-[75vh] pt-24">
-                    {/* LEFT: PREVIEW */}
-                    <div className="flex-[1.5] bg-slate-100 dark:bg-slate-950 rounded-2xl overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-800 relative shadow-inner">
+                <div className="flex flex-col lg:flex-row gap-4 h-[85vh] pt-24">
+                    {/* COLUMN 1: FILE PREVIEW */}
+                    <div className="flex-[2] bg-slate-100 dark:bg-slate-950 rounded-2xl overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-800 relative shadow-inner min-w-0">
                         {isGeneratingPreview ? (
                             <div className="flex flex-col items-center gap-3">
                                 <div className="w-10 h-10 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                                 <p className="text-sm font-bold text-slate-500 animate-pulse">Menyiapkan Preview...</p>
                             </div>
                         ) : previewFile?.type?.toLowerCase()?.startsWith('image/') ? (
-                            <img src={previewFile?.fileData || previewFile?.file_data || previewFile?.filedata || getFullUrl(previewFile?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
+                            <img src={previewFile?.fileData || previewFile?.file_data || previewFile?.filedata || getFullUrl(previewFile?.url) || undefined} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
                         ) : previewFile?.type?.toLowerCase()?.includes('pdf') ? (
                             pdfBlobUrl ? (
                                 <PdfViewer src={pdfBlobUrl} className="w-full h-full" />
@@ -1468,9 +1468,10 @@ export default function Documents({
                         )}
                     </div>
 
-                    {/* RIGHT: METADATA & OCR */}
-                    <div className="flex-1 flex flex-col h-full space-y-4 overflow-hidden">
-                        <div className="p-4 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800/50">
+                    {/* COLUMN 2: METADATA & CHAT */}
+                    <div className="flex-1 flex flex-col h-full space-y-3 overflow-hidden min-w-[280px]">
+                        {/* Doc Info */}
+                        <div className="p-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100 dark:border-indigo-800/50 shrink-0">
                             <h4 className="font-black text-indigo-900 dark:text-indigo-100 text-sm truncate mb-1">{selectedDocPreview?.title}</h4>
                             <div className="flex flex-wrap gap-2 text-[10px] font-bold text-indigo-600/70 dark:text-indigo-400/70 uppercase tracking-wider">
                                 <span>{selectedDocPreview?.size}</span>
@@ -1480,12 +1481,13 @@ export default function Documents({
                                 <span>{new Date(selectedDocPreview?.uploadDate).toLocaleDateString()}</span>
                             </div>
                         </div>
-                        {/* Comments Section */}
-                        <div className="border-t border-gray-100 dark:border-slate-800 pt-4">
-                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+
+                        {/* Chat Messages */}
+                        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-2 flex items-center gap-2 shrink-0">
                                 <MoreVertical size={12} className="text-indigo-500" /> Riwayat Koordinasi
                             </h4>
-                            <div className="flex-1 min-h-0 max-h-[220px] overflow-y-auto custom-scrollbar mb-4 px-1 bg-slate-50/30 dark:bg-slate-900/30 rounded-2xl p-2">
+                            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar px-1 bg-slate-50/30 dark:bg-slate-900/30 rounded-2xl p-2">
                                 <div className="space-y-4 flex flex-col">
                                     {Array.isArray(comments) && comments.map(c => {
                                         const isMe = c.user === currentUser?.name || c.user === currentUser?.username;
@@ -1523,42 +1525,43 @@ export default function Documents({
                                     <div ref={chatEndRef} />
                                 </div>
                             </div>
-                            <div className="space-y-2">
-                                <textarea
-                                    value={newComment} onChange={e => setNewComment(e.target.value)}
-                                    placeholder="Tulis komentar..."
-                                    className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white resize-none"
-                                    rows="2"
-                                />
-                                <div className="flex justify-between items-center">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <div className={`p-2 rounded-lg ${commentAttachment ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
-                                            <Paperclip size={14} />
-                                        </div>
-                                        <span className="text-[10px] font-bold text-slate-500 truncate max-w-[100px]">{commentAttachment ? commentAttachment.name : 'Lampiran'}</span>
-                                        <input type="file" className="hidden" onChange={e => setCommentAttachment(e.target.files[0])} />
-                                    </label>
-                                    <button onClick={handlePostComment} disabled={isPostingComment || (!newComment.trim() && !commentAttachment)} className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-lg disabled:opacity-50">Kirim</button>
-                                </div>
-                            </div>
                         </div>
-                        <div className="flex-1 flex flex-col min-h-0 overflow-y-auto custom-scrollbar space-y-6 pr-1">
-                            {/* OCR Section */}
-                            <div>
-                                <div className="flex justify-between items-center mb-2 px-1">
-                                    <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] flex items-center gap-2">
-                                        <Sparkles size={12} className="text-indigo-500" /> Hasil Ekstraksi Teks (OCR)
-                                    </h4>
-                                </div>
-                                <div className="w-full bg-slate-50 dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap shadow-inner">
-                                    {selectedDocPreview?.ocrContent || "Tidak ada data teks yang terdeteksi."}
-                                </div>
+
+                        {/* Chat Input */}
+                        <div className="space-y-2 shrink-0">
+                            <textarea
+                                value={newComment} onChange={e => setNewComment(e.target.value)}
+                                placeholder="Tulis komentar..."
+                                className="w-full p-3 text-xs bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none dark:text-white resize-none"
+                                rows="2"
+                            />
+                            <div className="flex justify-between items-center">
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <div className={`p-2 rounded-lg ${commentAttachment ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400'}`}>
+                                        <Paperclip size={14} />
+                                    </div>
+                                    <span className="text-[10px] font-bold text-slate-500 truncate max-w-[100px]">{commentAttachment ? commentAttachment.name : 'Lampiran'}</span>
+                                    <input type="file" className="hidden" onChange={e => setCommentAttachment(e.target.files[0])} />
+                                </label>
+                                <button onClick={handlePostComment} disabled={isPostingComment || (!newComment.trim() && !commentAttachment)} className="px-4 py-2 bg-indigo-600 text-white text-[10px] font-black uppercase rounded-lg disabled:opacity-50">Kirim</button>
                             </div>
                         </div>
 
-                        <div className="flex gap-3">
-                            <button onClick={() => setSelectedDocPreview(null)} className="flex-1 py-3 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">Tutup</button>
-                            <button onClick={() => handleDownload(selectedDocPreview)} className="flex-[2] py-3 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 transition-all flex items-center justify-center gap-2"><Download size={14} /> Download</button>
+                        {/* Action Buttons */}
+                        <div className="flex gap-3 shrink-0">
+                            <button onClick={() => setSelectedDocPreview(null)} className="flex-1 py-2.5 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-200 transition-all">Tutup</button>
+                            <button onClick={() => handleDownload(selectedDocPreview)} className="flex-[2] py-2.5 bg-indigo-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-indigo-500/20 hover:bg-indigo-500 transition-all flex items-center justify-center gap-2"><Download size={14} /> Download</button>
+                        </div>
+                    </div>
+
+                    {/* COLUMN 3: OCR RESULTS */}
+                    <div className="flex-1 flex flex-col h-full min-w-[280px] overflow-hidden">
+                        <div className="flex items-center gap-2 mb-2 shrink-0">
+                            <Sparkles size={14} className="text-indigo-500" />
+                            <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Hasil Ekstraksi Teks (OCR)</h4>
+                        </div>
+                        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar w-full bg-slate-50 dark:bg-slate-950 border-2 border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed whitespace-pre-wrap shadow-inner">
+                            {selectedDocPreview?.ocrContent || "Tidak ada data teks yang terdeteksi."}
                         </div>
                     </div>
                 </div>

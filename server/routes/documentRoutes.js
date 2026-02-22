@@ -11,6 +11,7 @@ import {
     restoreVersion,
     getComments,
     addComment,
+    promoteCommentAttachment,
     streamDocument
 } from '../controllers/documentController.js';
 
@@ -40,6 +41,7 @@ router.post('/:id/restore', restoreVersion);
 // Comment Routes
 router.get('/:id/comments', getComments);
 router.post('/:id/comments', upload.single('attachment'), addComment);
+router.post('/:id/promote-comment-attachment', promoteCommentAttachment);
 
 // Stream Route (Bypass IDM)
 router.get('/:id/stream', streamDocument);

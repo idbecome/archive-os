@@ -8,7 +8,16 @@ import { checkPermission, APP_MODULES } from './utils/permissions';
 import { performAdvancedOCR } from './utils/ocr';
 import Sidebar from './components/layout/Sidebar';
 import Modal from './components/common/Modal';
+import MasterDataModals from './components/modals/MasterDataModals';
+import TaxModals from './components/modals/TaxModals';
+import InventoryModals from './components/modals/InventoryModals';
+import DocumentViewerModal from './components/modals/DocumentViewerModal';
 import WorkflowDesigner from './components/workflow/WorkflowDesigner';
+
+import { useAuthStore } from './store/useAuthStore';
+import { useAppStore } from './store/useAppStore';
+import { useDocStore } from './store/useDocStore';
+import { useInventoryStore } from './store/useInventoryStore';
 
 import {
   Package,
@@ -240,46 +249,58 @@ export default function App() {
   // Toast Notification System
   const { toasts, toast, removeToast, updateToast } = useToast();
 
-  // UI State
-  const [isDarkMode, setIsDarkMode] = useState(() => {
-    const saved = localStorage.getItem('archive_theme');
-    return saved ? saved === 'dark' : true;
-  });
+  // --- ZUSTAND GLOBAL STORES ---
+  const {
+    isDarkMode, setIsDarkMode,
+    showInitialLanding, setShowInitialLanding,
+    isSidebarCollapsed, setIsSidebarCollapsed,
+    activeTab, setActiveTab,
+    isModalOpen, setIsModalOpen,
+    modalTab, setModalTab,
+    copyNotification, setCopyNotification,
+    logs, setLogs
+  } = useAppStore();
 
-  const [showInitialLanding, setShowInitialLanding] = useState(() => {
-    return !localStorage.getItem('archive_landing_seen');
-  });
+  const {
+    currentUser, setCurrentUser,
+    users, setUsers,
+    roles, setRoles,
+    departments, setDepartments
+  } = useAuthStore();
 
-  const handleCloseLanding = () => {
-    setShowInitialLanding(false);
-    localStorage.setItem('archive_landing_seen', 'true');
-  };
+  const {
+    docList, setDocList,
+    folders, setFolders,
+    currentFolderId, setCurrentFolderId,
+    folderHistory, historyIndex, navigateFolder, navigateBack, navigateForward,
+    approvals, setApprovals,
+    flows, setFlows,
+    fetchDocs, fetchFolders, fetchApprovals
+  } = useDocStore();
 
-  const handleOpenLanding = () => {
-    setShowInitialLanding(true);
-  };
+  const {
+    inventory, setInventory,
+    inventoryIssues, setInventoryIssues,
+    stats, setStats,
+    externalItems, setExternalItems,
+    activeInvTab, setActiveInvTab,
+    ocrStats, setOcrStats,
+    fetchInventory
+  } = useInventoryStore();
 
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [copyNotification, setCopyNotification] = useState(null);
+  const handleCloseLanding = () => setShowInitialLanding(false);
+  const handleOpenLanding = () => setShowInitialLanding(true);
 
   // Fungsi pembantu untuk menyalin teks ke clipboard dengan notifikasi
   const handleCopyToClipboard = (text, label = "Data") => {
     if (text === undefined || text === null) return;
-
     const textToCopy = String(text);
-
     const successAction = () => {
       setCopyNotification(label);
       setTimeout(() => setCopyNotification(null), 3000);
     };
-
-    // Modern API with Fallback
     if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(textToCopy)
-        .then(successAction)
-        .catch(() => fallbackCopy(textToCopy, successAction));
+      navigator.clipboard.writeText(textToCopy).then(successAction).catch(() => fallbackCopy(textToCopy, successAction));
     } else {
       fallbackCopy(textToCopy, successAction);
     }
@@ -297,32 +318,16 @@ export default function App() {
   const getFullUrl = (url) => {
     if (typeof url !== 'string') return url;
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-
     const { hostname, port, protocol } = window.location;
     const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
-
     let cleanUrl = url;
-    // Fix missing leading slash for uploads
-    if (url.startsWith('uploads/')) {
-      cleanUrl = '/' + url;
-    }
-
-    // Handle relative uploads path
-    if (cleanUrl.startsWith('/uploads/')) {
-      return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
-    }
-
-    // Handle hardcoded localhost:5000 URLs (e.g., from old database entries)
-    if (cleanUrl.includes('localhost:5000')) {
-      return cleanUrl.replace('localhost', hostname);
-    }
-
+    if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+    if (cleanUrl.startsWith('/uploads/')) return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
+    if (cleanUrl.includes('localhost:5000')) return cleanUrl.replace('localhost', hostname);
     return cleanUrl;
   };
 
   const [selectedSlotId, setSelectedSlotId] = useState(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [modalTab, setModalTab] = useState('details');
   const [showExternalForm, setShowExternalForm] = useState(false);
   const [externalDate, setExternalDate] = useState('');
   const [showRestoreForm, setShowRestoreForm] = useState(false);
@@ -337,93 +342,33 @@ export default function App() {
   const [previewHtml, setPreviewHtml] = useState('');
   const [viewDocData, setViewDocData] = useState(null);
 
-  // Data State
-  const [inventory, setInventory] = useState([]);
-  const [inventoryIssues, setInventoryIssues] = useState([]);
-  const [logs, setLogs] = useState([]);
-
-  const [docList, setDocList] = useState([]);
-  const [folders, setFolders] = useState([]);
-  const [currentFolderId, setCurrentFolderId] = useState(null);
-  const [folderHistory, setFolderHistory] = useState([null]);
-  const [historyIndex, setHistoryIndex] = useState(0);
-
-  const navigateFolder = (folderId) => {
-    const newHistory = folderHistory.slice(0, historyIndex + 1);
-    newHistory.push(folderId);
-    setFolderHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-    setCurrentFolderId(folderId);
-  };
-
-  const navigateBack = () => {
-    if (historyIndex > 0) {
-      const newIndex = historyIndex - 1;
-      setHistoryIndex(newIndex);
-      setCurrentFolderId(folderHistory[newIndex]);
-    }
-  };
-
-  const navigateForward = () => {
-    if (historyIndex < folderHistory.length - 1) {
-      const newIndex = historyIndex + 1;
-      setHistoryIndex(newIndex);
-      setCurrentFolderId(folderHistory[newIndex]);
-    }
-  };
-
-
-  // New Features State
+  // Remaining features state
   const [taxAudits, setTaxAudits] = useState([]);
-  const [approvals, setApprovals] = useState([]);
   const [taxSummaries, setTaxSummaries] = useState([]);
-  const [activeInvTab, setActiveInvTab] = useState('internal'); // 'internal' | 'external'
-  const [externalItems, setExternalItems] = useState([]);
 
-  const [users, setUsers] = useState([]);
-  const [roles, setRoles] = useState([]);
-  const [flows, setFlows] = useState([]); // NEW: State for Master Flows
-  const [isFlowModalOpen, setIsFlowModalOpen] = useState(false); // NEW: State for Flow Modal
-  const [editingFlow, setEditingFlow] = useState(null); // NEW: State for editing flow
-  const [flowForm, setFlowForm] = useState({ name: '', description: '', steps: [], visual_config: null }); // NEW: State for flow form
-  const [departments, setDepartments] = useState([]);
+  const [isFlowModalOpen, setIsFlowModalOpen] = useState(false);
+  const [editingFlow, setEditingFlow] = useState(null);
+  const [flowForm, setFlowForm] = useState({ name: '', description: '', steps: [], visual_config: null });
 
   const [masterTab, setMasterTab] = useState('users');
   const [editingRole, setEditingRole] = useState(null);
   const [roleForm, setRoleForm] = useState({ name: '', permissions: {} });
-  // NEW STATE FOR MASTER DATA
   const [userForm, setUserForm] = useState({ id: null, username: '', password: '', name: '', role: 'staff', department: '' });
   const [deptForm, setDeptForm] = useState({ id: null, name: '' });
 
   const [showTaxForm, setShowTaxForm] = useState(false);
   const [taxForm, setTaxForm] = useState({
-    id: '',
-    type: 'PPH',
-    month: '',
-    year: new Date().getFullYear(),
-    pembetulan: 0,
-    data: {
-      pph: {},
-      ppnIn: {},
-      ppnOut: {}
-    }
-  });
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = localStorage.getItem('archive_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch { return null; }
+    id: '', type: 'PPH', month: '', year: new Date().getFullYear(), pembetulan: 0,
+    data: { pph: {}, ppnIn: {}, ppnOut: {} }
   });
 
-  const [isLoading, setIsLoading] = useState(!!currentUser); // Start loading only if user is logged in
-  const [stats, setStats] = useState({ stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 });
-
-  // --- OCR GLOBAL POLLING ---
-  const [ocrStats, setOcrStats] = useState({ counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
-
-
+  const [isLoading, setIsLoading] = useState(!!currentUser);
 
   const lastOcrCompletedRef = useRef(0);
+  const lastOcrFailedRef = useRef(0);
+  const lastOcrWaitingRef = useRef(0);
+  const lastOcrActiveRef = useRef(0);
+  const activeOcrToastsRef = useRef({}); // { jobId: toastId }
 
   useEffect(() => {
     if (!currentUser) return;
@@ -435,15 +380,68 @@ export default function App() {
         if (!res.ok) return;
         const data = await res.json();
 
-        // Check for new completions to trigger auto-refresh
+        // Check for new completions/failures for general alerts
         const newCompleted = data?.counts?.completed || 0;
+        const newFailed = data?.counts?.failed || 0;
+        const newWaiting = data?.counts?.waiting || 0;
+        const newActive = data?.counts?.active || 0;
+
+        // Completion Toast & Refresh
         if (lastOcrCompletedRef.current > 0 && newCompleted > lastOcrCompletedRef.current) {
+          const finishedCount = newCompleted - lastOcrCompletedRef.current;
+          toast.success(`OCR Selesai: ${finishedCount} dokumen berhasil diproses.`);
           console.log("OCR Job Completed! Refreshing data...");
           fetchInventory(); // Refresh Inventory
           fetchDocs();      // Refresh Documents
           fetchLogs();      // Refresh Logs
         }
+
+        // Failure Toast
+        if (lastOcrFailedRef.current > 0 && newFailed > lastOcrFailedRef.current) {
+          const failedCount = newFailed - lastOcrFailedRef.current;
+          toast.error(`OCR Gagal: ${failedCount} dokumen gagal diproses.`);
+        }
+
+        // New Job Notification (Waiting or Active increased)
+        // Granular Progress Toasts
+        const activeJobs = data?.activeJobs || [];
+        const currentActiveIds = activeJobs.map(j => j.id.toString());
+
+        // Cleanup toasts for jobs no longer in the active/waiting list
+        Object.keys(activeOcrToastsRef.current).forEach(jobId => {
+          if (!currentActiveIds.includes(jobId)) {
+            removeToast(activeOcrToastsRef.current[jobId]);
+            delete activeOcrToastsRef.current[jobId];
+          }
+        });
+
+        // Create or update toasts for each job
+        activeJobs.forEach(job => {
+          const jobIdStr = job.id.toString();
+          const fileName = job.data?.originalName || 'Dokumen';
+          const progress = job.progress || 0;
+          const statusText = job.status === 'active'
+            ? `Memproses OCR: ${fileName} (${progress}%)`
+            : `Menunggu di Antrian: ${fileName}`;
+          const type = job.status === 'active' ? 'loading' : 'info';
+
+          if (activeOcrToastsRef.current[jobIdStr]) {
+            updateToast(activeOcrToastsRef.current[jobIdStr], {
+              message: statusText,
+              progress: progress,
+              type: type
+            });
+          } else {
+            const tId = toast[type](statusText);
+            updateToast(tId, { progress });
+            activeOcrToastsRef.current[jobIdStr] = tId;
+          }
+        });
+
         lastOcrCompletedRef.current = newCompleted;
+        lastOcrFailedRef.current = newFailed;
+        lastOcrWaitingRef.current = data?.counts?.waiting || 0;
+        lastOcrActiveRef.current = data?.counts?.active || 0;
         setOcrStats(data || { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] });
       } catch (err) {
         console.error("Failed to fetch OCR status:", err);
@@ -457,17 +455,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [currentUser]); // Dependency on currentUser ensures it runs only when logged in
 
-  // --- DATA INITIALIZATION FROM API ---
-  const fetchDocs = async () => {
-    const data = await api.getDocs();
-    setDocList(data);
-  };
-
-  const fetchFolders = async () => {
-    const data = await api.getFolders();
-    setFolders(data);
-  };
-
   const fetchLogs = async () => {
     const data = await api.getLogs();
     setLogs(data);
@@ -476,67 +463,6 @@ export default function App() {
   const fetchTaxAudits = async () => {
     const data = await api.getTaxAudits();
     setTaxAudits(data);
-  };
-
-  const fetchApprovals = async () => {
-    const data = await api.getApprovals();
-    setApprovals(data);
-    const flowData = await api.getApprovalFlows(); // Fetch flows here
-    setFlows(flowData);
-  };
-
-  const fetchInventory = async () => {
-    try {
-      const data = await api.getInventory();
-      setInventory(data);
-      const extData = await api.getExternalItems();
-      setExternalItems(extData);
-
-      const emptyCount = data.filter(s => (s.status || 'EMPTY').toUpperCase() === 'EMPTY').length;
-      const borrowedCount = data.filter(s => (s.status || '').toUpperCase() === 'BORROWED').length;
-      const auditCount = data.filter(s => (s.status || '').toUpperCase() === 'AUDIT').length;
-      const storedCount = data.filter(s => (s.status || '').toUpperCase() === 'STORED').length;
-      const occupancyRate = (data.filter(s => s.status && s.status.toUpperCase() !== 'EMPTY').length / TOTAL_SLOTS) * 100;
-
-      // Diagnostic Check for "Stuck" boxes (Duplicates or Corruption)
-      const issues = [];
-      const boxIdMap = {};
-      data.forEach(slot => {
-        const status = (slot.status || 'EMPTY').toUpperCase();
-        const boxId = slot.boxData?.id;
-
-        if (status !== 'EMPTY' && !boxId) {
-          issues.push({
-            type: 'CORRUPT',
-            slotId: slot.id,
-            message: `Slot #${slot.id} (${status}) memiliki data yang rusak atau terpotong.`
-          });
-        }
-
-        if (boxId) {
-          if (boxIdMap[boxId]) {
-            issues.push({
-              type: 'DUPLICATE',
-              boxId: boxId,
-              slots: [boxIdMap[boxId], slot.id],
-              message: `Box "${boxId}" terdeteksi ganda di Slot #${boxIdMap[boxId]} dan Slot #${slot.id}.`
-            });
-          }
-          boxIdMap[boxId] = slot.id;
-        }
-      });
-      setInventoryIssues(issues);
-
-      setStats({
-        stored: storedCount,
-        borrowed: borrowedCount,
-        audit: auditCount,
-        empty: emptyCount,
-        occupancy: occupancyRate
-      });
-    } catch (error) {
-      console.error("Failed to fetch inventory", error);
-    }
   };
 
   useEffect(() => {
@@ -3140,912 +3066,54 @@ export default function App() {
             </div>
           </div>
         )}
-
-        {modalTab === 'doc-view' && viewDocData && (
-          <div className="space-y-6 pt-24 pb-10">
-            <div className="flex gap-4">
-              <div className="w-24 h-24 bg-slate-100 dark:bg-slate-800 rounded-xl flex items-center justify-center">
-                {String(viewDocData?.type || '').toLowerCase().includes('pdf') ? <FileDigit size={40} className="text-red-500" /> : <ImageIcon size={40} />}
-              </div>
-              <div className="flex-1">
-                <h3 className="text-2xl font-bold dark:text-white">{viewDocData.title}</h3>
-                <div className="flex gap-4 text-sm text-gray-500 mt-2">
-                  <span className="flex items-center gap-1"><User size={14} /> {viewDocData.uploader || viewDocData.owner || 'Unknown'}</span>
-                  <span className="flex items-center gap-1"><Clock size={14} /> {viewDocData.uploadDate ? new Date(viewDocData.uploadDate).toLocaleDateString() : '-'}</span>
-                  <span className="flex items-center gap-1"><FileJson size={14} /> {viewDocData.size}</span>
-                </div>
-                <button onClick={() => handleDownload(viewDocData)} className="mt-4 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg flex items-center gap-2 text-sm font-medium"><Download size={16} /> Download File</button>
-              </div>
-            </div>
-
-            {/* FILE PREVIEW SECTION */}
-            <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><Eye size={16} /> Preview Dokumen</h4>
-              <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-700 overflow-hidden min-h-[300px] max-h-[600px] overflow-y-auto shadow-inner flex items-center justify-center relative">
-                {isGeneratingPreview ? (
-                  <div className="flex flex-col items-center gap-3">
-                    <RefreshCw size={32} className="text-indigo-500 animate-spin" />
-                    <p className="text-[10px] font-bold text-slate-500 animate-pulse uppercase tracking-widest text-center">Menyiapkan Preview...</p>
-                  </div>
-                ) : String(viewDocData?.type || '').toLowerCase().includes('image') ? (
-                  <img src={viewDocData?.fileData || viewDocData?.file_data || viewDocData?.filedata || getFullUrl(viewDocData?.url)} alt="Preview" className="max-w-full mx-auto" onError={(e) => { e.target.style.display = 'none'; }} />
-                ) : pdfBlobUrl ? (
-                  <PdfViewer src={pdfBlobUrl} className="w-full h-[600px]" />
-                ) : previewHtml ? (
-                  <div className="p-6 prose dark:prose-invert max-w-none overflow-x-auto preview-content w-full" dangerouslySetInnerHTML={{ __html: previewHtml }} />
-                ) : (
-                  <div className="flex flex-col items-center justify-center h-[300px] text-gray-400">
-                    <FileText size={48} className="mb-2 opacity-20" />
-                    <p className="text-sm font-medium">Preview tidak tersedia untuk format ini.</p>
-                    <p className="text-xs opacity-60 mt-1">Gunakan tombol Download untuk melihat file secara penuh.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-              <h4 className="font-bold mb-2 dark:text-white flex items-center gap-2"><FileText size={16} /> Isi Dokumen (OCR & Analisis)</h4>
-              <div className="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg font-mono text-sm max-h-60 overflow-y-auto border border-gray-200 dark:border-slate-700 dark:text-slate-300 whitespace-pre-wrap">{viewDocData.ocrContent || 'Tidak ada konten OCR.'}</div>
-            </div>
-
-            {/* Version History Section - Safe Render */}
-            {(() => {
-              let history = [];
-              try {
-                if (viewDocData.versionsHistory) {
-                  history = typeof viewDocData.versionsHistory === 'string'
-                    ? JSON.parse(viewDocData.versionsHistory)
-                    : viewDocData.versionsHistory;
-                }
-              } catch (e) { console.error("History parse error", e); }
-
-              if (Array.isArray(history) && history.length > 0) {
-                return (
-                  <div className="border-t border-gray-200 dark:border-slate-700 pt-4">
-                    <h4 className="font-bold mb-3 dark:text-white flex items-center gap-2"><History size={16} /> Riwayat Versi & Revisi</h4>
-                    <div className="space-y-2 max-h-48 overflow-y-auto pr-2 custom-scrollbar">
-                      {history.slice().reverse().map((ver, idx) => (
-                        <div key={idx} className="flex justify-between items-center bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-100 dark:border-slate-700">
-                          <div>
-                            <div className="text-xs font-bold text-slate-700 dark:text-slate-300">Versi {new Date(ver.timestamp).toLocaleString()}</div>
-                            <div className="text-[10px] text-slate-500">Oleh: {ver.user} â€¢ {ver.size} â€¢ {ver.title}</div>
-                          </div>
-                          <button
-                            onClick={() => handleRestoreVersion(viewDocData.id, ver.timestamp)}
-                            className="text-xs bg-indigo-100 hover:bg-indigo-200 text-indigo-700 px-3 py-1.5 rounded-md font-bold transition-colors"
-                          >
-                            RESTORE
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              }
-              return null;
-            })()}
-          </div>
-        )}
-
-        {(modalTab === 'details' || modalTab === 'history' || modalTab === 'invoice-detail') && (
-          <div className="space-y-6 animate-in fade-in duration-500 pt-24">
-            <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/10 rounded-full blur-3xl -z-10 animate-pulse"></div>
-
-            {/* Header Box ID - Capsule Style */}
-            <div className="bg-white/40 dark:bg-slate-900/40 p-5 rounded-[2rem] border border-white/60 dark:border-white/5 shadow-sm mb-8 backdrop-blur-sm">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-indigo-500/10 rounded-2xl text-indigo-600 shadow-inner">
-                  <Package size={24} />
-                </div>
-                <div className="flex flex-col min-w-[120px]">
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 mb-0.5">Status Lokasi</span>
-                  <span className="font-black text-slate-800 dark:text-white text-sm whitespace-nowrap">{selectedSlotId ? `INTERNAL SLOT #${selectedSlotId}` : 'EXTERNAL ITEM'}</span>
-                </div>
-                <div className="h-8 w-px bg-slate-200 dark:bg-white/10 mx-2"></div>
-                <div className="flex-1 relative group/input">
-                  <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 mb-0.5 block ml-1">Nama Kardus</span>
-                  <input
-                    type="text"
-                    value={boxForm.boxId}
-                    onChange={(e) => setBoxForm({ ...boxForm, boxId: e.target.value })}
-                    className="text-base font-black text-slate-900 dark:text-white bg-transparent border-0 focus:ring-0 w-full placeholder:text-slate-300 focus:outline-none transition-all p-1"
-                    placeholder="KETIK NAMA KARDUS..."
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* TAB SELECTOR */}
-            <div className="flex bg-slate-100/50 dark:bg-slate-800/50 p-1.5 rounded-2xl mb-8 backdrop-blur-sm border border-white/20 dark:border-white/5">
-              <button
-                onClick={() => setModalTab('details')}
-                className={`flex-1 py-3 text-sm font-black rounded-xl transition-all duration-300 flex items-center justify-center gap-2 ${modalTab === 'details' ? 'bg-white dark:bg-slate-700 shadow-xl text-indigo-600 dark:text-white scale-[1.02] ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'}`}
-              >
-                <Package size={18} /> Detail Isi Kardus
-              </button>
-              <button
-                onClick={() => setModalTab('history')}
-                className={`flex-1 py-3 text-sm font-black rounded-xl transition-all duration-300 flex items-center justify-center gap-2 ${modalTab === 'history' ? 'bg-white dark:bg-slate-700 shadow-xl text-indigo-600 dark:text-white scale-[1.02] ring-1 ring-black/5' : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'}`}
-              >
-                <History size={18} /> Riwayat Mutasi
-              </button>
-            </div>
-
-            {modalTab === 'details' && (
-              <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-500">
-                {/* Input Area - Integrated Row */}
-                {hasPermission('inventory', 'edit') && (
-                  <div className="flex gap-4 items-end bg-indigo-500/5 dark:bg-indigo-500/10 p-6 rounded-3xl border border-indigo-500/10 group/input transition-all hover:bg-indigo-500/[0.08]">
-                    <div className="flex-1">
-                      <label className="text-[10px] uppercase font-black text-slate-400 ml-1 mb-2 block tracking-[0.2em]">No Ordner</label>
-                      <input
-                        value={newOrdner.noOrdner}
-                        onChange={e => setNewOrdner({ ...newOrdner, noOrdner: e.target.value })}
-                        className="w-full px-4 py-3 border-b-2 border-transparent bg-white/50 dark:bg-slate-900/50 rounded-xl focus:border-indigo-500 dark:text-white text-sm font-black transition-all outline-none"
-                        placeholder="ORD-001"
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] uppercase font-black text-slate-400 ml-1 mb-2 block tracking-[0.2em]">Periode</label>
-                      <input
-                        value={newOrdner.period}
-                        onChange={e => setNewOrdner({ ...newOrdner, period: e.target.value })}
-                        className="w-full px-4 py-3 border-b-2 border-transparent bg-white/50 dark:bg-slate-900/50 rounded-xl focus:border-indigo-500 dark:text-white text-sm font-black transition-all outline-none"
-                        placeholder="2024"
-                      />
-                    </div>
-                    <button
-                      onClick={addOrdner}
-                      className={`w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'ordner' ? 'bg-amber-500' : 'bg-indigo-600 hover:bg-indigo-500'}`}
-                    >
-                      {editingItem?.type === 'ordner' ? <Save size={20} /> : <Plus size={20} />}
-                    </button>
-                  </div>
-                )}
-
-                <div className="space-y-3 max-h-[450px] overflow-y-auto pr-3 custom-scrollbar">
-                  {(boxForm.ordners || []).length === 0 && (
-                    <div className="text-center py-16 text-slate-300">
-                      <Package size={48} className="mx-auto mb-4 opacity-20" />
-                      <p className="font-black text-sm tracking-widest uppercase opacity-40">Kardus Kosong</p>
-                    </div>
-                  )}
-                  {(boxForm.ordners || []).map(ord => (
-                    <div key={ord.id} className={`group transition-all duration-300 rounded-3xl border ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-500/10 border-indigo-500/30 shadow-lg shadow-indigo-500/5' : 'bg-white/40 dark:bg-slate-800/40 border-white/50 dark:border-white/5 hover:bg-white/60 dark:hover:bg-slate-800/60'}`}>
-                      <div className="flex justify-between items-center p-4 cursor-pointer" onClick={() => setExpandedOrdnerIds(prev => prev.includes(ord.id) ? prev.filter(id => id !== ord.id) : [...prev, ord.id])}>
-                        <div className="flex items-center gap-4">
-                          <div className={`w-10 h-10 rounded-2xl flex items-center justify-center transition-all ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30' : 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-500 group-hover:bg-indigo-100 dark:group-hover:bg-indigo-900/40'}`}>
-                            {expandedOrdnerIds.includes(ord.id) ? <FolderOpen size={20} /> : <Package size={20} />}
-                          </div>
-                          <div>
-                            <div className="font-black dark:text-white text-base text-slate-800 tracking-tight">{ord.noOrdner}</div>
-                            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{ord.period}</div>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all transform translate-x-2 group-hover:translate-x-0 mr-2">
-                            {hasPermission('inventory', 'edit') && (
-                              <button onClick={(e) => { e.stopPropagation(); editOrdner(ord); }} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-blue-600 transition-all"><Edit3 size={14} /></button>
-                            )}
-                            {hasPermission('inventory', 'delete') && (
-                              <button onClick={(e) => { e.stopPropagation(); removeOrdner(ord.id); }} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-red-600 transition-all"><Trash2 size={14} /></button>
-                            )}
-                          </div>
-                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all ${expandedOrdnerIds.includes(ord.id) ? 'bg-indigo-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'}`}>
-                            <ChevronRight size={22} className={`transition-transform duration-300 ${expandedOrdnerIds.includes(ord.id) ? 'rotate-90' : ''}`} />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Nested Invoice - Minimalist List */}
-                      {expandedOrdnerIds.includes(ord.id) && (
-                        <div className="px-4 pb-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                          {hasPermission('inventory', 'edit') && (
-                            <div className="flex gap-3 items-center bg-white/50 dark:bg-slate-900/50 p-3 rounded-2xl border border-white/50 dark:border-white/5">
-                              <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
-                              <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
-                              <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black focus:ring-0" />
-
-                              {/* Attachment Button */}
-                              <div className="relative">
-                                <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
-                                <button onClick={() => invoiceFileInputRef.current.click()} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${newInvoice.file ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}`} title={newInvoice.fileName || "Lampirkan File (OCR Auto)"}>
-                                  {newInvoice.isProcessing ? <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip size={14} />}
-                                </button>
-                              </div>
-
-                              <button onClick={() => addInvoice(ord.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-                                {editingItem?.type === 'invoice' ? <Save size={14} /> : <Plus size={14} />}
-                              </button>
-                            </div>
-                          )}
-
-                          {/* Manual Refresh Button for OCR */}
-                          <div className="flex justify-end mb-2">
-                            <button
-                              onClick={(e) => { e.stopPropagation(); fetchInventory(); }}
-                              className="flex items-center gap-1.5 text-[10px] uppercase font-bold text-indigo-500 hover:text-indigo-700 hover:bg-indigo-50 px-2 py-1 rounded-lg transition-colors"
-                            >
-                              <RefreshCw size={12} /> Refresh Status OCR
-                            </button>
-                          </div>
-
-                          <div className="space-y-1">
-                            {(ord.invoices || []).map(inv => {
-                              const isMatch = inventorySearchQuery && (
-                                String(inv.invoiceNo || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                String(inv.vendor || '').toLowerCase().includes(inventorySearchQuery.toLowerCase()) ||
-                                String(inv.ocrContent || '').toLowerCase().includes(inventorySearchQuery.toLowerCase())
-                              );
-                              return (
-                                <div key={inv.id} className={`group/inv flex items-center justify-between p-3 hover:bg-white dark:hover:bg-slate-900/50 rounded-xl transition-all border border-transparent hover:border-slate-200 dark:hover:border-white/5 ${isMatch ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-900/50' : ''}`}>
-                                  <div className="flex items-center gap-3">
-                                    <FileText size={14} className={`transition-colors ${isMatch ? 'text-yellow-600' : 'text-slate-400 group-hover/inv:text-indigo-500'}`} />
-                                    <div className="flex flex-col">
-                                      <span className="font-black text-xs text-slate-700 dark:text-white tracking-tight">{inv.invoiceNo ? String(inv.invoiceNo) : '-'}</span>
-                                      <div className="flex items-center gap-2 mt-0.5">
-                                        <span className="text-[10px] font-bold text-slate-400 uppercase">{inv.vendor ? String(inv.vendor) : ''}</span>
-                                        {inv.paymentDate && <span className="text-[10px] font-black text-emerald-600 px-1.5 py-0.5 bg-emerald-50 dark:bg-emerald-900/20 rounded-md">{String(inv.paymentDate)}</span>}
-                                      </div>
-                                      {inv.fileName && (
-                                        <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
-                                          <Paperclip size={10} /> {String(inv.fileName)}
-                                          {inv.ocrContent ? (
-                                            <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR READY</span>
-                                          ) : (
-                                            <span className="text-amber-500 font-bold text-[8px] border border-amber-200 dark:border-amber-800 px-1 rounded ml-1 animate-pulse">PROSES OCR...</span>
-                                          )}
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                  <div className="flex gap-1 opacity-0 group-hover/inv:opacity-100 transition-all">
-                                    <button onClick={() => handleViewInvoice(inv)} className="p-1.5 text-slate-400 hover:text-indigo-600 transition-colors" title="Lihat Detail"><Eye size={12} /></button>
-                                    {hasPermission('inventory', 'edit') && (
-                                      <button onClick={() => editInvoice(inv, ord.id)} className="p-1.5 text-slate-400 hover:text-blue-600 transition-colors"><Edit3 size={12} /></button>
-                                    )}
-                                    {hasPermission('inventory', 'delete') && (
-                                      <button onClick={() => removeInvoice(ord.id, inv.id)} className="p-1.5 text-slate-400 hover:text-red-600 transition-colors"><X size={12} /></button>
-                                    )}
-                                  </div>
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-
-                {/* FOOTER ACTIONS - Capsule Style */}
-                <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
-                  <div className="flex flex-wrap items-center justify-between gap-6">
-                    <div className="flex gap-4">
-                      {selectedSlotId && hasPermission('inventory', 'edit') && (
-                        <button
-                          onClick={() => setShowMoveInput(!showMoveInput)}
-                          className={`px-8 py-4 rounded-2xl text-[10px] font-black flex items-center gap-3 transition-all active:scale-95 ${showMoveInput ? 'bg-indigo-600 text-white shadow-xl shadow-indigo-500/30' : 'bg-white dark:bg-slate-800 text-slate-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/40 hover:text-indigo-600 border border-slate-200 dark:border-white/5 shadow-sm'}`}
-                        >
-                          <ArrowLeftRight size={18} /> PINDAH SLOT
-                        </button>
-                      )}
-                    </div>
-
-                    {selectedSlotId && hasPermission('inventory', 'edit') && (
-                      <button
-                        onClick={handleSaveBox}
-                        className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-indigo-500 text-white rounded-2xl shadow-2xl shadow-indigo-500/20 flex items-center gap-3 text-[10px] font-black transition-all hover:shadow-indigo-500/40 active:scale-95 hover:-translate-y-1"
-                      >
-                        <Save size={18} /> SIMPAN DATA
-                      </button>
-                    )}
-                  </div>
-
-                  {/* Row 2: Move Input */}
-                  {showMoveInput && (
-                    <div className="mt-6 flex gap-4 items-center bg-indigo-500/5 dark:bg-indigo-500/10 p-5 rounded-3xl border border-indigo-500/10 animate-in slide-in-from-top-2 duration-300">
-                      <div className="w-12 h-12 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-lg shadow-indigo-500/20">
-                        <ArrowLeftRight size={20} />
-                      </div>
-                      <div className="flex-1">
-                        <span className="text-[10px] font-black text-indigo-600 dark:text-indigo-300 uppercase tracking-widest block mb-1 ml-1">Slot Tujuan</span>
-                        <input
-                          type="number"
-                          placeholder="1-100"
-                          value={moveTargetSlot}
-                          onChange={(e) => setMoveTargetSlot(e.target.value)}
-                          className="w-full bg-transparent border-0 text-lg font-black dark:text-white placeholder:text-slate-300 focus:ring-0 p-0"
-                        />
-                      </div>
-                      <button
-                        onClick={handleMoveBox}
-                        className="px-8 py-3 bg-indigo-600 text-white text-[10px] font-black rounded-xl hover:bg-indigo-700 shadow-xl shadow-indigo-500/20 transition-all active:scale-95"
-                      >
-                        KONFIRMASI
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Row 3: Status & External Actions - Capsule Style */}
-                  {(selectedSlotId || selectedExternalItem) && (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status !== 'EMPTY' : true) && (
-                    <div className="bg-white/40 dark:bg-slate-900/40 p-6 rounded-[2.5rem] border border-white/60 dark:border-white/5 shadow-sm mt-8 backdrop-blur-sm">
-                      <div className={`grid ${selectedSlotId ? 'grid-cols-2' : 'grid-cols-1'} gap-4`}>
-                        {selectedSlotId && hasPermission('inventory', 'edit') && (
-                          <>
-                            {((inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status === 'BORROWED' || (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.status === 'AUDIT') ? (
-                              <button onClick={() => handleStatusChange('STORED', 'Dikembalikan User')} className="p-5 border-2 border-emerald-500/20 bg-emerald-500/5 hover:bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
-                                <CheckCircle2 size={24} className="group-hover:scale-110 transition-transform" /> KEMBALIKAN
-                              </button>
-                            ) : (
-                              <button onClick={() => handleStatusChange('BORROWED', 'Dipinjam User')} className="p-5 border-2 border-amber-500/20 bg-amber-500/5 hover:bg-amber-500/10 text-amber-600 dark:text-amber-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
-                                <Clock size={24} className="group-hover:scale-110 transition-transform" /> SET DIPINJAM
-                              </button>
-                            )}
-                            <button onClick={() => handleStatusChange('AUDIT', 'Sedang Audit')} className="p-5 border-2 border-purple-500/20 bg-purple-500/5 hover:bg-purple-500/10 text-purple-600 dark:text-purple-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
-                              <AlertCircle size={24} className="group-hover:scale-110 transition-transform" /> SET AUDIT
-                            </button>
-                            <button onClick={() => {
-                              setShowExternalForm(true);
-                              setExternalDate(new Date().toISOString().split('T')[0]);
-                            }} className="p-5 border-2 border-indigo-500/20 bg-indigo-500/5 hover:bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
-                              <Truck size={24} className="group-hover:scale-110 transition-transform" /> KIRIM KE INDOARSIP
-                            </button>
-                          </>
-                        )}
-                        {hasPermission('inventory', 'delete') && (
-                          <button onClick={handleEmptySlot} className="p-5 border-2 border-red-500/20 bg-red-500/5 hover:bg-red-500/10 text-red-600 dark:text-red-400 rounded-3xl text-sm font-black flex items-center justify-center gap-3 transition-all transform active:scale-95 group shadow-sm">
-                            <LogOut size={24} className="group-hover:scale-110 transition-transform" /> KOSONGKAN
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  )}
+        <DocumentViewerModal
+          modalTab={modalTab}
+          viewDocData={viewDocData}
+          handleDownload={handleDownload}
+          isGeneratingPreview={isGeneratingPreview}
+          getFullUrl={getFullUrl}
+          pdfBlobUrl={pdfBlobUrl}
+          previewHtml={previewHtml}
+          handleRestoreVersion={handleRestoreVersion}
+        />
 
 
-
-                </div>
-              </div>
-            )}
-
-            {modalTab === 'history' && (
-              <div className="space-y-6 py-4 animate-in fade-in duration-500 max-h-[60vh] overflow-y-auto pr-4 custom-scrollbar">
-                {/* Current Status Summary Card */}
-                <div className="bg-indigo-600 rounded-[2rem] p-6 text-white shadow-xl shadow-indigo-500/20 relative overflow-hidden mb-8">
-                  <div className="absolute top-0 right-0 p-4 opacity-10">
-                    <History size={120} />
-                  </div>
-                  <div className="relative z-10">
-                    <p className="text-[10px] font-black uppercase tracking-[0.2em] text-indigo-100 mb-2">Status Terkini Kardus</p>
-                    <div className="flex items-center gap-4">
-                      <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center shadow-inner">
-                        <Package size={28} />
-                      </div>
-                      <div>
-                        <h3 className="text-2xl font-black tracking-tight">{boxForm.boxId}</h3>
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="px-2 py-0.5 bg-white/20 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                            {selectedSlotId ? `Slot #${selectedSlotId}` : selectedExternalItem?.destination || 'External'}
-                          </span>
-                          <div className="w-1 h-1 rounded-full bg-white/40"></div>
-                          <span className="text-[10px] font-bold text-indigo-100">
-                            Update: {new Date((selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.lastUpdated : selectedExternalItem?.sentDate) || Date.now()).toLocaleDateString()}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="relative pl-4">
-                  {/* Vertical Trail Line */}
-                  <div className="absolute left-[39px] top-4 bottom-4 w-1 bg-slate-100 dark:bg-slate-800 rounded-full"></div>
-
-                  {(() => {
-                    const history = (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.history : selectedExternalItem?.history) || [];
-                    if (history.length === 0) {
-                      return (
-                        <div className="text-center py-20 text-slate-400 italic">
-                          <div className="flex justify-center mb-4 opacity-20"><History size={64} /></div>
-                          <p className="font-black tracking-widest uppercase text-xs">Belum ada riwayat tercatat.</p>
-                        </div>
-                      );
-                    }
-
-                    return history.slice().reverse().map((hist, idx) => {
-                      const getActionConfig = (action) => {
-                        const a = action?.toUpperCase();
-                        if (a === 'CREATED' || a === 'IMPORTED') return { icon: Plus, color: 'bg-emerald-500', text: 'text-emerald-600', bg: 'bg-emerald-50' };
-                        if (a === 'STORED' || a === 'RESTORED') return { icon: CheckCircle2, color: 'bg-indigo-500', text: 'text-indigo-600', bg: 'bg-indigo-50' };
-                        if (a === 'MOVED') return { icon: ArrowLeftRight, color: 'bg-blue-500', text: 'text-blue-600', bg: 'bg-blue-50' };
-                        if (a === 'BORROWED') return { icon: User, color: 'bg-amber-500', text: 'text-amber-600', bg: 'bg-amber-50' };
-                        if (a === 'AUDIT') return { icon: Shield, color: 'bg-purple-500', text: 'text-purple-600', bg: 'bg-purple-50' };
-                        if (a === 'EXTERNAL') return { icon: Truck, color: 'bg-orange-500', text: 'text-orange-600', bg: 'bg-orange-50' };
-                        if (a === 'REMOVED') return { icon: Trash2, color: 'bg-red-500', text: 'text-red-600', bg: 'bg-red-50' };
-                        return { icon: History, color: 'bg-slate-500', text: 'text-slate-600', bg: 'bg-slate-50' };
-                      };
-
-                      const config = getActionConfig(hist.action);
-                      const Icon = config.icon;
-
-                      return (
-                        <div key={idx} className="relative pl-16 pb-10 group last:pb-0">
-                          {/* Trail Node */}
-                          <div className={`absolute left-0 top-0 w-12 h-12 rounded-2xl border-4 border-white dark:border-slate-900 shadow-xl z-10 transition-all group-hover:scale-110 flex items-center justify-center ${config.color} text-white`}>
-                            <Icon size={20} />
-                          </div>
-
-                          {/* Content Card */}
-                          <div className="bg-white dark:bg-slate-800/50 p-5 rounded-3xl border border-slate-100 dark:border-white/5 shadow-sm group-hover:shadow-md transition-all group-hover:-translate-y-1">
-                            <div className="flex justify-between items-start mb-3">
-                              <div>
-                                <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${config.bg} ${config.text}`}>
-                                  {hist.action}
-                                </span>
-                                <h4 className="mt-2 font-bold text-slate-800 dark:text-white text-sm leading-tight">
-                                  {hist.note}
-                                </h4>
-                              </div>
-                              <div className="text-right">
-                                <div className="flex items-center justify-end gap-1.5 text-[10px] font-black text-slate-400">
-                                  <Clock size={10} /> {new Date(hist.timestamp).toLocaleDateString()}
-                                </div>
-                                <div className="text-[9px] font-bold text-slate-300 mt-0.5">
-                                  {new Date(hist.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                </div>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between mt-4 pt-3 border-t border-slate-50 dark:border-white/5">
-                              <div className="flex items-center gap-2">
-                                <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-black text-slate-500">
-                                  {hist.user?.charAt(0).toUpperCase()}
-                                </div>
-                                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Oleh: <span className="text-indigo-500">{hist.user}</span></span>
-                              </div>
-                              <div className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">Verified Trail</div>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    });
-                  })()}
-                </div>
-              </div>
-            )}
+        <InventoryModals
+          modalTab={modalTab} setModalTab={setModalTab}
+          selectedSlotId={selectedSlotId} selectedExternalItem={selectedExternalItem} inventory={inventory}
+          boxForm={boxForm} setBoxForm={setBoxForm} hasPermission={hasPermission}
+          newOrdner={newOrdner} setNewOrdner={setNewOrdner} addOrdner={addOrdner} editOrdner={editOrdner} removeOrdner={removeOrdner}
+          expandedOrdnerIds={expandedOrdnerIds} setExpandedOrdnerIds={setExpandedOrdnerIds}
+          newInvoice={newInvoice} setNewInvoice={setNewInvoice} addInvoice={addInvoice} editInvoice={editInvoice} removeInvoice={removeInvoice} handleViewInvoice={handleViewInvoice}
+          editingItem={editingItem} showMoveInput={showMoveInput} setShowMoveInput={setShowMoveInput}
+          moveTargetSlot={moveTargetSlot} setMoveTargetSlot={setMoveTargetSlot} handleMoveBox={handleMoveBox} handleSaveBox={handleSaveBox}
+          handleStatusChange={handleStatusChange} setShowExternalForm={setShowExternalForm} setExternalDate={setExternalDate} handleEmptySlot={handleEmptySlot}
+          invoiceFileInputRef={invoiceFileInputRef} handleInvoiceFileSelect={handleInvoiceFileSelect} fetchInventory={fetchInventory}
+          selectedInvoice={selectedInvoice} handleDownloadInvoice={handleDownloadInvoice} isGeneratingPreview={isGeneratingPreview}
+          getFullUrl={getFullUrl} pdfBlobUrl={pdfBlobUrl} previewHtml={previewHtml}
+        />
 
 
-            {modalTab === 'invoice-detail' && selectedInvoice && (
-              <div className="space-y-6 animate-in slide-in-from-right-4 duration-300">
-                <button onClick={() => setModalTab('details')} className="flex items-center gap-2 text-xs font-bold text-slate-500 hover:text-indigo-600 transition-colors uppercase tracking-wider">
-                  <ChevronLeft size={14} /> Kembali ke Daftar
-                </button>
-
-                <div className="bg-white/50 dark:bg-slate-800/50 p-6 rounded-3xl border border-white/60 dark:border-white/5 shadow-sm">
-                  <div className="flex justify-between items-start mb-6">
-                    <div>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Nomor Invoice</span>
-                      <h3 className="text-3xl font-black text-slate-800 dark:text-white tracking-tight">{selectedInvoice.invoiceNo || '-'}</h3>
-                    </div>
-                    {selectedInvoice.paymentDate && (
-                      <div className="text-right">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Tanggal Bayar</span>
-                        <span className="px-3 py-1 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 rounded-lg text-xs font-black">{String(selectedInvoice.paymentDate)}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-6 mb-6">
-                    <div>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Vendor</span>
-                      <p className="text-lg font-bold text-slate-700 dark:text-slate-200">{selectedInvoice.vendor || '-'}</p>
-                    </div>
-                    <div>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lokasi File (Kardus / Ordner)</span>
-                      <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">
-                        {selectedInvoice.location || selectedInvoice.folderName || 'Inventory'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-6 mb-6">
-                    <div>
-                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lampiran File</span>
-                      {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {String(selectedInvoice.fileName)}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
-                    </div>
-                  </div>
-
-                  {selectedInvoice.file && <button onClick={() => handleDownloadInvoice(selectedInvoice)} className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/20 transition-all flex items-center justify-center gap-2"><Download size={18} /> Download Lampiran PDF/Gambar</button>}
-
-                  {/* Invoice Preview */}
-                  {selectedInvoice.file && (
-                    <div className="mt-4 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden shadow-inner">
-                      <div className="p-2 bg-slate-50 dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center">
-                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">Preview Lampiran</span>
-                      </div>
-                      <div className="h-[450px] overflow-auto bg-slate-50 dark:bg-slate-950 flex items-center justify-center relative">
-                        {isGeneratingPreview ? (
-                          <div className="flex flex-col items-center gap-3">
-                            <RefreshCw size={32} className="text-indigo-500 animate-spin" />
-                            <p className="text-[10px] font-bold text-slate-500 animate-pulse uppercase tracking-widest text-center">Menyiapkan Preview...</p>
-                          </div>
-                        ) : (typeof selectedInvoice.file === 'string' && (selectedInvoice.file.match(/\.(jpg|jpeg|png|webp)$/i) || selectedInvoice.file.startsWith('data:image'))) ? (
-                          <img src={getFullUrl(selectedInvoice.file)} alt="Invoice Preview" className="max-w-full mx-auto" />
-                        ) : (pdfBlobUrl) ? (
-                          <PdfViewer src={pdfBlobUrl} className="w-full h-full" />
-                        ) : (previewHtml) ? (
-                          <div className="w-full h-full p-6 prose dark:prose-invert max-w-none overflow-auto custom-scrollbar" dangerouslySetInnerHTML={{ __html: previewHtml }} />
-                        ) : (
-                          <div className="flex flex-col items-center justify-center h-full py-12 text-slate-400 text-center px-6">
-                            <FileText size={48} className="mb-4 opacity-20" />
-                            <p className="text-xs font-black uppercase tracking-[0.2em] mb-2 text-slate-500/80">Preview Terbatas</p>
-                            <p className="text-[10px] opacity-60 leading-relaxed">Sistem tidak dapat menampilkan pratinjau langsung untuk format ini atau file tidak ditemukan.<br />Gunakan tombol <b>Download</b> di atas untuk melihat file secara penuh.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {selectedInvoice.ocrContent && (
-                  <div className="bg-slate-50 dark:bg-slate-900/50 p-5 rounded-3xl border border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center gap-2 mb-3"><FileText size={16} className="text-indigo-500" /><h4 className="text-xs font-black text-slate-600 dark:text-slate-300 uppercase tracking-widest">Hasil Scan OCR</h4></div>
-                    <div className="p-4 bg-white dark:bg-slate-950 rounded-2xl border border-slate-100 dark:border-slate-800 text-xs font-mono text-slate-600 dark:text-slate-400 leading-relaxed max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap">{typeof selectedInvoice.ocrContent === 'object' ? JSON.stringify(selectedInvoice.ocrContent, null, 2) : selectedInvoice.ocrContent}</div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* FOOTER ACTIONS removed from common area */}
-          </div>
-        )
-        }
 
 
         {/* MASTER DATA MODALS */}
-        {(modalTab === 'user-create' || modalTab === 'dept-form' || modalTab === 'role-create' || modalTab === 'role-edit') && (
-          <div className="space-y-6 pt-24">
-            {modalTab === 'user-create' && (
-              <div className="space-y-5 animate-in slide-in-from-bottom-2 duration-300">
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Username</label>
-                    <input
-                      value={userForm.username}
-                      onChange={e => setUserForm({ ...userForm, username: e.target.value })}
-                      className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner placeholder:text-slate-400 font-bold"
-                      placeholder="Username untuk login"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Password</label>
-                    <input
-                      type="password"
-                      value={userForm.password}
-                      onChange={e => setUserForm({ ...userForm, password: e.target.value })}
-                      className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner placeholder:text-slate-400"
-                      placeholder={userForm.id ? "â€¢â€¢â€¢â€¢â€¢â€¢â€¢â€¢" : "Password login"}
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Nama Lengkap</label>
-                  <input
-                    value={userForm.name}
-                    onChange={e => setUserForm({ ...userForm, name: e.target.value })}
-                    className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-bold"
-                    placeholder="Nama lengkap user"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Role</label>
-                    <div className="relative">
-                      <select
-                        value={userForm.role}
-                        onChange={e => setUserForm({ ...userForm, role: e.target.value })}
-                        className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
-                      >
-                        {roles.map(r => <option key={r.id} value={r.id}>{r.label || r.id}</option>)}
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                        <ChevronRight size={16} className="rotate-90" />
-                      </div>
-                    </div>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Departemen</label>
-                    <div className="relative">
-                      <select
-                        value={userForm.department}
-                        onChange={e => setUserForm({ ...userForm, department: e.target.value })}
-                        className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-800/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
-                      >
-                        <option value="">- Pilih Dept -</option>
-                        {departments.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
-                      </select>
-                      <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                        <ChevronRight size={16} className="rotate-90" />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex justify-end pt-6 border-t border-white/20 dark:border-white/5">
-                  <button
-                    onClick={handleSaveUser}
-                    className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-xl font-black shadow-lg shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5"
-                  >
-                    Simpan User
-                  </button>
-                </div>
-              </div>
-            )}
+        <MasterDataModals
+          modalTab={modalTab}
+          userForm={userForm} setUserForm={setUserForm} handleSaveUser={handleSaveUser}
+          deptForm={deptForm} setDeptForm={setDeptForm} handleSaveDept={handleSaveDept}
+          roleForm={roleForm} setRoleForm={setRoleForm} handleSaveRole={handleSaveRole}
+          handleTogglePermission={handleTogglePermission}
+          roles={roles} departments={departments} APP_MODULES={APP_MODULES}
+        />
 
-            {modalTab === 'dept-form' && (
-              <div className="space-y-6 animate-in slide-in-from-bottom-2 duration-300">
-                <div className="bg-white/30 dark:bg-slate-800/30 p-6 rounded-2xl border border-white/20 dark:border-white/5">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Nama Departemen</label>
-                  <div className="relative">
-                    <Building2 className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                    <input
-                      value={deptForm.name}
-                      onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 border-0 bg-white/50 dark:bg-slate-900/50 rounded-2xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-black text-lg"
-                      placeholder="Contoh: IT Support"
-                    />
-                  </div>
-                </div>
-                <div className="flex justify-end pt-4">
-                  <button
-                    onClick={handleSaveDept}
-                    className="px-10 py-3.5 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5"
-                  >
-                    Simpan Departemen
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {(modalTab === 'role-create' || modalTab === 'role-edit') && (
-              <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300">
-                <div className="bg-white/30 dark:bg-slate-800/30 p-6 rounded-2xl border border-white/20 dark:border-white/5">
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-2 uppercase tracking-wider">Nama Role</label>
-                  <div className="relative">
-                    <Shield className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                    <input
-                      value={roleForm.name}
-                      onChange={e => setRoleForm({ ...roleForm, name: e.target.value })}
-                      className="w-full pl-12 pr-4 py-4 border-0 bg-white/50 dark:bg-slate-900/50 rounded-2xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-black text-lg"
-                      placeholder="Contoh: Manager"
-                    />
-                  </div>
-                </div>
-
-                <div className="border border-white/20 dark:border-white/5 rounded-[2rem] overflow-hidden shadow-xl bg-white/20 dark:bg-slate-900/20 backdrop-blur-md">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="bg-slate-100/50 dark:bg-slate-800/50">
-                        <th className="px-6 py-4 text-left text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Modul</th>
-                        <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">View</th>
-                        <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Create</th>
-                        <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Edit</th>
-                        <th className="px-4 py-4 text-center text-xs font-black text-slate-500 dark:text-slate-400 uppercase tracking-widest">Delete</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/10 dark:divide-white/5">
-                      {Object.values(APP_MODULES).map(mod => (
-                        <tr key={mod.id} className="hover:bg-white/30 dark:hover:bg-slate-800/30 transition-colors">
-                          <td className="px-6 py-4">
-                            <span className="font-black text-slate-700 dark:text-slate-200">{mod.label}</span>
-                          </td>
-                          {['view', 'create', 'edit', 'delete'].map(action => (
-                            <td key={action} className="text-center py-4">
-                              <label className="relative inline-flex items-center cursor-pointer group">
-                                <input
-                                  type="checkbox"
-                                  checked={roleForm.permissions[mod.id]?.includes(action) || false}
-                                  onChange={() => handleTogglePermission(mod.id, action)}
-                                  className="sr-only peer"
-                                />
-                                <div className="w-10 h-5 bg-slate-200 dark:bg-slate-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
-                              </label>
-                            </td>
-                          ))}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="flex justify-end pt-2">
-                  <button
-                    onClick={handleSaveRole}
-                    className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5 active:scale-95"
-                  >
-                    Simpan Role & Izin
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAX FORM MODAL */}
-        {
-          (modalTab === 'tax-form' || modalTab === 'tax-form-pph' || modalTab === 'tax-form-ppn') && (
-            <div className="space-y-8 animate-in slide-in-from-bottom-2 duration-300 pt-24">
-              <div className="grid grid-cols-3 gap-6 bg-white/30 dark:bg-slate-800/30 p-6 rounded-3xl border border-white/20 dark:border-white/5">
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Bulan</label>
-                  <div className="relative">
-                    <select
-                      value={taxForm.month}
-                      onChange={e => setTaxForm({ ...taxForm, month: e.target.value })}
-                      className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-900/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner appearance-none font-bold"
-                    >
-                      <option value="">- Pilih Bulan -</option>
-                      {["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"].map(m => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                    </select>
-                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                      <ChevronRight size={16} className="rotate-90" />
-                    </div>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Tahun</label>
-                  <input
-                    type="number"
-                    value={taxForm.year}
-                    onChange={e => setTaxForm({ ...taxForm, year: parseInt(e.target.value) })}
-                    className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-900/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1.5 uppercase tracking-wider">Pembetulan Ke-</label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={taxForm.pembetulan || 0}
-                    onChange={e => setTaxForm({ ...taxForm, pembetulan: parseInt(e.target.value) })}
-                    className="w-full px-4 py-3 border-0 bg-white/50 dark:bg-slate-900/50 rounded-xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-inner font-bold"
-                  />
-                </div>
-              </div>
-
-              {(modalTab === 'tax-form' || modalTab === 'tax-form-pph') && (
-                <div className="bg-white/20 dark:bg-slate-900/40 p-6 rounded-[2rem] border border-white/20 dark:border-white/5 shadow-inner">
-                  <div className="flex justify-between items-center mb-5">
-                    <h4 className="font-black text-slate-800 dark:text-white flex items-center gap-3 text-lg">
-                      <div className="p-2 bg-indigo-500/10 rounded-xl text-indigo-500"><Percent size={18} /></div>
-                      PPh (Pajak Penghasilan)
-                    </h4>
-                    <button type="button" onClick={() => handleAddTaxField('pphTypes')} className="flex items-center gap-2 text-xs font-black text-indigo-600 dark:text-indigo-400 bg-indigo-50 px-3 py-1.5 rounded-full hover:bg-indigo-100 transition-all border border-indigo-100/50">
-                      <Plus size={14} /> TAMBAH FIELD
-                    </button>
-                  </div>
-                  <div className="grid grid-cols-2 gap-6">
-                    {Object.keys(taxForm.data?.pph || {}).map(key => (
-                      <div key={key} className="group relative">
-                        <div className="flex justify-between items-center mb-1.5 px-1">
-                          <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{key}</label>
-                          <button tabIndex="-1" onClick={() => handleDeleteTaxField('pphTypes', key)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100" title="Hapus Field"><Trash2 size={12} /></button>
-                        </div>
-                        <input
-                          type="text"
-                          value={taxForm.data?.pph?.[key] ? taxForm.data.pph[key].toLocaleString('id-ID') : ''}
-                          onChange={e => {
-                            const val = e.target.value.replace(/[^\d]/g, '');
-                            setTaxForm({
-                              ...taxForm,
-                              data: {
-                                ...taxForm.data,
-                                pph: { ...taxForm.data.pph, [key]: val ? parseInt(val, 10) : 0 }
-                              }
-                            })
-                          }}
-                          className="w-full px-4 py-3.5 border-0 bg-white/60 dark:bg-slate-900/60 rounded-2xl focus:ring-2 focus:ring-indigo-500 dark:text-white shadow-sm font-black text-right pr-6"
-                          placeholder="0"
-                        />
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {(modalTab === 'tax-form' || modalTab === 'tax-form-ppn') && (
-                <div className="space-y-8">
-                  <div className="bg-emerald-500/[0.03] dark:bg-emerald-500/[0.05] p-6 rounded-[2.5rem] border border-emerald-500/10">
-                    <div className="flex justify-between items-center mb-5 px-2">
-                      <h4 className="font-black text-slate-800 dark:text-white flex items-center gap-3 text-lg">
-                        <div className="p-2 bg-emerald-500/10 rounded-xl text-emerald-500"><ArrowDownRight size={18} /></div>
-                        PPN Masukan (Input)
-                      </h4>
-                      <button type="button" onClick={() => handleAddTaxField('ppnInTypes')} className="flex items-center gap-2 text-xs font-black text-emerald-600 dark:text-emerald-400 bg-emerald-50 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition-all border border-emerald-100/50">
-                        <Plus size={14} /> TAMBAH FIELD
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-6">
-                      {Object.keys(taxForm.data?.ppnIn || {}).map(key => (
-                        <div key={key} className="group relative">
-                          <div className="flex justify-between items-center mb-1.5 px-1">
-                            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{key}</label>
-                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnInTypes', key)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100" title="Hapus Field"><Trash2 size={12} /></button>
-                          </div>
-                          <input
-                            type="text"
-                            value={taxForm.data?.ppnIn?.[key] ? taxForm.data.ppnIn[key].toLocaleString('id-ID') : ''}
-                            onChange={e => {
-                              const val = e.target.value.replace(/[^\d]/g, '');
-                              setTaxForm({
-                                ...taxForm,
-                                data: {
-                                  ...taxForm.data,
-                                  ppnIn: { ...taxForm.data.ppnIn, [key]: val ? parseInt(val, 10) : 0 }
-                                }
-                              })
-                            }}
-                            className="w-full px-4 py-3.5 border-0 bg-white/60 dark:bg-slate-900/60 rounded-2xl focus:ring-2 focus:ring-emerald-500 dark:text-white shadow-sm font-black text-right pr-6"
-                            placeholder="0"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="bg-amber-500/[0.03] dark:bg-amber-500/[0.05] p-6 rounded-[2.5rem] border border-amber-500/10">
-                    <div className="flex justify-between items-center mb-5 px-2">
-                      <h4 className="font-black text-slate-800 dark:text-white flex items-center gap-3 text-lg">
-                        <div className="p-2 bg-amber-500/10 rounded-xl text-amber-500"><ArrowUpRight size={18} /></div>
-                        PPN Keluaran (Output)
-                      </h4>
-                      <button type="button" onClick={() => handleAddTaxField('ppnOutTypes')} className="flex items-center gap-2 text-xs font-black text-amber-600 dark:text-amber-400 bg-amber-50 px-3 py-1.5 rounded-full hover:bg-amber-100 transition-all border border-amber-100/50">
-                        <Plus size={14} /> TAMBAH FIELD
-                      </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-6">
-                      {Object.keys(taxForm.data?.ppnOut || {}).map(key => (
-                        <div key={key} className="group relative">
-                          <div className="flex justify-between items-center mb-1.5 px-1">
-                            <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-widest">{key}</label>
-                            <button tabIndex="-1" onClick={() => handleDeleteTaxField('ppnOutTypes', key)} className="text-slate-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100" title="Hapus Field"><Trash2 size={12} /></button>
-                          </div>
-                          <input
-                            type="text"
-                            value={taxForm.data?.ppnOut?.[key] ? taxForm.data.ppnOut[key].toLocaleString('id-ID') : ''}
-                            onChange={e => {
-                              const val = e.target.value.replace(/[^\d]/g, '');
-                              setTaxForm({
-                                ...taxForm,
-                                data: {
-                                  ...taxForm.data,
-                                  ppnOut: { ...taxForm.data.ppnOut, [key]: val ? parseInt(val, 10) : 0 }
-                                }
-                              })
-                            }}
-                            className="w-full px-4 py-3.5 border-0 bg-white/60 dark:bg-slate-900/60 rounded-2xl focus:ring-2 focus:ring-amber-500 dark:text-white shadow-sm font-black text-right pr-6"
-                            placeholder="0"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex justify-end pt-8 border-t border-white/20 dark:border-white/5">
-                <button
-                  onClick={handleSaveTaxSummary}
-                  className="px-12 py-4 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white rounded-2xl font-black shadow-xl shadow-indigo-500/30 hover:shadow-indigo-500/50 transition-all hover:-translate-y-0.5 active:scale-95 flex items-center gap-3"
-                >
-                  <Save size={20} />
-                  SIMPAN DATA PAJAK
-                </button>
-              </div>
-            </div>
-          )
-        }
+        <TaxModals
+          modalTab={modalTab}
+          taxForm={taxForm}
+          setTaxForm={setTaxForm}
+          handleAddTaxField={handleAddTaxField}
+          handleDeleteTaxField={handleDeleteTaxField}
+          handleSaveTaxSummary={handleSaveTaxSummary}
+        />
       </Modal>
 
       {/* GLOBAL POPUPS - Root Level */}

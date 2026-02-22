@@ -75,7 +75,10 @@ app.use('/api/pustaka', pustakaRoutes);
 app.get('/uploads/:filename', (req, res) => {
     const filename = req.params.filename;
     const filePath = path.join(UPLOADS_DIR, filename);
-    if (!path.resolve(filePath).startsWith(path.resolve(UPLOADS_DIR))) {
+    const resolvedPath = path.resolve(filePath).toLowerCase();
+    const resolvedUploadsDir = path.resolve(UPLOADS_DIR).toLowerCase();
+
+    if (!resolvedPath.startsWith(resolvedUploadsDir)) {
         return res.status(403).json({ error: "Access Denied" });
     }
     res.sendFile(filePath, (err) => {

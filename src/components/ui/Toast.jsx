@@ -51,7 +51,24 @@ export function useToast() {
         loading: (msg) => addToast(msg, 'loading', 0), // Stays until updated
     }, [addToast]);
 
-    return { toasts, toast, removeToast, updateToast };
+    // Add return values to the object methods
+    const toastApi = {
+        success: (msg) => toast.success(msg),
+        error: (msg) => toast.error(msg),
+        info: (msg) => toast.info(msg),
+        warning: (msg) => toast.warning(msg),
+        loading: (msg) => toast.loading(msg),
+    };
+
+    const toastWithIds = useCallback({
+        success: (msg) => addToast(msg, 'success', 4000),
+        error: (msg) => addToast(msg, 'error', 6000),
+        info: (msg) => addToast(msg, 'info', 4000),
+        warning: (msg) => addToast(msg, 'warning', 5000),
+        loading: (msg) => addToast(msg, 'loading', 0),
+    }, [addToast]);
+
+    return { toasts, toast: toastWithIds, removeToast, updateToast, addToast };
 }
 
 // ─── Toast Config ──────────────────────────────────────────
@@ -144,6 +161,17 @@ export function ToastContainer({ toasts, onRemove }) {
                                 <span className="font-semibold text-slate-800 dark:text-white text-sm leading-tight truncate">
                                     {toast.message}
                                 </span>
+
+                                {/* Progress Bar */}
+                                {toast.progress !== undefined && (
+                                    <div className="mt-2 w-full bg-gray-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
+                                        <motion.div
+                                            initial={{ width: 0 }}
+                                            animate={{ width: `${toast.progress}%` }}
+                                            className={`${config.bg} h-full transition-all duration-300`}
+                                        />
+                                    </div>
+                                )}
                             </div>
 
                             {/* Close Button */}

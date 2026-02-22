@@ -34,3 +34,4 @@ server/uploads/
 uploads/
 *.sqlite
 *.db
+src_zona1_backup/

@@ -69,14 +69,15 @@ export const ocrQueue = new DbQueue('OCR_QUEUE');
 // Helper to add jobs (with deduplication)
 export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {
     try {
-        // DEDUP CHECK: Skip if a job for this docId is already waiting or active
+        // DEDUP CHECK: Skip if a job for this docId AND filePath is already waiting or active
         const existing = await knex('job_queue')
             .whereIn('status', ['waiting', 'active'])
             .where('data', 'like', `%"docId":"${docId}"%`)
+            .where('data', 'like', `%"filePath":"${filePath.replace(/\\/g, '\\\\')}"%`)
             .first();
 
         if (existing) {
-            console.log(`[Queue] DEDUP: Job for DocID ${docId} already in queue (Job #${existing.id}). Skipping.`);
+            console.log(`[Queue] DEDUP: Job for DocID ${docId} with same file path already in queue (Job #${existing.id}). Skipping.`);
             return {
                 id: existing.id,
                 name: 'process-ocr',

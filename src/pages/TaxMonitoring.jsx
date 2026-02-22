@@ -213,7 +213,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     };
 
     const getFullUrl = (url) => {
-        if (typeof url !== 'string') return url;
+        if (!url || typeof url !== 'string') return null;
         if (url.startsWith('data:') || url.startsWith('blob:')) return url;
 
         const { hostname, port, protocol } = window.location;

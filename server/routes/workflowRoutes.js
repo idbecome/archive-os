@@ -7,7 +7,8 @@ import {
     getDocumentApprovals,
     initiateApproval,
     updateApproval,
-    approveStep
+    approveStep,
+    resetApprovalStep
 } from '../controllers/workflowController.js';
 
 const router = express.Router();
@@ -23,5 +24,6 @@ router.get('/documents/:documentId', getDocumentApprovals);
 router.post('/initiate', initiateApproval);
 router.put('/:id', updateApproval);
 router.post('/:approvalId/action', approveStep);
+router.post('/:id/reset-step', resetApprovalStep);
 
 export default router;

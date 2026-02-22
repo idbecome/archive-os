@@ -20,7 +20,8 @@ import {
     deleteApproval,
     updateApproval,
     deleteApprovalFlow,
-    updateApprovalFlow
+    updateApprovalFlow,
+    resetApprovalStep
 } from '../controllers/workflowController.js';
 import { upload } from '../config/upload.js';
 
@@ -49,6 +50,7 @@ router.get('/approvals', getAllApprovals);
 router.post('/approvals', initiateApproval);
 router.put('/approvals/:id', updateApproval);
 router.post('/approvals/:approvalId/action', upload.single('file'), approveStep);
+router.post('/approvals/:id/reset-step', resetApprovalStep);
 router.delete('/approvals/:approvalId', deleteApproval);
 
 

@@ -1,5 +1,9 @@
 import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
+import { addOCRJob } from '../queue.js';
+import { UPLOADS_DIR } from '../config/upload.js';
+import path from 'path';
+import fs from 'fs';
 
 export const getApprovalFlows = async (req, res) => {
     try {
@@ -81,6 +85,14 @@ export const initiateApproval = async (req, res) => {
             created_at: knex.fn.now()
         });
 
+        // Trigger OCR for main attachment
+        if (attachment_url && attachment_url.startsWith('/uploads/')) {
+            try {
+                const absolutePath = path.join(UPLOADS_DIR, path.basename(attachment_url));
+                await addOCRJob(approvalId, absolutePath, 'application/pdf', attachment_name, { type: 'approval', approvalId });
+            } catch (qErr) { console.error("OCR Queue Error (Initiate):", qErr); }
+        }
+
         // Insert instance steps into approval_steps
         // Note: approval_steps is used for both templates (flow_id) and instances (approval_id)
         // Here we insert for the instance (approval_id)
@@ -159,6 +171,14 @@ export const approveStep = async (req, res) => {
             attachment_url: fileUrl,
             attachment_name: fileName
         });
+
+        // Trigger OCR for step attachment
+        if (fileUrl) {
+            try {
+                const absolutePath = path.join(UPLOADS_DIR, path.basename(fileUrl));
+                await addOCRJob(approvalId, absolutePath, req.file.mimetype, fileName, { type: 'approval', approvalId });
+            } catch (qErr) { console.error("OCR Queue Error (ApproveStep):", qErr); }
+        }
 
         // Check if there is a next step
         const nextIdx = currentIdx + 1;
@@ -338,6 +358,40 @@ export const updateApprovalFlow = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Update Approval Flow Error:", e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const resetApprovalStep = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { stepIndex } = req.body;
+
+        const approval = await knex('document_approvals').where('id', id).first();
+        if (!approval) return res.status(404).json({ error: "Approval not found" });
+
+        // Reset the target step and all subsequent steps back to 'Pending'
+        await knex('approval_steps')
+            .where('approval_id', id)
+            .where('step_index', '>=', stepIndex)
+            .update({
+                status: 'Pending',
+                note: '',
+                action_date: null
+            });
+
+        // Reset the approval's current step index and overall status
+        await knex('document_approvals')
+            .where('id', id)
+            .update({
+                current_step_index: stepIndex,
+                status: 'Pending'
+            });
+
+        await systemLog(req.body.username || 'System', "Reset Step", `Reset approval ${id} from step ${stepIndex}`);
+        res.json({ success: true });
+    } catch (e) {
+        console.error("Reset Approval Step Error:", e);
         res.status(500).json({ error: e.message });
     }
 };

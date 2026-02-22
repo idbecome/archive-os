@@ -256,7 +256,7 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
                             className="relative h-full w-full rounded-[4rem] overflow-hidden border-4 border-white/10 shadow-[0_0_50px_rgba(0,0,0,0.5)] cursor-zoom-in group"
                         >
                             <img
-                                src={getFullUrl(currentSlide?.image)}
+                                src={getFullUrl(currentSlide?.image) || undefined}
                                 className="w-full h-full object-cover transition-transform duration-1000 group-hover:scale-110"
                                 alt="Step Illustration"
                             />
@@ -292,7 +292,7 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
 
 export default function Pustaka({ currentUser, hasPermission, users = [], departments = [] }) {
     const getFullUrl = (url) => {
-        if (!url || typeof url !== 'string') return '';
+        if (!url || typeof url !== 'string') return null;
         if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
 
         const { hostname, port, protocol } = window.location;
