@@ -33,8 +33,31 @@ const Sidebar = ({
     handleLogout,
     ocrStats,
     setModalTab,
-    setIsModalOpen
+    setIsModalOpen,
+    approvals = []
 }) => {
+    // Calculate unread approvals count
+    const unreadApprovalsCount = React.useMemo(() => {
+        if (!approvals || !currentUser) return 0;
+        if (activeTab === 'approvals') return 0; // Sembunyikan badge sidebar jika sedang di tab approvals
+
+        let readApprovals = [];
+        try {
+            readApprovals = JSON.parse(localStorage.getItem(`readApprovals_${currentUser.username}`) || '[]');
+        } catch {
+            readApprovals = [];
+        }
+
+        const visibleApprovals = approvals.filter(a => {
+            if (!a) return false;
+            const isAdmin = currentUser.role === 'admin';
+            const isRequester = a.requester_username === currentUser.username;
+            const isInTrail = (a.steps || []).some(step => step.approver_username === currentUser.username);
+            return isAdmin || isRequester || isInTrail;
+        });
+
+        return visibleApprovals.filter(a => !readApprovals.includes(a.id)).length;
+    }, [approvals, currentUser, activeTab]);
     return (
         <aside
             className={`
@@ -155,9 +178,15 @@ const Sidebar = ({
                                         />
 
                                         {!isSidebarCollapsed && (
-                                            <span className={`relative z-10 font-bold tracking-tight text-sm transition-all duration-500 ${isActive ? 'translate-x-1' : ''}`}>
+                                            <span className={`relative z-10 font-bold tracking-tight text-sm transition-all duration-500 ${isActive ? 'translate-x-1' : ''} flex-1 text-left`}>
                                                 {item.label}
                                             </span>
+                                        )}
+
+                                        {item.id === 'approvals' && unreadApprovalsCount > 0 && (
+                                            <div className={`absolute ${isSidebarCollapsed ? 'top-1.5 right-1.5' : 'right-4 top-1/2 -translate-y-1/2'} w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-md shadow-red-500/50 z-20 animate-pulse`}>
+                                                {unreadApprovalsCount > 99 ? '99+' : unreadApprovalsCount}
+                                            </div>
                                         )}
 
                                         {/* Collapsed Tooltip */}

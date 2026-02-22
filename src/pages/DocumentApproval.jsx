@@ -39,6 +39,56 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
     const [actionAttachment, setActionAttachment] = useState(null);
     const [detailViewMode, setDetailViewMode] = useState('list'); // 'list' | 'visual'
 
+    const [readApprovals, setReadApprovals] = useState(() => {
+        try {
+            return JSON.parse(localStorage.getItem(`readApprovals_${currentUser?.username}`) || '[]');
+        } catch {
+            return [];
+        }
+    });
+
+    useEffect(() => {
+        if (!currentUser || !approvals.length) return;
+
+        const visibleApprovals = approvals.filter(a => {
+            if (!a) return false;
+            const isAdmin = currentUser?.role === 'admin';
+            const isRequester = a.requester_username === currentUser?.username;
+            const isInTrail = (a.steps || []).some(step => step.approver_username === currentUser?.username);
+            return isAdmin || isRequester || isInTrail;
+        });
+
+        let currentRead = [];
+        try {
+            currentRead = JSON.parse(localStorage.getItem(`readApprovals_${currentUser.username}`) || '[]');
+        } catch {
+            currentRead = [];
+        }
+
+        let newReadArr = [...currentRead];
+        let hasNew = false;
+        visibleApprovals.forEach(a => {
+            if (!newReadArr.includes(a.id)) {
+                newReadArr.push(a.id);
+                hasNew = true;
+            }
+        });
+
+        if (hasNew) {
+            localStorage.setItem(`readApprovals_${currentUser.username}`, JSON.stringify(newReadArr));
+            setReadApprovals(newReadArr);
+        }
+    }, [approvals, currentUser]);
+
+    const handleApprovalClick = (app) => {
+        setSelectedApproval(app);
+        if (!readApprovals.includes(app.id)) {
+            const newRead = [...readApprovals, app.id];
+            setReadApprovals(newRead);
+            localStorage.setItem(`readApprovals_${currentUser?.username}`, JSON.stringify(newRead));
+        }
+    };
+
     const handleAddStep = (user) => {
         if (form.steps.find(s => s.username === user.username)) return;
         setForm({ ...form, steps: [...form.steps, { username: user.username, name: user.name }] });
@@ -211,13 +261,20 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
                 {filteredApprovals.map(app => (
                     <div
                         key={app.id}
-                        onClick={() => setSelectedApproval(app)}
+                        onClick={() => handleApprovalClick(app)}
                         className="group bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-100 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-800 transition-all cursor-pointer shadow-sm hover:shadow-xl flex items-center gap-6"
                     >
-                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${app?.status === 'Approved' ? 'bg-emerald-50 text-emerald-600' :
-                            app?.status === 'Rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
-                            }`}>
-                            <FileCheck size={28} />
+                        <div className="relative">
+                            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center shrink-0 ${app?.status === 'Approved' ? 'bg-emerald-50 text-emerald-600' :
+                                app?.status === 'Rejected' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-600'
+                                }`}>
+                                <FileCheck size={28} />
+                            </div>
+                            {!readApprovals.includes(app.id) && (
+                                <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center shadow-md border-2 border-white dark:border-slate-900 shadow-red-500/50">
+                                    1
+                                </div>
+                            )}
                         </div>
                         <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-3 mb-1">

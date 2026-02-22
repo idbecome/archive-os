@@ -2656,6 +2656,7 @@ export default function App() {
         ocrStats={ocrStats}
         setModalTab={setModalTab}
         setIsModalOpen={setIsModalOpen}
+        approvals={approvals}
       />
 
       {/* MOBILE OVERLAY */}
