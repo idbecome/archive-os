@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import bodyParser from 'body-parser';
-import { knex } from './db.js';
+import { knex, initDb } from './db.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import http from 'http';
@@ -46,10 +46,6 @@ app.use(bodyParser.json({ limit: '50mb' }));
 app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
 
 // Database Check
-knex.raw("SELECT 1").then(() => {
-    console.log("Database connected.");
-}).catch(e => console.error("DB Connection Failed:", e));
-
 // --- ROUTES ---
 // import systemRoutes moved to top
 
@@ -117,6 +113,8 @@ app.use((err, req, res, next) => {
 
 // Start Server
 // Ensure DB migration or init logic is handled if needed
+await initDb();
+
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running on http://0.0.0.0:${PORT}`);
     console.log(`Uploads Directory: ${UPLOADS_DIR}`);

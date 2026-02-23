@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { User, Lock, Save, AlertCircle, CheckCircle2, ChevronRight } from 'lucide-react';
 import { Card } from '../components/ui/Card';
+import { API_URL } from '../services/database';
 
 export default function Profile({ currentUser, onUpdateProfile }) {
     const [name, setName] = useState(currentUser?.name || '');
@@ -22,7 +23,7 @@ export default function Profile({ currentUser, onUpdateProfile }) {
         }
 
         try {
-            const res = await fetch(`http://${window.location.hostname}:5000/api/users/profile/${currentUser.id}`, {
+            const res = await fetch(`${API_URL}/users/profile/${currentUser.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -32,16 +33,21 @@ export default function Profile({ currentUser, onUpdateProfile }) {
                 })
             });
 
-            const data = await res.json();
-
-            if (data.success) {
-                setMessage({ type: 'success', text: 'Profil berhasil diperbarui' });
-                onUpdateProfile(data.user);
-                setCurrentPassword('');
-                setNewPassword('');
-                setConfirmPassword('');
+            if (res.ok) {
+                const data = await res.json();
+                if (data.success) {
+                    setMessage({ type: 'success', text: 'Profil berhasil diperbarui' });
+                    onUpdateProfile(data.user);
+                    setCurrentPassword('');
+                    setNewPassword('');
+                    setConfirmPassword('');
+                } else {
+                    setMessage({ type: 'error', text: data.error || 'Gagal memperbarui profil' });
+                }
             } else {
-                setMessage({ type: 'error', text: data.error || 'Gagal memperbarui profil' });
+                const errorText = await res.text();
+                const isHtml = errorText.includes('<!DOCTYPE');
+                setMessage({ type: 'error', text: `Gagal (Status ${res.status}): ${isHtml ? 'API Profile tidak ditemukan.' : errorText}` });
             }
         } catch (error) {
             setMessage({ type: 'error', text: 'Terjadi kesalahan sistem' });

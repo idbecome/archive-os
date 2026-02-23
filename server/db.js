@@ -1,6 +1,7 @@
 import knexConfig from '../knexfile.js';
 import knexLib from 'knex';
 import dotenv from 'dotenv';
+import bcrypt from 'bcrypt';
 dotenv.config();
 
 const knex = knexLib(knexConfig.development);
@@ -51,11 +52,21 @@ async function initDb() {
         const userCount = await knex('users').count('id as count').first();
         if (userCount.count === 0) {
             console.log('Seeding initial data...');
-            const DEFAULT_HASHED_PASSWORD = '$2b$10$TfDni0li9j0Iw3EenMzvv.Gx671emuXkgs5L80mFzI0vqj77ungqO';
+
+            const adminPass = process.env.INITIAL_ADMIN_PASSWORD || 'admin123';
+            const staffPass = process.env.INITIAL_STAFF_PASSWORD || 'staff123';
+            const viewerPass = process.env.INITIAL_VIEWER_PASSWORD || 'viewer123';
+
+            const [adminHash, staffHash, viewerHash] = await Promise.all([
+                bcrypt.hash(adminPass, 10),
+                bcrypt.hash(staffPass, 10),
+                bcrypt.hash(viewerPass, 10)
+            ]);
+
             await knex('users').insert([
-                { username: 'admin', password: DEFAULT_HASHED_PASSWORD, name: 'Administrator', role: 'admin', department: 'IT' },
-                { username: 'staff', password: DEFAULT_HASHED_PASSWORD, name: 'Staff Gudang', role: 'staff', department: 'Warehouse' },
-                { username: 'viewer', password: DEFAULT_HASHED_PASSWORD, name: 'Tamu', role: 'viewer', department: 'General' }
+                { username: 'admin', password: adminHash, name: 'Administrator', role: 'admin', department: 'IT' },
+                { username: 'staff', password: staffHash, name: 'Staff Gudang', role: 'staff', department: 'Warehouse' },
+                { username: 'viewer', password: viewerHash, name: 'Tamu', role: 'viewer', department: 'General' }
             ]);
 
             await knex('departments').insert([
@@ -108,16 +119,5 @@ async function initDb() {
 // Initialize
 // Only run migrations/seeding if this is NOT the worker process
 // We detect worker by checking if the process entry point includes 'worker.js'
-const isWorker = process.argv[1] && process.argv[1].includes('worker.js');
-const isUtilityScript = process.argv[1] && (process.argv[1].includes('update_') || process.argv[1].includes('add_'));
-
-if (!isWorker && !isUtilityScript) {
-    initDb().then(() => {
-        console.log('Database system ready (Main Process).');
-    });
-} else {
-    console.log(`Database connection initialized for ${isWorker ? 'Worker' : 'Script'} (Skipping Migration).`);
-}
-
 export default db;
-export { knex };
+export { knex, initDb };

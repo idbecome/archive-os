@@ -55,18 +55,24 @@ export default function Dashboard({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ query: semanticQuery })
             });
-            const data = await res.json();
 
-            if (data.results) {
-                // Map API results to Dashboard Card format
-                const mapped = data.results.map(item => ({
-                    ...item,
-                    title: item.name,
-                    uploadDate: item.date,
-                    size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
-                    folderName: item.matchType === 'invoice' ? 'Finance' : 'General',
-                }));
-                setSearchResults(mapped);
+            if (res.ok) {
+                const data = await res.json();
+                if (data.results) {
+                    const mapped = data.results.map(item => ({
+                        ...item,
+                        title: item.name,
+                        uploadDate: item.date,
+                        size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
+                        folderName: item.matchType === 'invoice' ? 'Finance' : 'General',
+                    }));
+                    setSearchResults(mapped);
+                }
+            } else {
+                const errorText = await res.text();
+                const isHtml = errorText.includes('<!DOCTYPE');
+                console.warn(`Search failed (Status ${res.status}): ${isHtml ? 'Endpoint API /search/ai tidak ditemukan.' : errorText}`);
+                setSearchResults([]);
             }
         } catch (err) {
             console.error("Search failed:", err);
@@ -401,21 +407,6 @@ export default function Dashboard({
                     subtext="Laporan Tersimpan"
                     icon={FileBarChart}
                     colorClass="bg-purple-100 text-purple-600 dark:bg-purple-900/20 dark:text-purple-400"
-                />
-            </div>
-
-            {/* WAREHOUSE MAP VISUALIZATION */}
-            <div className="grid grid-cols-1 gap-6">
-                <WarehouseMap
-                    inventory={inventory}
-                    onSelectInfo={(item) => {
-                        // Optional: Handle click on box map
-                        if (item.status !== 'EMPTY') {
-                            // Maybe navigate to inventory tab with filter?
-                            // For now just console log or toast
-                            console.log("Selected:", item);
-                        }
-                    }}
                 />
             </div>
 

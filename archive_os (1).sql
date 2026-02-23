@@ -43,7 +43,9 @@ DELIMITER ;
 
 CREATE TABLE `departments` (
   `id` int(11) NOT NULL,
-  `name` varchar(100) DEFAULT NULL
+  `name` varchar(100) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -82,7 +84,9 @@ CREATE TABLE `documents` (
   `department` varchar(100) DEFAULT NULL,
   `owner` varchar(100) DEFAULT NULL,
   `auditId` varchar(255) DEFAULT NULL,
-  `stepIndex` int(11) DEFAULT NULL
+  `stepIndex` int(11) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -112,7 +116,9 @@ CREATE TABLE `external_items` (
   `sentDate` datetime DEFAULT NULL,
   `sender` varchar(100) DEFAULT NULL,
   `boxData` text DEFAULT NULL,
-  `history` text DEFAULT NULL
+  `history` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -137,7 +143,8 @@ CREATE TABLE `folders` (
   `allowedDepts` text DEFAULT NULL,
   `allowedUsers` text DEFAULT NULL,
   `owner` varchar(100) DEFAULT NULL,
-  `createdAt` datetime DEFAULT current_timestamp()
+  `createdAt` datetime DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -156,12 +163,15 @@ INSERT INTO `folders` (`id`, `parentId`, `name`, `privacy`, `allowedDepts`, `all
 
 CREATE TABLE `inventory` (
   `id` int(11) NOT NULL,
+  `box_id` varchar(100) DEFAULT NULL,
   `status` varchar(50) DEFAULT 'EMPTY',
   `box_data` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`box_data`)),
   `history` longtext CHARACTER SET utf8mb4 COLLATE utf8mb4_bin DEFAULT NULL CHECK (json_valid(`history`)),
   `last_updated` datetime DEFAULT NULL,
   `lastUpdated` datetime DEFAULT NULL,
-  `boxData` text DEFAULT NULL
+  `boxData` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -281,7 +291,8 @@ CREATE TABLE `logs` (
   `timestamp` datetime DEFAULT current_timestamp(),
   `user` varchar(100) DEFAULT NULL,
   `action` varchar(100) DEFAULT NULL,
-  `details` text DEFAULT NULL
+  `details` text DEFAULT NULL,
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -549,7 +560,9 @@ INSERT INTO `logs` (`id`, `timestamp`, `user`, `action`, `details`) VALUES
 CREATE TABLE `roles` (
   `id` varchar(50) NOT NULL,
   `label` varchar(255) DEFAULT NULL,
-  `access` text DEFAULT NULL
+  `access` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -579,6 +592,7 @@ CREATE TABLE IF NOT EXISTS `document_approvals` (
   `status` varchar(50) DEFAULT 'Pending',
   `current_step_index` int(11) DEFAULT 0,
   `created_at` datetime DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -591,6 +605,8 @@ CREATE TABLE IF NOT EXISTS `approval_steps` (
   `status` varchar(50) DEFAULT 'Pending',
   `action_date` datetime DEFAULT NULL,
   `note` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp(),
   PRIMARY KEY (`id`),
   FOREIGN KEY (`approval_id`) REFERENCES `document_approvals`(`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -608,7 +624,9 @@ CREATE TABLE `tax_audits` (
   `currentStep` int(11) DEFAULT NULL,
   `steps` text DEFAULT NULL,
   `letterNumber` varchar(100) DEFAULT NULL,
-  `startDate` datetime DEFAULT NULL
+  `startDate` datetime DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -635,7 +653,9 @@ CREATE TABLE `tax_summaries` (
   `ppnOut` text DEFAULT NULL,
   `extraPph` text DEFAULT NULL,
   `extraPpnIn` text DEFAULT NULL,
-  `extraPpnOut` text DEFAULT NULL
+  `extraPpnOut` text DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -661,7 +681,9 @@ CREATE TABLE `users` (
   `password` varchar(255) DEFAULT NULL,
   `name` varchar(255) DEFAULT NULL,
   `role` varchar(50) DEFAULT NULL,
-  `department` varchar(100) DEFAULT NULL
+  `department` varchar(100) DEFAULT NULL,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp(),
+  `updated_at` timestamp NOT NULL DEFAULT current_timestamp() ON UPDATE current_timestamp()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 --
@@ -706,7 +728,8 @@ ALTER TABLE `folders`
 -- Indexes for table `inventory`
 --
 ALTER TABLE `inventory`
-  ADD PRIMARY KEY (`id`);
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `box_id` (`box_id`);
 
 --
 -- Indexes for table `logs`

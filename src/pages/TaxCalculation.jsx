@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calculator, User, FileText, Building2, CreditCard, Database, Save, Trash2, Search, Upload, Download, Sparkles, TrendingUp, AlertCircle, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Calculator, Sparkles, TrendingUp, AlertCircle, FileText, Search, Database, User, Download, Upload, Save } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
 import { API_URL } from '../services/database';
+import TaxObjectForm from '../components/tax/TaxObjectForm';
+import TaxWpDatabase from '../components/tax/TaxWpDatabase';
 
 export default function TaxCalculation({ onCopy, hasPermission }) {
     const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database'
-    const [savedData, setSavedData] = useState([]);
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [calcData, setCalcData] = useState({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
@@ -16,6 +18,8 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const [showObjectDropdown, setShowObjectDropdown] = useState(false);
     const [masterData, setMasterData] = useState([]);
     const [isImporting, setIsImporting] = useState(false);
+    const [savedData, setSavedData] = useState([]); // Moved here for TaxWpDatabase
+
     const masterFileInputRef = useRef(null);
 
     const canEdit = hasPermission ? hasPermission('tax-calculation', 'edit') : true;
@@ -65,7 +69,11 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     const fetchDatabase = async () => {
         try {
-            const res = await fetch(`${API_URL}/tax/wp`);
+            const res = await fetch(`${API_URL}/tax/wp`); // Use API_URL directly
+            if (!res.ok) {
+                console.warn(`Fetch WP failed: ${res.status}`);
+                return;
+            }
             const data = await res.json();
             if (Array.isArray(data)) {
                 setSavedData(data);
@@ -82,6 +90,10 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const fetchMasterData = async () => {
         try {
             const res = await fetch(`${API_URL}/tax/objects`);
+            if (!res.ok) {
+                console.warn(`Fetch Master failed: ${res.status}`);
+                return;
+            }
             const data = await res.json();
             if (Array.isArray(data)) {
                 setMasterData(data);
@@ -97,7 +109,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     useEffect(() => {
         if (activeTab === 'database') {
-            fetchDatabase();
+            fetchDatabase(); // Call fetchDatabase here
         }
         // Fetch master data once on mount or when switching to object/database
         if (activeTab === 'object' || activeTab === 'database') {
@@ -109,16 +121,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     useEffect(() => {
         setCurrentPage(1);
     }, [searchTerm, activeTab]);
-
     // --- DATABASE WP HANDLERS ---
-    const handleDownloadDatabaseTemplate = () => {
-        window.open(`${API_URL}/tax/wp/template`, '_blank');
-    };
-
-    const handleExportDatabase = () => {
-        window.open(`${API_URL}/tax/wp/export`, '_blank');
-    };
-
     const handleImportDatabase = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -148,11 +151,6 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         }
     };
 
-    // --- MASTER DATA HANDLERS (Objek Pajak) ---
-    const handleDownloadMasterTemplate = () => {
-        window.open(`${API_URL}/tax/objects/template`, '_blank');
-    };
-
     const handleImportMaster = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
@@ -171,15 +169,26 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                 alert(result.message);
                 fetchMasterData();
             } else {
-                alert('Gagal import: ' + result.error);
+                alert('Gagal import master: ' + result.error);
             }
         } catch (error) {
-            console.error("Import error:", error);
-            alert('Terjadi kesalahan saat upload.');
+            console.error("Import master error:", error);
+            alert('Terjadi kesalahan saat upload master.');
         } finally {
             setIsImporting(false);
             e.target.value = null; // Reset input
         }
+    };
+
+    const handleDownloadMasterTemplate = () => {
+        const ws = XLSX.utils.json_to_sheet([
+            { "tax_object_code": "21-100-01", "tax_object_name": "Gaji, Upah, Honorarium, Tunjangan, dan Pembayaran Lain Sehubungan dengan Pekerjaan atau Jabatan", "tax_type": "21", "rate": 0.05, "is_pph21_bukan_pegawai": 1, "use_ppn": 0, "markup_mode": "none" },
+            { "tax_object_code": "23-100-01", "tax_object_name": "Sewa dan Penghasilan Lain Sehubungan dengan Penggunaan Harta", "tax_type": "23", "rate": 0.02, "is_pph21_bukan_pegawai": 0, "use_ppn": 1, "markup_mode": "none" },
+            { "tax_object_code": "4(2)-100-01", "tax_object_name": "Sewa Tanah dan/atau Bangunan", "tax_type": "4(2)", "rate": 0.10, "is_pph21_bukan_pegawai": 0, "use_ppn": 1, "markup_mode": "none" }
+        ]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Master Objek Pajak");
+        XLSX.writeFile(wb, "template_master_objek_pajak.xlsx");
     };
 
     const handleSave = async () => {
@@ -196,7 +205,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         setIsLoading(true);
         try {
             const payload = {
-                ...formData,
+                ...formData, // formData already has markupMode, isPph21BukanPegawai, usePpn
                 dpp: calcData.dpp,
                 rate: calcData.rate,
                 pph: calcData.pph,
@@ -223,6 +232,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             });
 
             if (res.ok) {
+                const result = await res.json();
                 alert(`Data berhasil ${editingId ? 'diperbarui' : 'disimpan'} ke Database WP!`);
                 setEditingId(null);
                 setFormData({
@@ -233,13 +243,16 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                     taxType: '23',
                     taxObjectCode: '',
                     taxObjectName: '',
+                    markupMode: 'none',
                     isPph21BukanPegawai: false,
                     usePpn: true
                 });
                 setCalcData({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
                 setActiveTab('database');
             } else {
-                alert('Gagal menyimpan data.');
+                const errorText = await res.text();
+                const isHtml = errorText.includes('<!DOCTYPE');
+                alert(`Gagal menyimpan (Status ${res.status}): ${isHtml ? 'API /tax/wp tidak ditemukan.' : errorText}`);
             }
         } catch (error) {
             console.error("Error saving data:", error);
@@ -274,7 +287,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             isPph21BukanPegawai: !!item.is_pph21_bukan_pegawai,
             usePpn: item.use_ppn !== undefined ? !!item.use_ppn : true,
             totalPayable: item.total_payable || item.totalPayable ||
-                Math.ceil((item.dpp - (item.discount || 0)) +
+                Math.ceil((item.dpp - (item.discount || 0)) + // Recalculate totalPayable if not present
                     (item.ppn || (!!item.use_ppn ? (((11 / 12) * (item.dpp - (item.discount || 0))) * 0.12) : 0)) -
                     item.pph)
         });
@@ -282,7 +295,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     };
 
     const handleDeleteAll = async () => {
-        if (!window.confirm('PERINGATAN: Anda akan menghapus SELURUH data di Database WP. Tindakan ini tidak dapat dibatalkan. Lanjutkan?')) return;
+        if (!window.confirm('PERINGATAN: Anda akan menghapus SELURUH data di Database WP. Tindakan ini tidak dapat dibatalkan. Lanjutkan?')) return; // Use window.confirm
         if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
 
         setIsLoading(true);
@@ -294,7 +307,9 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                 alert('Seluruh data Database WP berhasil dihapus.');
                 fetchDatabase();
             } else {
-                alert('Gagal menghapus data.');
+                const errorText = await res.text();
+                const isHtml = errorText.includes('<!DOCTYPE');
+                alert(`Gagal menghapus (Status ${res.status}): ${isHtml ? 'API /tax/wp-all tidak ditemukan.' : errorText}`);
             }
         } catch (error) {
             console.error("Delete all error:", error);
@@ -305,11 +320,17 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     };
 
     const handleDelete = async (id) => {
-        if (!window.confirm('Yakin ingin menghapus data ini?')) return;
+        if (!window.confirm('Yakin ingin menghapus data ini?')) return; // Use window.confirm
         if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
         try {
-            await fetch(`${API_URL}/tax/wp/${id}`, { method: 'DELETE' });
-            fetchDatabase();
+            const res = await fetch(`${API_URL}/tax/wp/${id}`, { method: 'DELETE' });
+            if (res.ok) {
+                fetchDatabase();
+            } else {
+                const errorText = await res.text();
+                const isHtml = errorText.includes('<!DOCTYPE');
+                alert(`Gagal menghapus (Status ${res.status}): ${isHtml ? 'API tidak ditemukan.' : errorText}`);
+            }
         } catch (error) {
             console.error("Error deleting data:", error);
         }
@@ -329,13 +350,6 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         (item.identity_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (item.tax_object_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
         (item.tax_object_code || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    // Logika Paginasi
-    const totalPages = Math.ceil(filteredData.length / rowsPerPage);
-    const paginatedData = filteredData.slice(
-        (currentPage - 1) * rowsPerPage,
-        currentPage * rowsPerPage
     );
 
     const getSmartInsight = () => {
@@ -846,236 +860,24 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             )}
             {/* DATABASE WP TAB */}
             {activeTab === 'database' && (
-                <Card>
-                    <div className="flex flex-col md:flex-row justify-between items-center mb-6 gap-4">
-                        <div className="flex items-center gap-4">
-                            <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                                Database Wajib Pajak
-                            </h3>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={handleDownloadDatabaseTemplate}
-                                    className="px-3 py-1.5 text-xs font-medium bg-green-50 text-green-600 hover:bg-green-100 rounded-lg flex items-center gap-1 transition-colors border border-green-200"
-                                    title="Download Template Excel"
-                                >
-                                    <Download size={14} /> Template
-                                </button>
-                                <button
-                                    onClick={handleExportDatabase}
-                                    className="px-3 py-1.5 text-xs font-medium bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg flex items-center gap-1 transition-colors shadow-sm"
-                                    title="Export Semua Database ke Excel"
-                                >
-                                    <FileText size={14} /> Export Excel
-                                </button>
-                                {canCreate && <div className="relative">
-                                    <input
-                                        type="file"
-                                        accept=".xlsx, .xls"
-                                        onChange={handleImportDatabase}
-                                        className="absolute inset-0 opacity-0 cursor-pointer"
-                                        disabled={isImporting}
-                                    />
-                                    <button
-                                        className={`px-3 py-1.5 text-xs font-medium bg-blue-50 text-blue-600 hover:bg-blue-100 rounded-lg flex items-center gap-1 transition-colors border border-blue-200 ${isImporting ? 'opacity-50 cursor-wait' : ''}`}
-                                        title="Import Database WP dari Excel"
-                                    >
-                                        <Upload size={14} /> {isImporting ? 'Uploading...' : 'Import Excel'}
-                                    </button>
-                                </div>}
-                                {canDelete && <button
-                                    onClick={handleDeleteAll}
-                                    disabled={isLoading || savedData.length === 0}
-                                    className="px-3 py-1.5 text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 rounded-lg flex items-center gap-1 transition-colors border border-red-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title="Hapus Seluruh Database WP"
-                                >
-                                    <Trash2 size={14} /> Hapus Semua
-                                </button>
-                                }
-                            </div>
-                        </div>
-                        <div className="relative w-full md:w-64">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} />
-                            <input
-                                type="text"
-                                placeholder="Cari Nama / Identitas..."
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                className="w-full pl-9 pr-4 py-2 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                            />
-                        </div>
-                    </div>
-
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-gray-50 dark:bg-slate-800 text-gray-600 dark:text-gray-300 font-medium border-b dark:border-slate-700">
-                                <tr>
-                                    <th className="px-4 py-3">Nama Wajib Pajak</th>
-                                    <th className="px-4 py-3 whitespace-nowrap">Jenis Pajak</th>
-                                    <th className="px-4 py-3 text-right">Tarif</th>
-                                    <th className="px-4 py-3">NPWP/NIK</th>
-                                    <th className="px-4 py-3">Kode Objek Pajak</th>
-                                    <th className="px-4 py-3">Email</th>
-                                    <th className="px-4 py-3 text-center">Aksi</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                                {filteredData.length === 0 ? (
-                                    <tr>
-                                        <td colSpan="7" className="px-4 py-8 text-center text-gray-500">
-                                            Tidak ada data ditemukan.
-                                        </td>
-                                    </tr>
-                                ) : (
-                                    paginatedData.map((item, idx) => (
-                                        <tr key={item.id}
-                                            style={{ animationDelay: `${idx * 50}ms` }}
-                                            className="hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors animate-in zoom-in-95 fade-in fill-mode-both duration-500"
-                                        >
-                                            <td className="px-4 py-3 font-medium text-gray-900 dark:text-gray-200">
-                                                {item.name || '-'}
-                                            </td>
-                                            <td className="px-4 py-3 whitespace-nowrap">
-                                                <span className="px-2 py-1 rounded bg-indigo-50 text-indigo-600 text-xs font-medium">
-                                                    PPh {item.tax_type}
-                                                </span>
-                                            </td>
-                                            <td className="px-4 py-3 text-right font-medium text-gray-700 dark:text-gray-300">
-                                                {item.rate}%
-                                            </td>
-                                            <td className="px-4 py-3 text-gray-500">
-                                                <div className="flex items-center gap-2">
-                                                    <span>{item.id_type}: {item.identity_number}</span>
-                                                    {item.identity_number && (
-                                                        <button
-                                                            onClick={() => onCopy(item.identity_number, "NPWP/NIK")}
-                                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all shrink-0"
-                                                            title="Salin NPWP/NIK"
-                                                        >
-                                                            <Copy size={12} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-xs text-gray-500 font-mono">
-                                                <div className="flex items-center gap-2">
-                                                    <span>{item.tax_object_code || '-'}</span>
-                                                    {item.tax_object_code && (
-                                                        <button
-                                                            onClick={() => onCopy(item.tax_object_code, "Kode Objek Pajak")}
-                                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all shrink-0"
-                                                            title="Salin Kode Objek"
-                                                        >
-                                                            <Copy size={12} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-xs text-indigo-500 font-medium">
-                                                <div className="flex items-center gap-2">
-                                                    <span className="truncate max-w-[120px]" title={item.email}>
-                                                        {item.email || '-'}
-                                                    </span>
-                                                    {item.email && (
-                                                        <button
-                                                            onClick={() => onCopy(item.email, "Email")}
-                                                            className="p-1 text-slate-400 hover:text-indigo-600 transition-all shrink-0"
-                                                            title="Salin Email"
-                                                        >
-                                                            <Copy size={12} />
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-4 py-3 text-center">
-                                                <div className="flex items-center justify-center gap-2">
-                                                    {canEdit && <button
-                                                        onClick={() => handleEdit(item)}
-                                                        className="px-3 py-1.5 text-xs font-medium bg-indigo-50 text-indigo-600 hover:bg-indigo-100 rounded-lg transition-colors"
-                                                    >
-                                                        Edit
-                                                    </button>}
-                                                    {canDelete && <button
-                                                        onClick={() => handleDelete(item.id)}
-                                                        className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                                                        title="Hapus Data"
-                                                    >
-                                                        <Trash2 size={16} />
-                                                    </button>}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    ))
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {/* Modern Pagination UI */}
-                    {totalPages > 1 && (
-                        <div className="px-6 py-4 flex items-center justify-between border-t border-gray-100 dark:border-slate-800 bg-gray-50/30 dark:bg-slate-900/30 rounded-b-xl">
-                            <div className="flex-1 flex justify-between sm:hidden">
-                                <button
-                                    onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                    disabled={currentPage === 1}
-                                    className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-                                >
-                                    Previous
-                                </button>
-                                <button
-                                    onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                                    disabled={currentPage === totalPages}
-                                    className="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50"
-                                >
-                                    Next
-                                </button>
-                            </div>
-                            <div className="hidden sm:flex-1 sm:flex sm:items-center sm:justify-between">
-                                <div>
-                                    <p className="text-sm text-gray-500 dark:text-slate-400">
-                                        Showing <span className="font-bold text-indigo-600">{(currentPage - 1) * rowsPerPage + 1}</span> to <span className="font-bold text-indigo-600">{Math.min(currentPage * rowsPerPage, filteredData.length)}</span> of <span className="font-bold text-indigo-600">{filteredData.length}</span> entries
-                                    </p>
-                                </div>
-                                <div>
-                                    <nav className="relative z-0 inline-flex rounded-xl shadow-sm -space-x-px bg-white dark:bg-slate-800 p-1 border border-gray-200 dark:border-slate-700" aria-label="Pagination">
-                                        <button
-                                            onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                                            disabled={currentPage === 1}
-                                            className="relative inline-flex items-center px-2 py-2 rounded-lg text-gray-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-30 transition-colors"
-                                        >
-                                            <ChevronLeft size={20} />
-                                        </button>
-
-                                        {[...Array(totalPages)].map((_, i) => {
-                                            const page = i + 1;
-                                            // Tampilkan halaman pertama, terakhir, dan sekitar halaman aktif
-                                            if (totalPages > 7 && page !== 1 && page !== totalPages && (page < currentPage - 1 || page > currentPage + 1)) {
-                                                if (page === currentPage - 2 || page === currentPage + 2) return <span key={page} className="px-2 py-2 text-gray-400">...</span>;
-                                                return null;
-                                            }
-                                            return (
-                                                <button
-                                                    key={page}
-                                                    onClick={() => setCurrentPage(page)}
-                                                    className={`relative inline-flex items-center px-4 py-2 rounded-lg text-sm font-bold transition-all ${currentPage === page ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30' : 'text-gray-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'}`}
-                                                >
-                                                    {page}
-                                                </button>
-                                            );
-                                        })}
-
-                                        <button
-                                            onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                                            disabled={currentPage === totalPages}
-                                            className="relative inline-flex items-center px-2 py-2 rounded-lg text-gray-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-30 transition-colors"
-                                        >
-                                            <ChevronRight size={20} />
-                                        </button>
-                                    </nav>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </Card>
+                <TaxWpDatabase
+                    savedData={savedData}
+                    searchTerm={searchTerm}
+                    setSearchTerm={setSearchTerm}
+                    currentPage={currentPage}
+                    setCurrentPage={setCurrentPage}
+                    rowsPerPage={rowsPerPage}
+                    handleEdit={handleEdit}
+                    handleDelete={handleDelete}
+                    handleDeleteAll={handleDeleteAll}
+                    handleImportDatabase={handleImportDatabase}
+                    onCopy={onCopy}
+                    canCreate={canCreate}
+                    canEdit={canEdit}
+                    canDelete={canDelete}
+                    isLoading={isLoading}
+                    isImporting={isImporting}
+                />
             )}
         </div>
     );

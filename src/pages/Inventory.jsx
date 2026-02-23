@@ -1,12 +1,14 @@
 import React from 'react';
-import { Grid3x3, Package, Clock, AlertCircle, Download, FileSpreadsheet, Plus, Search, FileText, Truck, Sparkles, TrendingUp, ShieldAlert } from 'lucide-react';
+import { Grid3x3, Package, Clock, AlertCircle, Download, FileSpreadsheet, Search, FileText, Truck, Sparkles, TrendingUp, ShieldAlert, RefreshCw } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
+import InventoryGrid from '../components/inventory/InventoryGrid';
+import ExternalInventoryTable from '../components/inventory/ExternalInventoryTable';
 
 export default function Inventory({
     inventory, stats, TOTAL_SLOTS, getStatusStyle,
     handleSlotClick, handleExcelImport, downloadTemplate, excelInputRef,
     handleExportInventory, inventorySearchQuery, setInventorySearchQuery,
-    hasPermission, activeInvTab, setActiveInvTab, externalItems,
+    hasPermission, activeInvTab, setActiveInvTab, externalItems, isProcessing,
     onRestoreExternal, onViewExternal, inventoryIssues = []
 }) {
 
@@ -296,149 +298,51 @@ export default function Inventory({
 
                 {/* GRID */}
                 {activeInvTab === 'internal' && (
-                    <div className="grid grid-cols-5 md:grid-cols-10 gap-3 animate-in fade-in slide-in-from-bottom-4 duration-700">
-                        {Array.from({ length: TOTAL_SLOTS }).map((_, idx) => {
-                            const slotId = idx + 1;
-                            const slot = inventory.find(s => Number(s.id) === slotId) || { id: slotId, status: 'EMPTY' };
-                            const status = (slot.status || 'EMPTY').toUpperCase();
-                            const statusStyle = getStatusStyle(status);
-                            const matched = isMatch(slot);
-
-                            return (
-                                <button
-                                    key={slotId}
-                                    onClick={() => handleSlotClick(slot)}
-                                    disabled={!matched && inventorySearchQuery}
-                                    style={{ animationDelay: `${idx * 10}ms` }}
-                                    className={`aspect-square rounded-2xl flex flex-col items-center justify-center relative group transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both 
-                                    ${status === 'EMPTY'
-                                            ? 'bg-white/30 dark:bg-slate-800/20 backdrop-blur-sm border-2 border-dashed border-slate-300/60 dark:border-slate-600/60 hover:border-indigo-400 hover:bg-white/60 dark:hover:bg-slate-800/40 hover:shadow-[0_0_20px_rgba(99,102,241,0.15)] hover:scale-110 z-0 hover:z-10'
-                                            : `border ${statusStyle.color} shadow-lg hover:shadow-2xl hover:scale-110 hover:-rotate-1 z-0 hover:z-10 ring-1 ring-white/10 opacity-100`
-                                        }
-                                    ${!matched && inventorySearchQuery ? 'opacity-20 grayscale cursor-not-allowed scale-90' : 'opacity-100'}
-                                `}
-                                >
-                                    <span className="text-[10px] font-mono font-bold mb-1 text-slate-400/70 absolute top-1.5 right-2 z-10 mix-blend-multiply dark:mix-blend-screen">#{String(slotId).padStart(3, '0')}</span>
-
-                                    {status !== 'EMPTY' ? (
-                                        <div className="flex flex-col items-center gap-1.5 w-full px-1 relative z-10 -mt-1 transition-transform duration-500 group-hover:scale-105">
-                                            <div className="p-1.5 rounded-full bg-white/40 dark:bg-black/20 backdrop-blur-md shadow-sm group-hover:shadow-indigo-500/50 transition-all">
-                                                <Package size={18} className="text-current opacity-80 group-hover:scale-125 transition-transform duration-500" />
-                                            </div>
-                                            {slot.boxData?.id && (
-                                                <p className="text-[9px] md:text-[10px] font-black truncate w-full text-center bg-white/60 dark:bg-black/40 backdrop-blur-md rounded-md px-1.5 py-0.5 shadow-sm text-current group-hover:bg-white dark:group-hover:bg-black transition-colors">
-                                                    {slot.boxData.id}
-                                                </p>
-                                            )}
-                                            {/* Matches & Snippets */}
-                                            {isMatch(slot) && inventorySearchQuery && (
-                                                <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-yellow-300 text-yellow-900 text-[9px] px-1.5 rounded-full font-bold shadow-lg animate-bounce pointer-events-none whitespace-nowrap z-20">MATCH</div>
-                                            )}
-                                        </div>
-                                    ) : (
-                                        <Plus size={24} className="text-slate-300 dark:text-slate-600 group-hover:text-indigo-400 transition-colors duration-300" />
-                                    )}
-                                </button>
-                            )
-                        })}
-                    </div>
+                    <InventoryGrid 
+                        TOTAL_SLOTS={TOTAL_SLOTS} 
+                        inventory={inventory} 
+                        handleSlotClick={handleSlotClick} 
+                        getStatusStyle={getStatusStyle} 
+                        isMatch={isMatch} 
+                        inventorySearchQuery={inventorySearchQuery} 
+                    />
                 )}
 
                 {/* EXTERNAL / INDOARSIP TAB CONTENT */}
                 {activeInvTab === 'external' && (
-                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                        <div className="bg-white dark:bg-slate-900 rounded-xl border border-gray-200 dark:border-slate-800 overflow-hidden">
-                            <table className="w-full text-sm text-left border-collapse">
-                                <thead className="bg-white/60 dark:bg-slate-800/60 text-slate-600 dark:text-slate-300 backdrop-blur-xl border-b border-white/30 dark:border-white/5">
-                                    <tr>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs">Box ID</th>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs">Tujuan</th>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs">Tanggal Kirim</th>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs">Pengirim</th>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs">Isi</th>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs">Status</th>
-                                        <th className="px-6 py-5 font-bold uppercase tracking-wider text-xs text-right">Aksi</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {externalItems.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={7} className="px-6 py-8 text-center text-gray-500 dark:text-slate-400">
-                                                Belum ada data barang keluar.
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        externalItems.filter(isMatch).map(item => (
-                                            <tr key={item.id} className="hover:bg-white/40 dark:hover:bg-slate-800/40 transition-colors group border-b border-indigo-50 dark:border-slate-800/50">
-                                                <td className="px-6 py-4 font-bold text-slate-800 dark:text-white flex items-center gap-3">
-                                                    <div className="w-10 h-10 rounded-xl bg-indigo-500/10 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-                                                        <Package size={20} />
-                                                    </div>
-                                                    {item.boxId}
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <span className="px-3 py-1 bg-indigo-100/50 dark:bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 rounded-lg text-xs font-bold border border-indigo-200 dark:border-indigo-500/30 backdrop-blur-sm shadow-sm">{item.destination}</span>
-                                                </td>
-                                                <td className="px-6 py-4 text-slate-500 dark:text-slate-400">
-                                                    <div className="flex items-center gap-2">
-                                                        <Clock size={14} className="text-indigo-400" />
-                                                        {new Date(item.sentDate).toLocaleDateString()}
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300">
-                                                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-slate-200 to-slate-300 dark:from-slate-700 dark:to-slate-800 flex items-center justify-center text-[10px] font-bold shadow-inner">
-                                                            {item.sender?.charAt(0) || '?'}
-                                                        </div>
-                                                        <span className="font-medium text-xs">{item.sender}</span>
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="text-xs text-slate-500 dark:text-slate-400 font-mono">
-                                                        {(item.boxData?.ordners?.length || 0)} Ord • {(item.boxData?.ordners?.reduce((acc, o) => acc + (o.invoices?.length || 0), 0) || 0)} Inv
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4">
-                                                    <div className="flex items-center gap-2 text-emerald-600 dark:text-emerald-400 text-xs font-bold">
-                                                        <div className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_10px_#10b981] animate-pulse"></div>
-                                                        Archived
-                                                    </div>
-                                                </td>
-                                                <td className="px-6 py-4 text-right">
-                                                    <div className="flex gap-2 justify-end transition-opacity">
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); onViewExternal(item); }}
-                                                            className="group/btn relative p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-indigo-500/50 hover:shadow-lg hover:shadow-indigo-500/10 transition-all duration-300"
-                                                            title="Lihat Detail"
-                                                        >
-                                                            <div className="absolute inset-0 bg-indigo-500/5 rounded-xl opacity-0 group-hover/btn:opacity-100 transition-opacity duration-300"></div>
-                                                            <FileText size={18} className="text-slate-400 group-hover/btn:text-indigo-600 transition-colors duration-300 relative z-10" />
-                                                        </button>
-                                                        {hasPermission('inventory', 'edit') && (
-                                                            <button
-                                                                onClick={(e) => { e.stopPropagation(); onRestoreExternal(item); }}
-                                                                className="group/btn relative p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl hover:border-emerald-500/50 hover:shadow-lg hover:shadow-emerald-500/10 transition-all duration-300"
-                                                                title="Restore ke Gudang"
-                                                            >
-                                                                <div className="absolute inset-0 bg-emerald-500/5 rounded-xl opacity-0 group-hover/btn:opacity-100 transition-opacity duration-300"></div>
-                                                                <Truck size={18} className="text-slate-400 group-hover/btn:text-emerald-600 transition-colors duration-300 relative z-10 transform rotate-180" />
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                </td>
-                                            </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                    <ExternalInventoryTable 
+                        externalItems={externalItems} 
+                        isMatch={isMatch} 
+                        onViewExternal={onViewExternal} 
+                        onRestoreExternal={onRestoreExternal} 
+                        hasPermission={hasPermission} 
+                    />
                 )}
             </div>
 
             {activeInvTab === 'internal' && inventory.filter(isMatch).length === 0 && (
                 <div className="text-center py-12 text-gray-500">
                     <p>Tidak ditemukan data yang cocok dengan pencarian "{inventorySearchQuery}".</p>
+                </div>
+            )}
+
+            {/* MOVING/PROCESSING LOADING OVERLAY - Mencegah Data Corrupt saat Pindah Slot */}
+            {isProcessing && (
+                <div className="fixed inset-0 z-[150] bg-black/60 backdrop-blur-md flex items-center justify-center">
+                    <div className="bg-white dark:bg-slate-900 p-10 rounded-[3rem] shadow-2xl flex flex-col items-center animate-in zoom-in-95 max-w-sm text-center border border-white/20">
+                        <div className="relative mb-8">
+                            <div className="w-24 h-24 border-4 border-indigo-100 dark:border-indigo-900/30 rounded-full"></div>
+                            <div className="w-24 h-24 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+                            <Package className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-indigo-600 animate-bounce" size={32} />
+                        </div>
+                        <h3 className="text-2xl font-black text-gray-800 dark:text-white mb-3 uppercase tracking-tight">Memindahkan Box...</h3>
+                        <p className="text-sm text-gray-500 dark:text-slate-400 leading-relaxed font-medium">
+                            Mohon jangan menutup browser atau memutuskan koneksi. Sedang memperbarui koordinat slot di database untuk mencegah data hilang.
+                        </p>
+                        <div className="mt-6 flex items-center gap-2 text-indigo-500 font-bold text-xs uppercase tracking-widest">
+                            <RefreshCw size={14} className="animate-spin" /> Syncing Database...
+                        </div>
+                    </div>
                 </div>
             )}
         </div >

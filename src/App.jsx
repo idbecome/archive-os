@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿﻿﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
@@ -13,6 +13,13 @@ import TaxModals from './components/modals/TaxModals';
 import InventoryModals from './components/modals/InventoryModals';
 import DocumentViewerModal from './components/modals/DocumentViewerModal';
 import WorkflowDesigner from './components/workflow/WorkflowDesigner';
+import UploadModal from './components/modals/UploadModal';
+import OcrQueueModal from './components/modals/OcrQueueModal';
+import InitialLandingPage from './components/layout/InitialLandingPage';
+import WorkflowModal from './components/modals/WorkflowModal';
+import RestoreBoxModal from './components/modals/RestoreBoxModal';
+import ExternalTransferModal from './components/modals/ExternalTransferModal';
+import CopyNotification from './components/ui/CopyNotification';
 
 import { useAuthStore } from './store/useAuthStore';
 import { useAppStore } from './store/useAppStore';
@@ -104,142 +111,6 @@ const API_BASE = API_URL;
 // Permissions logic imported from ./utils/permissions
 
 // --- COMPONENTS ---
-
-const InitialLandingPage = ({ onClose }) => (
-  <motion.div
-    initial={{ opacity: 0 }}
-    animate={{ opacity: 1 }}
-    exit={{ opacity: 0 }}
-    className="fixed inset-0 z-[300] bg-slate-50/80 dark:bg-[#0B1437]/90 backdrop-blur-2xl overflow-y-auto custom-scrollbar p-6 md:p-12"
-  >
-    <div className="max-w-6xl mx-auto">
-      <div className="flex justify-end mb-8">
-        <button
-          onClick={onClose}
-          className="p-3 bg-white dark:bg-slate-800 rounded-2xl shadow-lg text-slate-400 hover:text-red-500 transition-all hover:scale-110"
-        >
-          <X size={24} />
-        </button>
-      </div>
-
-      <div className="text-center mb-16 space-y-6">
-        <motion.div
-          initial={{ scale: 0.5, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 0.5 }}
-          className="inline-flex items-center gap-2 px-6 py-2 bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-full text-sm font-black uppercase tracking-widest mb-4"
-        >
-          <Rocket size={16} className="animate-bounce" />
-          <span>The Future of Knowledge</span>
-        </motion.div>
-        <motion.h1
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.2 }}
-          className="text-4xl md:text-6xl font-black text-[#2B3674] dark:text-white tracking-tight leading-tight"
-        >
-          Sistem Pustaka <br />
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-600 to-purple-600">Terintegrasi</span>
-        </motion.h1>
-        <motion.p
-          initial={{ y: 20, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ delay: 0.3 }}
-          className="text-lg text-slate-500 dark:text-slate-400 max-w-3xl mx-auto leading-relaxed font-medium"
-        >
-          Pusat pengelolaan pengetahuan dan dokumen yang aman, akurat, dan mudah digunakan.
-        </motion.p>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-16">
-        <motion.div
-          initial={{ x: -50, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.4 }}
-          className="p-8 bg-white dark:bg-slate-800 rounded-[3rem] shadow-xl border border-slate-100 dark:border-slate-700 relative overflow-hidden group"
-        >
-          <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-            <AlertCircle size={120} />
-          </div>
-          <div className="w-14 h-14 bg-red-50 dark:bg-red-900/20 text-red-500 rounded-2xl flex items-center justify-center mb-6 shadow-inner">
-            <Target size={28} />
-          </div>
-          <h3 className="text-2xl font-black text-slate-800 dark:text-white mb-4 uppercase tracking-tight">Latar Belakang</h3>
-          <p className="text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-            Dalam era digital yang menuntut kecepatan, ketepatan, dan transparansi, perusahaan membutuhkan sistem pengelolaan informasi yang terpusat. Banyak data penting masih tersebar dan bergantung pada individu, yang berpotensi menimbulkan risiko kesalahan dan hilangnya pengetahuan.
-          </p>
-        </motion.div>
-
-        <motion.div
-          initial={{ x: 50, opacity: 0 }}
-          animate={{ x: 0, opacity: 1 }}
-          transition={{ delay: 0.5 }}
-          className="p-8 bg-gradient-to-br from-indigo-600 to-purple-700 rounded-[3rem] shadow-2xl text-white relative overflow-hidden group"
-        >
-          <div className="absolute bottom-0 left-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
-            <Sparkles size={120} />
-          </div>
-          <div className="w-14 h-14 bg-white/20 backdrop-blur-md text-white rounded-2xl flex items-center justify-center mb-6 shadow-lg">
-            <ShieldCheck size={28} />
-          </div>
-          <h3 className="text-2xl font-black mb-4 uppercase tracking-tight">Visi & Misi</h3>
-          <p className="text-indigo-50 leading-relaxed font-medium">
-            Sistem ini dirancang untuk mengintegrasikan seluruh informasi penting dalam satu platform. Memastikan kontinuitas operasional tetap berjalan meskipun terjadi pergantian personel atau perubahan struktur organisasi.
-          </p>
-        </motion.div>
-      </div>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
-        {[
-          { icon: Calculator, title: "Pajak", desc: "Perhitungan & pemeriksaan pajak terpadu.", color: "bg-blue-50 text-blue-600" },
-          { icon: FileCheck, title: "Approval", desc: "Manajemen dokumen persetujuan digital.", color: "bg-emerald-50 text-emerald-600" },
-          { icon: BookOpen, title: "SOP & Edukasi", desc: "Pusat prosedur kerja & standar operasional.", color: "bg-amber-50 text-amber-600" },
-          { icon: HelpCircle, title: "User Guide", desc: "Panduan lengkap seluruh proses pekerjaan.", color: "bg-purple-50 text-purple-600" },
-          { icon: FolderOpen, title: "Digital Filing", desc: "Manajemen arsip digital yang terstruktur.", color: "bg-indigo-50 text-indigo-600" },
-          { icon: ScanLine, title: "Teknologi OCR", desc: "Ekstraksi teks otomatis dari dokumen fisik.", color: "bg-rose-50 text-rose-600" },
-          { icon: Sparkles, title: "Semantic Search", desc: "Pencarian berbasis AI yang memahami konteks.", color: "bg-cyan-50 text-cyan-600" },
-          { icon: Zap, title: "Efisiensi", desc: "Meningkatkan produktivitas tim secara masif.", color: "bg-orange-50 text-orange-600" }
-        ].map((feature, i) => (
-          <motion.div
-            key={i}
-            initial={{ y: 30, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ delay: 0.6 + (i * 0.05) }}
-            className="p-6 bg-white dark:bg-slate-800 rounded-[2.5rem] border border-slate-100 dark:border-slate-700 shadow-sm hover:shadow-xl transition-all hover:-translate-y-2 group"
-          >
-            <div className={`w-12 h-12 ${feature.color} rounded-2xl flex items-center justify-center mb-4 shadow-inner group-hover:scale-110 transition-transform`}>
-              <feature.icon size={24} />
-            </div>
-            <h4 className="font-black text-slate-800 dark:text-white mb-2 uppercase tracking-tight text-sm">{feature.title}</h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed font-medium">{feature.desc}</p>
-          </motion.div>
-        ))}
-      </div>
-
-      <motion.div
-        initial={{ y: 20, opacity: 0 }}
-        animate={{ y: 0, opacity: 1 }}
-        transition={{ delay: 1.2 }}
-        className="bg-indigo-600 rounded-[3rem] p-10 text-center text-white shadow-2xl shadow-indigo-500/40 relative overflow-hidden"
-      >
-        <div className="absolute top-0 left-0 w-full h-full opacity-10 pointer-events-none">
-          <div className="absolute top-10 left-10 w-32 h-32 bg-white rounded-full blur-3xl"></div>
-          <div className="absolute bottom-10 right-10 w-32 h-32 bg-purple-400 rounded-full blur-3xl"></div>
-        </div>
-        <h3 className="text-3xl font-black mb-4 relative z-10">Siap Memulai Transformasi?</h3>
-        <p className="text-indigo-100 mb-8 max-w-2xl mx-auto font-medium relative z-10">
-          Bangun budaya kerja berbasis pengetahuan yang berkelanjutan dan profesional bersama Sistem Pustaka Terintegrasi.
-        </p>
-        <button
-          onClick={onClose}
-          className="px-12 py-5 bg-white text-indigo-600 rounded-[2rem] font-black uppercase tracking-widest shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-3 mx-auto relative z-10"
-        >
-          Mulai Menjelajah <ArrowRight size={20} />
-        </button>
-      </motion.div>
-    </div>
-  </motion.div>
-);
 
 // Modal imported from ./components/common/Modal
 
@@ -1535,8 +1406,12 @@ export default function App() {
           if (isPdf) {
             setPdfBlobUrl(buffer);
           } else if (type.includes('word') || name.endsWith('.docx')) {
-            const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-            setPreviewHtml(result.value);
+            if (buffer.byteLength > 10 * 1024 * 1024) {
+              setPreviewHtml('<div class="p-10 text-center"><p class="text-slate-500 font-bold">Dokumen Word terlalu besar (>10MB) untuk diproses preview.</p><p class="text-sm text-slate-400 mt-2">Silakan unduh file untuk melihat isi lengkap.</p></div>');
+            } else {
+              const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+              setPreviewHtml(result.value);
+            }
           } else if (type.includes('sheet') || type.includes('excel') || name.endsWith('.xlsx') || name.endsWith('.xls')) {
             const wb = XLSX.read(buffer, { type: 'array' });
             const firstSheet = wb.Sheets[wb.SheetNames[0]];
@@ -2072,8 +1947,12 @@ export default function App() {
         if (buffer && isPdf) {
           setPdfBlobUrl(buffer);
         } else if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
-          const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-          setPreviewHtml(result.value);
+          if (buffer.byteLength > 10 * 1024 * 1024) {
+            setPreviewHtml('<div class="p-10 text-center"><p class="text-slate-500 font-bold">Dokumen Word terlalu besar (>10MB) untuk diproses preview.</p><p class="text-sm text-slate-400 mt-2">Silakan unduh file untuk melihat isi lengkap.</p></div>');
+          } else {
+            const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+            setPreviewHtml(result.value);
+          }
         } else if (buffer && (type?.includes('sheet') || type?.includes('excel') || name?.endsWith('.xlsx') || name?.endsWith('.xls'))) {
           const wb = XLSX.read(buffer, { type: 'array' });
           const firstSheet = wb.Sheets[wb.SheetNames[0]];
@@ -2935,136 +2814,17 @@ export default function App() {
         }
       >
         {modalTab === 'upload' && (
-          <div className="space-y-6 pt-24">
-            {uploadForm.isProcessing ? (
-              <div className="text-center py-12">
-                <div className="relative mx-auto mb-4 w-16 h-16">
-                  <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-                  <FileText className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-blue-500" size={24} />
-                </div>
-                <h3 className="text-xl font-bold dark:text-white animate-pulse">Sedang Memproses...</h3>
-                <p className="text-sm text-gray-500 mt-2">{uploadForm.processingMessage || 'Mohon tunggu...'}</p>
-              </div>
-            ) : (
-              <>
-                <div
-                  className={`group relative flex flex-col items-center justify-center border-dashed rounded-2xl p-10 text-center transition-all duration-300 cursor-pointer ${uploadForm.fileData ? 'border-2 border-indigo-500 bg-indigo-50/30 dark:bg-indigo-900/10' : 'border border-slate-200 dark:border-slate-700 hover:border-indigo-300 hover:bg-slate-50/50 dark:hover:bg-slate-800/30'}`}
-                  onClick={() => fileInputRef.current.click()}
-                >
-                  <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
-
-                  <div className="mb-4 p-4 rounded-full bg-slate-50 dark:bg-slate-800 group-hover:bg-indigo-50 dark:group-hover:bg-indigo-900/30 transition-colors duration-300">
-                    <UploadCloud className="text-slate-400 dark:text-slate-500 group-hover:text-indigo-500 dark:group-hover:text-indigo-400 transition-colors duration-300" size={32} />
-                  </div>
-
-                  <p className="text-sm font-semibold text-slate-600 dark:text-slate-300 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
-                    {uploadForm.title || 'Klik di sini untuk upload file'}
-                  </p>
-                  {!uploadForm.title && (
-                    <p className="text-[10px] text-slate-400 dark:text-slate-500 mt-1 font-medium uppercase tracking-wider">
-                      Semua Jenis File (PDF, Gambar, Office) - Max 30MB
-                    </p>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-slate-300 mb-1">Judul Dokumen</label>
-                  <input
-                    value={uploadForm.title}
-                    onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                    className="w-full px-4 py-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                  />
-                </div>
-                <div className="flex justify-end gap-3 pt-4">
-                  <p className="text-[10px] text-slate-400 italic mr-auto self-center">
-                    * OCR akan diproses otomatis di latar belakang setelah upload selesai.
-                  </p>
-                  <button onClick={handleProcessDoc} className="px-6 py-2 bg-blue-600 text-white rounded-lg font-bold shadow-lg shadow-blue-500/20 hover:scale-105 transition-all">
-                    {uploadForm.editMode ? 'Simpan Revisi' : 'Upload & Proses Latar'}
-                  </button>
-                </div>
-              </>
-            )}
-          </div>
+          <UploadModal 
+            uploadForm={uploadForm} 
+            setUploadForm={setUploadForm} 
+            fileInputRef={fileInputRef} 
+            handleFileSelect={handleFileSelect} 
+            handleProcessDoc={handleProcessDoc} 
+          />
         )}
 
         {modalTab === 'ocr-details' && (
-          <div className="space-y-6 pt-24 max-h-[80vh] overflow-y-auto custom-scrollbar px-1 pb-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-2xl border border-blue-100 dark:border-blue-800">
-                <p className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest mb-1">Aktif</p>
-                <p className="text-2xl font-black text-blue-800 dark:text-white">{ocrStats?.counts?.active || 0}</p>
-              </div>
-              <div className="bg-amber-50 dark:bg-amber-900/20 p-4 rounded-2xl border border-amber-100 dark:border-amber-800">
-                <p className="text-[10px] font-black text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1">Menunggu</p>
-                <p className="text-2xl font-black text-amber-800 dark:text-white">{ocrStats?.counts?.waiting || 0}</p>
-              </div>
-              <div className="bg-emerald-50 dark:bg-emerald-900/20 p-4 rounded-2xl border border-emerald-100 dark:border-emerald-800">
-                <p className="text-[10px] font-black text-emerald-600 dark:text-emerald-400 uppercase tracking-widest mb-1">Selesai</p>
-                <p className="text-2xl font-black text-emerald-800 dark:text-white">{ocrStats?.counts?.completed || 0}</p>
-              </div>
-              <div className="bg-red-50 dark:bg-red-900/20 p-4 rounded-2xl border border-red-100 dark:border-red-800">
-                <p className="text-[10px] font-black text-red-600 dark:text-red-400 uppercase tracking-widest mb-1">Gagal</p>
-                <p className="text-2xl font-black text-red-800 dark:text-white">{ocrStats?.counts?.failed || 0}</p>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <h4 className="text-xs font-black text-slate-500 uppercase tracking-widest flex items-center gap-2">
-                <Activity size={16} /> Pekerjaan Saat Ini
-              </h4>
-              <div className="space-y-3">
-                {(ocrStats?.activeJobs || []).length === 0 ? (
-                  <div className="text-center py-8 bg-slate-50 dark:bg-slate-900/50 rounded-3xl border-2 border-dashed border-slate-200 dark:border-slate-800">
-                    <p className="text-slate-400 font-bold">Tidak ada pekerjaan yang sedang berjalan.</p>
-                  </div>
-                ) : (
-                  ocrStats.activeJobs.map(job => (
-                    <div key={job.id} className="bg-white dark:bg-slate-800 p-4 rounded-[2rem] border border-slate-100 dark:border-slate-700 shadow-sm">
-                      <div className="flex justify-between items-start mb-3">
-                        <div className="min-w-0">
-                          <p className="text-xs font-black text-slate-800 dark:text-white truncate">{job.filename}</p>
-                          <p className="text-[10px] text-slate-400 font-black uppercase mt-0.5">Job ID: {job.id}</p>
-                        </div>
-                        <div className="text-right">
-                          <span className="text-lg font-black text-indigo-600 dark:text-indigo-400">{job.progress || 0}%</span>
-                        </div>
-                      </div>
-                      <div className="w-full bg-slate-100 dark:bg-slate-900 rounded-full h-3 overflow-hidden">
-                        <motion.div
-                          initial={{ width: 0 }}
-                          animate={{ width: `${job.progress || 0}%` }}
-                          className="bg-indigo-600 h-full rounded-full"
-                        />
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-
-            <div className="pt-6 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center">
-              <p className="text-xs font-bold text-slate-400">
-                Status diperbarui setiap 2 detik secara otomatis.
-              </p>
-              <button
-                onClick={async () => {
-                  if (window.confirm("Yakin ingin mereset antrian yang macet? Ini akan memulai ulang proses yang gagal.")) {
-                    try {
-                      await fetch(`${API_BASE}/ocr/reset`, { method: 'POST' });
-                      toast.success('Antrian berhasil direset.');
-                      // Wait a bit then reload
-                      setTimeout(() => window.location.reload(), 1500);
-                    } catch (err) {
-                      toast.error('Gagal reset: ' + err.message);
-                    }
-                  }
-                }}
-                className="flex items-center gap-2 px-6 py-3 bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-colors"
-              >
-                <RefreshCw size={14} /> Reset Antrian Macet
-              </button>
-            </div>
-          </div>
+          <OcrQueueModal ocrStats={ocrStats} API_BASE={API_BASE} toast={toast} />
         )}
         <DocumentViewerModal
           modalTab={modalTab}

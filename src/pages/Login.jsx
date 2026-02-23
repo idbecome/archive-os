@@ -12,7 +12,7 @@ export default function Login({ onLogin }) {
     };
 
     const handleGuestLogin = () => {
-        onLogin('viewer', '123', (errorMsg) => {
+        onLogin('', '', (errorMsg) => {
             setLoginForm(prev => ({ ...prev, error: errorMsg }));
         });
     };

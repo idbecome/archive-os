@@ -147,7 +147,11 @@ export default function Documents({
                 if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
                     console.log('[Preview] Fetching buffer from URL...');
                     const response = await fetch(normalizedUrl);
-                    if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText} (${normalizedUrl})`);
+                    if (!response.ok) {
+                        const errorText = await response.text();
+                        const isHtml = errorText.includes('<!DOCTYPE');
+                        throw new Error(isHtml ? `File tidak ditemukan di server (404).` : `Gagal mengambil file: ${response.status}`);
+                    }
                     buffer = await response.arrayBuffer();
                     console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
                 } else if (content.includes('base64,') || content.length > 1000) {
@@ -1128,7 +1132,7 @@ export default function Documents({
             {/* MANAGEMENT MODAL (COPY/MOVE) */}
             <Modal
                 isOpen={isMgmtModalOpen}
-                onClose={() => setIsMgmtModalOpen(false)}
+                onClose={() => !isExecutingOp && setIsMgmtModalOpen(false)}
                 title={mgmtOp?.type === 'copy' ? 'Salin Dokumen' : 'Pindah Dokumen'}
                 size="max-w-md"
             >

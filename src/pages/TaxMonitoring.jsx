@@ -4,6 +4,9 @@ import { db as api } from '../services/database';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
+import AuditStepTracker from '../components/tax/AuditStepTracker';
+import TaxFileDetailModal from '../components/modals/TaxFileDetailModal';
+import TaxUploadModal from '../components/modals/TaxUploadModal';
 import { useToast, ToastContainer } from '../components/ui/Toast';
 
 // ... (code)
@@ -438,6 +441,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         const updatedSteps = [...selectedAudit.steps];
         const stepData = updatedSteps[activeStep - 1];
         if (stepData.status === 'Done') return;
+        setIsSaving(true);
 
         stepData.status = 'Done';
         stepData.endDate = new Date().toISOString();
@@ -451,11 +455,13 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             if (activeStep + 1 === 7 && updatedSteps[6].status === 'Done') updatedAudit.status = 'Done';
             setSelectedAudit(updatedAudit);
             await api.updateTaxAudit(selectedAudit.id, updatedAudit);
+            setIsSaving(false);
             if (onRefresh) onRefresh();
         } else {
             const updatedAudit = { ...selectedAudit, steps: updatedSteps, status: 'Done' };
             setSelectedAudit(updatedAudit);
             await api.updateTaxAudit(selectedAudit.id, updatedAudit);
+            setIsSaving(false);
             if (onRefresh) onRefresh();
         }
     };
@@ -894,56 +900,13 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                 <div>
                                     <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Step Tracking</h3>
 
-
                                     {/* Desktop/Tablet Horizontal Flow */}
-                                    <div className="hidden md:flex items-center justify-between relative px-4">
-                                        {/* Connecting Line Background */}
-                                        <div className="absolute left-0 top-1/2 -translate-y-1/2 w-full h-1 bg-gray-200 dark:bg-slate-700 -z-10" />
-
-                                        {AUDIT_STEPS.map((step, index) => {
-                                            const sData = selectedAudit.steps?.[step.id - 1] || {};
-                                            const isDone = sData.status === 'Done';
-                                            const isActive = activeStep === step.id;
-                                            const isPending = !isDone && !isActive;
-                                            const nextStep = selectedAudit.steps?.[step.id] || {};
-
-                                            // Calculate line colored progress
-                                            // If this step is done, the line to the next step should be green
-                                            const isLineColored = isDone;
-
-                                            return (
-                                                <div key={step.id} className="relative flex flex-col items-center group cursor-pointer" onClick={() => setActiveStep(step.id)}>
-                                                    {/* Connecting Line Colored Overlay (to the right) */}
-                                                    {index < AUDIT_STEPS.length - 1 && (
-                                                        <div
-                                                            className={`absolute left-1/2 top-1/2 -translate-y-1/2 h-1 w-full -z-10 transition-all duration-500 ${isDone ? 'bg-emerald-500' : 'bg-transparent'}`}
-                                                            style={{ width: 'calc(100% + 2rem)' }}
-                                                        />
-                                                    )}
-
-                                                    <div
-                                                        className={`w-10 h-10 rounded-full flex items-center justify-center border-4 transition-all duration-300 z-10
-                                                ${isDone
-                                                                ? 'bg-emerald-500 border-emerald-100 dark:border-emerald-900/50 text-white scale-100 shadow-md shadow-emerald-500/20'
-                                                                : isActive
-                                                                    ? 'bg-indigo-600 border-indigo-100 dark:border-indigo-900/50 text-white scale-110 shadow-lg shadow-indigo-500/30'
-                                                                    : 'bg-white dark:bg-slate-800 border-gray-200 dark:border-slate-700 text-gray-400 dark:text-gray-500'}`}
-                                                    >
-                                                        {isDone ? <CheckCircle2 size={18} /> : <span className="text-sm font-bold">{step.id}</span>}
-                                                    </div>
-
-                                                    <div className="absolute top-12 w-32 text-center transition-all duration-300">
-                                                        <p className={`text-xs font-bold mb-0.5 ${isActive ? 'text-indigo-600 scale-105' : isDone ? 'text-emerald-600' : 'text-gray-400'}`}>
-                                                            {step.title}
-                                                        </p>
-                                                        <p className={`text-[10px] ${isActive ? 'text-indigo-400' : 'text-gray-400 hidden group-hover:block'}`}>
-                                                            {sData.status || 'Pending'}
-                                                        </p>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
+                                    <AuditStepTracker 
+                                        AUDIT_STEPS={AUDIT_STEPS} 
+                                        selectedAudit={selectedAudit} 
+                                        activeStep={activeStep} 
+                                        setActiveStep={setActiveStep} 
+                                    />
 
                                     {/* Mobile Vertical Flow (Fallback) */}
                                     <div className="md:hidden space-y-2 pl-4 border-l-2 border-gray-200 dark:border-slate-800 ml-2">
@@ -1351,172 +1314,24 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 </div>
             </Modal>
 
-            {/* FILE DETAIL MODAL - NEW */}
-            <Modal
+            <TaxFileDetailModal
                 isOpen={!!selectedFileDetail}
                 onClose={() => setSelectedFileDetail(null)}
-                title="Detail Dokumen & OCR"
-                size="max-w-4xl"
-            >
-                <div className="flex flex-col md:flex-row gap-6 h-[70vh] pt-24">
-                    {/* LEFT: PREVIEW */}
-                    <div className="flex-1 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden flex items-center justify-center border border-slate-200 dark:border-slate-700 relative">
-                        {String(selectedFileDetail?.type || '').toLowerCase().startsWith('image/') ? (
-                            <img src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
-                        ) : String(selectedFileDetail?.type || '').toLowerCase().includes('pdf') ? (
-                            <iframe src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} className="w-full h-full" title="PDF Preview"></iframe>
-                        ) : (
-                            <div className="text-center p-6 text-slate-500">
-                                <FileText size={48} className="mx-auto mb-2 opacity-50" />
-                                <p>Preview tidak tersedia untuk format ini.</p>
-                                <button onClick={() => handleSecureDownload(selectedFileDetail)} className="mt-4 text-indigo-600 hover:underline">Download File</button>
-                            </div>
-                        )}
-                    </div>
+                selectedFileDetail={selectedFileDetail}
+                setSelectedFileDetail={setSelectedFileDetail}
+                getFullUrl={getFullUrl}
+                handleSecureDownload={handleSecureDownload}
+                api={api} // Pass api for getDocumentById
+            />
 
-                    {/* RIGHT: OCR CONTENT */}
-                    <div className="flex-1 flex flex-col h-full">
-                        <div className="flex justify-between items-center mb-2">
-                            <h4 className="font-bold text-slate-700 dark:text-slate-200 flex items-center gap-2">
-                                <FileText size={16} className="text-indigo-500" /> Extracted Text (OCR)
-                            </h4>
-                            {selectedFileDetail?.ocrContent ? (
-                                <span className="text-xs text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded border border-emerald-100 dark:border-emerald-800 flex items-center gap-1">
-                                    <CheckCircle2 size={12} /> Auto-Generated
-                                </span>
-                            ) : (
-                                <span className="text-xs text-amber-600 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded border border-amber-100 dark:border-amber-800 flex items-center gap-1 animate-pulse">
-                                    <Clock size={12} /> Pending / Empty
-                                </span>
-                            )}
-                        </div>
-                        <textarea
-                            className="flex-1 w-full bg-slate-50 dark:bg-slate-800 border-2 border-slate-200 dark:border-slate-700 rounded-xl p-4 text-sm font-mono text-slate-700 dark:text-slate-300 focus:border-indigo-500 focus:ring-0 resize-none outline-none leading-relaxed"
-                            value={selectedFileDetail?.ocrContent || ''}
-                            onChange={(e) => setSelectedFileDetail({ ...selectedFileDetail, ocrContent: e.target.value })}
-                            placeholder={selectedFileDetail?.ocrContent ? "Teks hasil scan..." : "Teks belum tersedia. Mohon tunggu proses OCR selesai atau klik tombol 'Regenerate/Refresh' di bawah."}
-                        />
-                        <div className="mt-4 flex justify-end gap-3">
-                            <button
-                                onClick={() => setSelectedFileDetail(null)}
-                                className="px-5 py-2.5 rounded-xl text-slate-500 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                            >
-                                Tutup
-                            </button>
-                            <button
-                                onClick={async () => {
-                                    // REGENERATE / REFRESH ACTION
-                                    if (selectedFileDetail?.id && String(selectedFileDetail.id).startsWith('note-')) {
-                                        alert("Data catatan (note) tidak memerlukan refresh OCR.");
-                                        return;
-                                    }
-                                    try {
-                                        const refreshedDoc = await api.getDocumentById(selectedFileDetail.id);
-                                        if (refreshedDoc) {
-                                            setSelectedFileDetail(refreshedDoc);
-                                            alert("Data dokumen diperbarui dari server.");
-                                        }
-                                    } catch (e) { alert("Gagal refresh: " + e.message); }
-                                }}
-                                className="px-5 py-2.5 rounded-xl text-indigo-600 font-bold hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors border border-indigo-100 dark:border-indigo-800"
-                            >
-                                Refresh / Cek OCR
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </Modal >
-
-            {/* UPLOAD MODAL - NEW */}
-            <Modal
+            <TaxUploadModal
                 isOpen={uploadModalOpen}
                 onClose={() => setUploadModalOpen(false)}
-                title="Upload Dokumen Pemeriksaan"
-                size="max-w-2xl"
-            >
-                <div className="space-y-6 pt-24 max-h-[85vh] overflow-y-auto custom-scrollbar px-1">
-                    {/* Preview Section */}
-                    <div className="flex flex-col md:flex-row gap-6">
-                        <div className="w-full md:w-1/3 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-hidden border border-slate-200 dark:border-slate-700 flex items-center justify-center h-48 relative group">
-                            {uploadForm.fileType?.startsWith('image/') ? (
-                                <img src={uploadForm.fileData} alt="Preview" className="max-w-full max-h-full object-contain" />
-                            ) : (
-                                <div className="text-center p-4">
-                                    <FileText size={48} className="mx-auto mb-2 text-slate-400" />
-                                    <p className="text-xs text-slate-500 break-all">{uploadForm.fileName}</p>
-                                </div>
-                            )}
-                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                                <p className="text-white text-xs font-bold">{uploadForm.fileSize}</p>
-                            </div>
-                        </div>
-                        <div className="flex-1 space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 mb-1">Judul Dokumen</label>
-                                <input
-                                    className="w-full px-4 py-2 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
-                                    value={uploadForm.title}
-                                    onChange={(e) => setUploadForm({ ...uploadForm, title: e.target.value })}
-                                    placeholder="Masukkan judul dokumen..."
-                                />
-                            </div>
-                            <div>
-                                <div className="flex justify-between items-center mb-1">
-                                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400">Hasil OCR (Text Extraction)</label>
-                                    {uploadForm.ocrContent && (
-                                        <span className="text-[10px] text-emerald-600 bg-emerald-50 dark:bg-emerald-900/30 px-2 py-0.5 rounded flex items-center gap-1">
-                                            <CheckCircle2 size={10} /> Berhasil
-                                        </span>
-                                    )}
-                                </div>
-                                <div className="relative">
-                                    <textarea
-                                        className="w-full h-24 px-4 py-2 border rounded-lg bg-white dark:bg-slate-800 dark:border-slate-700 dark:text-slate-300 text-xs font-mono resize-none focus:ring-1 focus:ring-indigo-500 outline-none transition-all"
-                                        value={uploadForm.ocrContent}
-                                        onChange={(e) => setUploadForm({ ...uploadForm, ocrContent: e.target.value })}
-                                        placeholder="Klik tombol 'Proses OCR' untuk mengekstrak teks otomatis dari dokumen..."
-                                    />
-                                    {!uploadForm.ocrContent && !uploadForm.isProcessing && (
-                                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                            <span className="text-slate-400 text-xs italic">Menunggu proses OCR...</span>
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Progress Bar if processing */}
-                    {uploadForm.isProcessing && (
-                        <div className="space-y-2 animate-in fade-in duration-300">
-                            <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400">
-                                <span>{uploadForm.processingMessage}</span>
-                                <span className="animate-pulse font-bold text-indigo-500">Processing...</span>
-                            </div>
-                            <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-1.5 overflow-hidden">
-                                <div className="bg-indigo-600 h-full rounded-full animate-progress-indeterminate"></div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Actions */}
-                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                        <button
-                            onClick={() => setUploadModalOpen(false)}
-                            className="px-4 py-2 text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-white font-bold text-sm transition-colors"
-                        >
-                            Batal
-                        </button>
-                        <button
-                            onClick={handleConfirmUpload}
-                            disabled={uploadForm.isProcessing}
-                            className="px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg font-bold shadow-lg shadow-indigo-500/30 transition-all transform active:scale-95 text-sm disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100 flex items-center gap-2"
-                        >
-                            <CloudUpload size={18} /> Upload & Proses Background
-                        </button>
-                    </div>
-                </div>
-            </Modal>
+                uploadForm={uploadForm}
+                setUploadForm={setUploadForm}
+                handleConfirmUpload={handleConfirmUpload}
+                isUploadingFile={isUploadingFile}
+            />
 
             {/* UPLOAD LOADING OVERLAY */}
             {
