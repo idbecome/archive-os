@@ -1,4 +1,4 @@
-﻿﻿﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
@@ -146,7 +146,10 @@ export default function App() {
     folderHistory, historyIndex, navigateFolder, navigateBack, navigateForward,
     approvals, setApprovals,
     flows, setFlows,
-    fetchDocs, fetchFolders, fetchApprovals
+    fetchDocs, fetchFolders, fetchApprovals,
+    createDocument, updateDocument, deleteDocument,
+    createFolder, updateFolder, deleteFolder,
+    copyDocument, moveDocument
   } = useDocStore();
 
   const {
@@ -156,7 +159,9 @@ export default function App() {
     externalItems, setExternalItems,
     activeInvTab, setActiveInvTab,
     ocrStats, setOcrStats,
-    fetchInventory
+    fetchInventory,
+    updateInventory, moveInventory,
+    createExternalItem, deleteExternalItem
   } = useInventoryStore();
 
   const handleCloseLanding = () => setShowInitialLanding(false);
@@ -915,7 +920,7 @@ export default function App() {
                       url: uploadRes.url,
                       fileData: null
                     };
-                    await api.createDocument(docPayload);
+                    await createDocument(docPayload);
                   }
                 } else {
                   throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
@@ -928,7 +933,7 @@ export default function App() {
 
         if (uploadCount > 0) {
           console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
-          await fetchDocs();
+          // fetchDocs is handled by createDocument store action
         }
         // --- BATCH UPLOAD END ---
 
@@ -945,8 +950,7 @@ export default function App() {
           boxData: { id: boxId, ordners: updatedOrdners }
         };
 
-        await api.updateInventory(slotId, finalSlot);
-        await fetchInventory();
+        await updateInventory(slotId, finalSlot);
         addLog(capturedCurrentUser?.name || 'Admin', isNew ? 'Masuk Barang' : 'Update Barang', `Kardus ${boxId} di Slot #${slotId}`);
         updateToast(mainToastId, { message: isNew ? `Box ${boxId} berhasil disimpan!` : `Box ${boxId} berhasil diperbarui!`, type: 'success' });
 
@@ -972,8 +976,7 @@ export default function App() {
 
     try {
       // Reserved the slot immediately so UI reflects the new Box ID
-      await api.updateInventory(selectedSlotId, skeletonSlot);
-      await fetchInventory();
+      await updateInventory(selectedSlotId, skeletonSlot);
 
       // Tutup modal agar user bisa lanjut kerja
       setIsModalOpen(false);
@@ -1004,8 +1007,7 @@ export default function App() {
     };
 
     try {
-      await api.updateInventory(selectedSlotId, updatedSlot);
-      await fetchInventory();
+      await updateInventory(selectedSlotId, updatedSlot);
       addLog(currentUser?.name || 'Admin', 'Ubah Status', `Slot #${selectedSlotId} status: ${label}`);
       toast.success(`Status berhasil diubah ke ${label}`);
       setIsModalOpen(false);
@@ -1028,9 +1030,8 @@ export default function App() {
 
     try {
       // Optimized: Perform move on server-side to avoid sending large boxData payloads
-      await api.moveInventory(selectedSlotId, targetId, currentUser?.name || 'Admin');
+      await moveInventory(selectedSlotId, targetId, currentUser?.name || 'Admin');
 
-      await fetchInventory();
       addLog(currentUser?.name || 'Admin', 'Pindah Rak', `Kardus ${sourceSlot.boxData.id} -> Slot ${targetId}`);
       toast.success(`Box berhasil dipindahkan ke Slot #${targetId}`);
       setIsModalOpen(false);
@@ -1048,7 +1049,7 @@ export default function App() {
       // 1. Save to External Items
       if (currentSlot.boxData) {
         await syncBoxFolder(currentSlot.boxData.id, 'EXTERNAL');
-        await api.createExternalItem({
+        await createExternalItem({
           boxId: currentSlot.boxData.id,
           destination: destination,
           sentDate: date ? new Date(date).toISOString() : new Date().toISOString(),
@@ -1061,8 +1062,7 @@ export default function App() {
       // 2. Clear Internal Slot
       const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem(destination === 'Indoarsip' ? 'EXTERNAL' : 'REMOVED', `Dikirim ke ${destination} (${date})`)] };
 
-      await api.updateInventory(selectedSlotId, updatedSlot);
-      await fetchInventory();
+      await updateInventory(selectedSlotId, updatedSlot);
       addLog(currentUser?.name || 'Admin', 'Barang Keluar', `Kardus ke ${destination}`);
       toast.success(`Berhasil dikirim ke ${destination}`);
       setIsModalOpen(false);
@@ -1095,12 +1095,11 @@ export default function App() {
         history: [...(selectedExternalItem.history || []), createHistoryItem('RESTORED', `Dikembalikan dari ${selectedExternalItem.destination}`)]
       };
 
-      await api.updateInventory(targetId, updatedSlot);
+      await updateInventory(targetId, updatedSlot);
 
-      // 2. Delete from External
-      await api.deleteExternalItem(selectedExternalItem.id);
+      // 2. Delete from External (handled within updateInventory refresh if needed, but here we call it explicitly through the store action)
+      await deleteExternalItem(selectedExternalItem.id);
 
-      await fetchInventory();
       addLog(currentUser?.name || 'Admin', 'Barang Masuk (Restore)', `Restore ${selectedExternalItem.boxId} dari ${selectedExternalItem.destination}`);
       toast.success(`Box ${selectedExternalItem.boxId} berhasil dikembalikan ke Slot #${targetId}`);
 
@@ -1135,8 +1134,7 @@ export default function App() {
       const updatedSlot = { ...currentSlot, status: 'EMPTY', boxData: null, lastUpdated: new Date().toISOString(), history: [...(currentSlot.history || []), createHistoryItem('REMOVED', `Dikosongkan manual`)] };
 
       try {
-        await api.updateInventory(selectedSlotId, updatedSlot);
-        await fetchInventory();
+        await updateInventory(selectedSlotId, updatedSlot);
         addLog(currentUser?.name || 'Admin', 'Kosongkan Slot', `Slot #${selectedSlotId}`);
         toast.success("Slot berhasil dikosongkan.");
         setIsModalOpen(false);
@@ -1146,8 +1144,7 @@ export default function App() {
     } else if (selectedExternalItem) {
       if (!window.confirm("Hapus data box ini secara permanen dari Indoarsip?")) return;
       try {
-        await api.deleteExternalItem(selectedExternalItem.id);
-        await fetchInventory();
+        await deleteExternalItem(selectedExternalItem.id);
         addLog(currentUser?.name || 'Admin', 'Hapus Permanen', `Box ${selectedExternalItem.boxId} dihapus dari Eksternal`);
         toast.success("Data box eksternal berhasil dihapus permanen.");
         setIsModalOpen(false);
@@ -1776,15 +1773,14 @@ export default function App() {
 
     try {
       if (capturedForm.editMode) {
-        await api.updateDocument(capturedForm.id, docPayload);
+        await updateDocument(capturedForm.id, docPayload);
         addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${docPayload.title}`);
         updateToast(toastId, { message: `"${docPayload.title}" diperbarui`, type: 'success' });
       } else {
-        await api.createDocument(docPayload);
+        await createDocument(docPayload);
         addLog(currentUser?.name, 'Upload Dokumen', `Upload ${docPayload.title}`);
         updateToast(toastId, { message: `"${docPayload.title}" diupload`, type: 'success' });
       }
-      await fetchDocs();
       await fetchLogs();
     } catch (e) {
       console.error("Upload failed:", e);
@@ -1831,8 +1827,7 @@ export default function App() {
     }
     if (window.confirm('Hapus dokumen?')) {
       try {
-        await api.deleteDocument(docId);
-        await fetchDocs();
+        await deleteDocument(docId);
         await fetchLogs();
         addLog(currentUser?.name, 'Hapus Dokumen', `ID ${docId}`);
       } catch (e) { alert(e.message); }
@@ -2076,8 +2071,7 @@ export default function App() {
   const handleRestoreVersion = async (docId, versionTimestamp) => {
     if (!window.confirm("Yakin ingin mengembalikan dokumen ke versi ini? Versi saat ini akan disimpan sebagai revisi baru.")) return;
     try {
-      await api.restoreDocumentVersion(docId, versionTimestamp);
-      fetchDocs();
+      await restoreDocumentVersion(docId, versionTimestamp);
       // If detail modal is open, we might need to refresh its data
       if (viewDocData && viewDocData.id === docId) {
         const updated = await api.getDocumentById(docId);
@@ -2177,12 +2171,11 @@ export default function App() {
     if (!folderData || !folderData.name) return;
 
     try {
-      await api.createFolder({
+      await createFolder({
         ...folderData,
         parent_id: currentFolderId,
         owner: currentUser?.name || 'Admin'
       });
-      await fetchFolders();
       await fetchLogs();
       addLog(currentUser?.name, 'Create Folder', `Folder: ${folderData.name} (${folderData.privacy})`);
     } catch (e) { alert(e.message); }
@@ -2200,8 +2193,7 @@ export default function App() {
     }
 
     try {
-      await api.updateFolder(folder.id, newData);
-      setFolders(await api.getFolders());
+      await updateFolder(folder.id, newData);
       addLog(currentUser?.name, 'Update Folder', `${folder.name} -> ${newData.name}`);
     } catch (e) { alert(e.message); }
   };
@@ -2212,8 +2204,7 @@ export default function App() {
     if (newTitle && newTitle !== doc.title) {
       try {
         const updatedDoc = { ...doc, title: newTitle };
-        await api.updateDocument(doc.id, updatedDoc);
-        await fetchDocs();
+        await updateDocument(doc.id, updatedDoc);
         await fetchLogs();
         addLog(currentUser?.name, 'Rename File', `${doc.title} -> ${newTitle}`);
       } catch (err) { alert(err.message); }
@@ -2231,8 +2222,7 @@ export default function App() {
     }
 
     if (window.confirm("Hapus folder ini beserta isinya?")) {
-      await api.deleteFolder(id);
-      await fetchFolders();
+      await deleteFolder(id);
       await fetchLogs();
       addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
     }
@@ -2814,12 +2804,12 @@ export default function App() {
         }
       >
         {modalTab === 'upload' && (
-          <UploadModal 
-            uploadForm={uploadForm} 
-            setUploadForm={setUploadForm} 
-            fileInputRef={fileInputRef} 
-            handleFileSelect={handleFileSelect} 
-            handleProcessDoc={handleProcessDoc} 
+          <UploadModal
+            uploadForm={uploadForm}
+            setUploadForm={setUploadForm}
+            fileInputRef={fileInputRef}
+            handleFileSelect={handleFileSelect}
+            handleProcessDoc={handleProcessDoc}
           />
         )}
 

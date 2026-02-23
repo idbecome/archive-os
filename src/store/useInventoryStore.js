@@ -70,5 +70,24 @@ export const useInventoryStore = create((set, get) => ({
         } catch (error) {
             console.error("Failed to fetch inventory", error);
         }
+    },
+
+    // Mutation Actions
+    updateInventory: async (id, data) => {
+        await api.updateInventory(id, data);
+        await get().fetchInventory();
+    },
+    moveInventory: async (sourceId, targetId, user) => {
+        const res = await api.moveInventory(sourceId, targetId, user);
+        await get().fetchInventory();
+        return res;
+    },
+    createExternalItem: async (item) => {
+        await api.createExternalItem(item);
+        await get().fetchInventory();
+    },
+    deleteExternalItem: async (id) => {
+        await api.deleteExternalItem(id);
+        await get().fetchInventory();
     }
 }));

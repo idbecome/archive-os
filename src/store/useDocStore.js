@@ -63,5 +63,60 @@ export const useDocStore = create((set, get) => ({
                 currentFolderId: folderHistory[newIndex]
             });
         }
+    },
+
+    // Mutation Actions
+    createDocument: async (doc) => {
+        const res = await api.createDocument(doc);
+        if (res) {
+            await get().fetchDocs();
+        }
+        return res;
+    },
+    updateDocument: async (id, doc) => {
+        await api.updateDocument(id, doc);
+        await get().fetchDocs();
+    },
+    deleteDocument: async (id) => {
+        await api.deleteDocument(id);
+        await get().fetchDocs();
+    },
+    createFolder: async (folder) => {
+        await api.createFolder(folder);
+        await get().fetchFolders();
+    },
+    updateFolder: async (id, data) => {
+        await api.updateFolder(id, data);
+        await get().fetchFolders();
+    },
+    deleteFolder: async (id) => {
+        await api.deleteFolder(id);
+        await get().fetchFolders();
+    },
+    copyDocument: async (id, targetFolderId, owner) => {
+        const res = await api.copyDocument(id, targetFolderId, owner);
+        await get().fetchDocs();
+        return res;
+    },
+    moveDocument: async (id, targetFolderId, owner) => {
+        const res = await api.moveDocument(id, targetFolderId, owner);
+        await get().fetchDocs();
+        return res;
+    },
+    restoreDocumentVersion: async (id, versionTimestamp) => {
+        const res = await api.restoreDocumentVersion(id, versionTimestamp);
+        await get().fetchDocs();
+        return res;
+    },
+    promoteCommentAttachment: async (docId, commentId) => {
+        const res = await api.promoteCommentAttachment(docId, commentId);
+        await get().fetchDocs();
+        return res;
+    },
+    addComment: async (docId, formData) => {
+        const res = await api.addComment(docId, formData);
+        // Comments are usually fetched separately, but we can refresh docs if needed
+        // For now, let's just return the result
+        return res;
     }
 }));

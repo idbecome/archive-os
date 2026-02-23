@@ -11,6 +11,7 @@ import { SummaryCard } from '../components/ui/Card';
 import { db as api, API_URL } from '../services/database';
 import Modal from '../components/common/Modal';
 import PdfViewer from '../components/ui/PdfViewer';
+import { useDocStore } from '../store/useDocStore';
 
 export default function Documents({
     docList, folders, currentFolderId, setCurrentFolderId,
@@ -23,6 +24,11 @@ export default function Documents({
     navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex,
     onRefresh, users, departments, currentUser, handleEditFolder, handleDownload, ocrStats
 }) {
+    const {
+        deleteDocument, copyDocument, moveDocument, restoreDocumentVersion,
+        promoteCommentAttachment, addComment
+    } = useDocStore();
+
     const [showHistory, setShowHistory] = useState(false);
     const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
     const [activeMenuId, setActiveMenuId] = useState(null); // ID of the document whose menu is open
@@ -204,7 +210,7 @@ export default function Documents({
         formData.append('text', newComment);
         if (commentAttachment) formData.append('attachment', commentAttachment);
 
-        const res = await api.addComment(selectedDocPreview.id, formData);
+        const res = await addComment(selectedDocPreview.id, formData);
         if (res.success) {
             setNewComment('');
             setCommentAttachment(null);
@@ -217,11 +223,11 @@ export default function Documents({
 
     const handlePromoteAttachment = async (commentId) => {
         if (!window.confirm("Jadikan file lampiran ini sebagai revisi terbaru dokumen? Proses OCR akan dijalankan.")) return;
-        const res = await api.promoteCommentAttachment(selectedDocPreview.id, commentId);
+        const res = await promoteCommentAttachment(selectedDocPreview.id, commentId);
         if (res.success) {
             alert("Berhasil menjadikan revisi. Dokumen sedang diproses OCR.");
             setSelectedDocPreview(null);
-            if (onRefresh) onRefresh();
+            // onRefresh() is now handled by store
         }
     };
 
@@ -248,15 +254,17 @@ export default function Documents({
             if (mgmtOp.itemType === 'file') {
                 const owner = currentUser?.name || currentUser?.username || 'System';
                 if (mgmtOp.type === 'copy') {
-                    await api.copyDocument(mgmtOp.item.id, targetFolderId, owner);
+                    await copyDocument(mgmtOp.item.id, targetFolderId, owner);
                 } else {
-                    await api.moveDocument(mgmtOp.item.id, targetFolderId, owner);
+                    await moveDocument(mgmtOp.item.id, targetFolderId, owner);
                 }
             } else {
                 if (mgmtOp.type === 'copy') {
                     await api.copyFolder(mgmtOp.item.id, targetFolderId);
+                    if (onRefresh) onRefresh(); // Folder actions still need manual refresh until added to store
                 } else {
                     await api.moveFolder(mgmtOp.item.id, targetFolderId);
+                    if (onRefresh) onRefresh();
                 }
             }
             setOpProgress(100);
@@ -279,9 +287,9 @@ export default function Documents({
 
         setIsRestoring(true);
         try {
-            await api.restoreDocumentVersion(docId, versionTimestamp);
+            await restoreDocumentVersion(docId, versionTimestamp);
             setIsRevisionModalOpen(false);
-            if (onRefresh) onRefresh();
+            // onRefresh() is now handled by store
         } catch (e) {
             alert("Gagal mengembalikan versi: " + e.message);
         } finally {
@@ -307,10 +315,10 @@ export default function Documents({
         setIsBulkDeleting(true);
         try {
             const validIds = Array.from(selectedDocIds).filter(id => id);
-            const promises = validIds.map(id => api.deleteDocument(id));
+            const promises = validIds.map(id => deleteDocument(id));
             await Promise.all(promises);
             setSelectedDocIds(new Set());
-            if (onRefresh) onRefresh();
+            // onRefresh() is now handled by store
         } catch (e) {
             alert("Gagal menghapus beberapa file: " + e.message);
         } finally {
