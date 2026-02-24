@@ -16,21 +16,21 @@ export const getApprovalFlows = async (req, res) => {
 
 export const createApprovalFlow = async (req, res) => {
     try {
-        const { name, description, steps } = req.body;
-        // steps is array of { step_name, approver_role, order_index }
+        const { name, description, steps, visual_config } = req.body;
 
         const [flowId] = await knex('approval_flows').insert({
             name,
             description,
-            steps: JSON.stringify(steps || [])
+            steps: JSON.stringify(steps || []),
+            visual_config: visual_config ? JSON.stringify(visual_config) : null
         });
 
         if (steps && steps.length > 0) {
-            const inserts = steps.map(s => ({
+            const inserts = steps.map((s, idx) => ({
                 flow_id: flowId,
-                step_name: s.step_name,
-                approver_role: s.approver_role,
-                order_index: s.order_index
+                step_name: s.step_name || s.name || s.username || `Step ${idx + 1}`,
+                approver_role: s.approver_role || s.username || '',
+                order_index: s.order_index ?? idx
             }));
             await knex('approval_steps').insert(inserts);
         }
@@ -332,23 +332,27 @@ export const deleteApprovalFlow = async (req, res) => {
 export const updateApprovalFlow = async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, description, steps } = req.body;
+        const { name, description, steps, visual_config } = req.body;
 
-        await knex('approval_flows').where('id', id).update({
+        const updateData = {
             name,
             description,
             steps: JSON.stringify(steps || [])
-        });
+        };
+        if (visual_config !== undefined) {
+            updateData.visual_config = visual_config ? JSON.stringify(visual_config) : null;
+        }
+
+        await knex('approval_flows').where('id', id).update(updateData);
 
         if (steps) {
-            // Simple approach: delete old steps and insert new ones
             await knex('approval_steps').where('flow_id', id).del();
             if (steps.length > 0) {
-                const inserts = steps.map(s => ({
+                const inserts = steps.map((s, idx) => ({
                     flow_id: id,
-                    step_name: s.step_name,
-                    approver_role: s.approver_role,
-                    order_index: s.order_index
+                    step_name: s.step_name || s.name || s.username || `Step ${idx + 1}`,
+                    approver_role: s.approver_role || s.username || '',
+                    order_index: s.order_index ?? idx
                 }));
                 await knex('approval_steps').insert(inserts);
             }
