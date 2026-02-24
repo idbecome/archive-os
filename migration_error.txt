@@ -1,9 +1,0 @@
-{
-  "stack": "Error: alter table `approval_steps` add `flow_id` int unsigned, add `order_index` int default '0', add `step_name` varchar(255), add `approver_role` varchar(255) - Duplicate column name 'flow_id'\n    at Packet.asError (C:\\Project\\archive-os\\node_modules\\mysql2\\lib\\packets\\packet.js:739:17)\n    at Query.execute (C:\\Project\\archive-os\\node_modules\\mysql2\\lib\\commands\\command.js:29:26)\n    at Connection.handlePacket (C:\\Project\\archive-os\\node_modules\\mysql2\\lib\\base\\connection.js:508:34)\n    at PacketParser.onPacket (C:\\Project\\archive-os\\node_modules\\mysql2\\lib\\base\\connection.js:93:12)\n    at PacketParser.executeStart (C:\\Project\\archive-os\\node_modules\\mysql2\\lib\\packet_parser.js:75:16)\n    at Socket.<anonymous> (C:\\Project\\archive-os\\node_modules\\mysql2\\lib\\base\\connection.js:100:25)\n    at Socket.emit (node:events:508:28)\n    at addChunk (node:internal/streams/readable:559:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:510:3)\n    at Readable.push (node:internal/streams/readable:390:5)",
-  "message": "alter table `approval_steps` add `flow_id` int unsigned, add `order_index` int default '0', add `step_name` varchar(255), add `approver_role` varchar(255) - Duplicate column name 'flow_id'",
-  "code": "ER_DUP_FIELDNAME",
-  "errno": 1060,
-  "sqlState": "42S21",
-  "sqlMessage": "Duplicate column name 'flow_id'",
-  "sql": "alter table `approval_steps` add `flow_id` int unsigned, add `order_index` int default '0', add `step_name` varchar(255), add `approver_role` varchar(255)"
-}
