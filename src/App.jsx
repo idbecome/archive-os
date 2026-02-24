@@ -2,7 +2,13 @@
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
-import { db as api, API_URL } from './services/database';
+import { authService } from './services/authService';
+import { API_URL } from './services/apiClient';
+import { documentService } from './services/documentService';
+import { taxService } from './services/taxService';
+import { inventoryService } from './services/inventoryService';
+import { pustakaService } from './services/pustakaService';
+const api = { ...authService, ...documentService, ...taxService, ...inventoryService, ...pustakaService };
 import { TOTAL_SLOTS, getStatusStyle } from './utils/constants'; // Import constants
 import { checkPermission, APP_MODULES } from './utils/permissions';
 import { performAdvancedOCR } from './utils/ocr';
@@ -25,6 +31,9 @@ import { useAuthStore } from './store/useAuthStore';
 import { useAppStore } from './store/useAppStore';
 import { useDocStore } from './store/useDocStore';
 import { useInventoryStore } from './store/useInventoryStore';
+import { useTaxStore } from './store/useTaxStore';
+import { usePustakaStore } from './store/usePustakaStore';
+import { useUserStore } from './store/useUserStore';
 
 import {
   Package,
@@ -129,15 +138,17 @@ export default function App() {
     isModalOpen, setIsModalOpen,
     modalTab, setModalTab,
     copyNotification, setCopyNotification,
-    logs, setLogs
   } = useAppStore();
 
   const {
     currentUser, setCurrentUser,
-    users, setUsers,
-    roles, setRoles,
-    departments, setDepartments
   } = useAuthStore();
+
+  const {
+    users, roles, departments, logs,
+    fetchUsers, fetchRoles, fetchDepartments, fetchLogs,
+    saveUser, deleteUser, saveRole, deleteRole, saveDepartment, deleteDepartment
+  } = useUserStore();
 
   const {
     docList, setDocList,
@@ -163,6 +174,20 @@ export default function App() {
     updateInventory, moveInventory,
     createExternalItem, deleteExternalItem
   } = useInventoryStore();
+
+  const {
+    taxSummaries, taxAudits, taxWp,
+    fetchTaxSummaries, fetchTaxAudits, fetchTaxWp,
+    saveTaxSummary, deleteTaxSummary,
+    createTaxAudit, updateTaxAudit, deleteTaxAudit,
+    saveTaxWp, deleteTaxWp
+  } = useTaxStore();
+
+  const {
+    guides, categories,
+    fetchGuides, fetchCategories,
+    saveGuide, deleteGuide, createCategory
+  } = usePustakaStore();
 
   const handleCloseLanding = () => setShowInitialLanding(false);
   const handleOpenLanding = () => setShowInitialLanding(true);
@@ -213,14 +238,16 @@ export default function App() {
   const excelInputRef = useRef(null);
   const invoiceFileInputRef = useRef(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [viewDocData, setViewDocData] = useState(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [previewHtml, setPreviewHtml] = useState('');
-  const [viewDocData, setViewDocData] = useState(null);
-
-  // Remaining features state
-  const [taxAudits, setTaxAudits] = useState([]);
-  const [taxSummaries, setTaxSummaries] = useState([]);
+  // Digital Doc Upload/Edit/View State
+  const [uploadForm, setUploadForm] = useState({
+    id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
+    previewUrl: null, fileData: null, isProcessing: false,
+    processingMessage: '', editMode: false, originalDoc: null
+  });
 
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false);
   const [editingFlow, setEditingFlow] = useState(null);
@@ -329,17 +356,7 @@ export default function App() {
     setTimeout(fetchOcrStatus, 1000);
 
     return () => clearInterval(interval);
-  }, [currentUser]); // Dependency on currentUser ensures it runs only when logged in
-
-  const fetchLogs = async () => {
-    const data = await api.getLogs();
-    setLogs(data);
-  };
-
-  const fetchTaxAudits = async () => {
-    const data = await api.getTaxAudits();
-    setTaxAudits(data);
-  };
+  }, [currentUser, fetchDocs, fetchInventory, fetchLogs, toast, removeToast, updateToast, setOcrStats]); // Dependency on currentUser ensures it runs only when logged in
 
   useEffect(() => {
     if (!currentUser) return; // Only fetch data if logged in
@@ -349,15 +366,18 @@ export default function App() {
       await Promise.all([
         fetchDocs(),
         fetchFolders(),
+        fetchUsers(),
+        fetchRoles(),
+        fetchDepartments(),
         fetchLogs(),
         fetchTaxAudits(),
+        fetchTaxSummaries(),
+        fetchTaxWp(),
+        fetchGuides(),
+        fetchCategories(),
         fetchApprovals(),
         fetchInventory(),
-        api.getTaxSummaries().then(setTaxSummaries),
-        api.getUsers().then(setUsers),
-        api.getRoles().then(setRoles),
-        api.getDepartments().then(setDepartments),
-        api.getApprovalFlows().then(setFlows) // Fetch flows on init
+        documentService.getApprovalFlows().then(setFlows) // Fetch flows on init
       ]);
       // Initialize OCR completion count
       try {
@@ -406,12 +426,6 @@ export default function App() {
   const [moveTargetSlot, setMoveTargetSlot] = useState('');
   const [showMoveInput, setShowMoveInput] = useState(false);
 
-  // Digital Doc Upload/Edit/View State
-  const [uploadForm, setUploadForm] = useState({
-    id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
-    previewUrl: null, fileData: null, isProcessing: false,
-    processingMessage: '', editMode: false, originalDoc: null
-  });
 
 
 
@@ -1181,7 +1195,7 @@ export default function App() {
       setTaxSummaries(await api.getTaxSummaries());
       setShowTaxForm(false);
       addLog(currentUser?.name, 'Update Pajak', `${taxForm.month} ${taxForm.year}`);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
 
@@ -1424,7 +1438,7 @@ export default function App() {
 
   const handleDownloadInvoice = (inv) => {
     console.log("Downloading Invoice:", inv.fileName, "URL:", inv.file);
-    if (!inv.file) return alert("Tidak ada file lampiran.");
+    if (!inv.file) return toast.warning("Tidak ada file lampiran.");
     try {
       const link = document.createElement('a');
       link.href = inv.file;
@@ -1432,7 +1446,7 @@ export default function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (e) { alert("Gagal download: " + e.message); }
+    } catch (e) { toast.error("Gagal download: " + e.message); }
   };
 
   const handleExportInventory = () => {
@@ -1526,24 +1540,18 @@ export default function App() {
 
   const handleSaveUser = async () => {
     try {
-      if (userForm.id) {
-        await api.updateUser(userForm.id, userForm);
-      } else {
-        await api.createUser(userForm);
-      }
-      setUsers(await api.getUsers());
+      await saveUser(userForm.id, userForm);
       setIsModalOpen(false);
       addLog(currentUser?.name, userForm.id ? 'Update User' : 'Create User', userForm.username);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleDeleteUser = async (id) => {
     if (!window.confirm("Hapus user ini?")) return;
     try {
-      await api.deleteUser(id);
-      setUsers(await api.getUsers());
+      await deleteUser(id);
       addLog(currentUser?.name, 'Delete User', `ID ${id}`);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleEditDept = (dept) => {
@@ -1560,19 +1568,14 @@ export default function App() {
 
   const handleSaveDept = async () => {
     try {
-      if (deptForm.id) {
-        await api.updateDepartment(deptForm.id, deptForm.name);
-      } else {
-        await api.createDepartment(deptForm.name);
-      }
-      setDepartments(await api.getDepartments());
+      await saveDepartment(deptForm.id, deptForm.name);
       setIsModalOpen(false);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleDeleteDept = async (id) => {
     if (!window.confirm("Hapus dept?")) return;
-    try { await api.deleteDepartment(id); setDepartments(await api.getDepartments()); } catch (e) { alert(e.message); }
+    try { await deleteDepartment(id); } catch (e) { toast.error(e); }
   };
 
   const handleCreateRole = () => {
@@ -1603,20 +1606,15 @@ export default function App() {
         access: roleForm.permissions
       };
 
-      if (editingRole) {
-        await api.updateRole(editingRole.id, payload);
-      } else {
-        await api.createRole(payload);
-      }
-      setRoles(await api.getRoles());
+      await saveRole(editingRole?.id, payload);
       setIsModalOpen(false);
       setEditingRole(null);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleDeleteRole = async (id) => {
     if (!window.confirm("Hapus role?")) return;
-    try { await api.deleteRole(id); setRoles(await api.getRoles()); } catch (e) { alert(e.message); }
+    try { await deleteRole(id); } catch (e) { toast.error(e); }
   };
 
   const handleCreateFlow = () => {
@@ -1642,7 +1640,7 @@ export default function App() {
       await api.deleteApprovalFlow(id);
       setFlows(await api.getApprovalFlows());
       addLog(currentUser?.name, 'Delete Flow', `ID ${id}`);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleAddFlowStep = (user) => {
@@ -1657,7 +1655,7 @@ export default function App() {
   };
 
   const handleSaveFlow = async () => {
-    if (!flowForm.name) return alert("Nama alur wajib diisi!");
+    if (!flowForm.name) return toast.warning("Nama alur wajib diisi!");
     try {
       if (editingFlow) {
         await api.updateApprovalFlow(editingFlow.id, flowForm);
@@ -1667,11 +1665,11 @@ export default function App() {
       setFlows(await api.getApprovalFlows());
       setIsFlowModalOpen(false);
       addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow', flowForm.name);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleSaveVisualFlow = async (updatedPayload) => {
-    if (!updatedPayload.name) return alert("Nama alur wajib diisi!");
+    if (!updatedPayload.name) return toast.warning("Nama alur wajib diisi!");
     try {
       if (editingFlow) {
         await api.updateApprovalFlow(editingFlow.id, updatedPayload);
@@ -1682,7 +1680,7 @@ export default function App() {
       setIsFlowModalOpen(false);
       addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow (Visual)', updatedPayload.name);
       toast.success('Workflow berhasil disimpan');
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
 
@@ -1693,7 +1691,7 @@ export default function App() {
     if (!file) return;
 
     if (file.size > 30 * 1024 * 1024) {
-      alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
+      toast.error("File terlalu besar! Maksimal ukuran file adalah 30MB.");
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -1701,7 +1699,7 @@ export default function App() {
     const fileSize = (file.size / 1024 / 1024).toFixed(2) + ' MB';
 
     if (file.size > 10 * 1024 * 1024) {
-      alert("Peringatan: Ukuran file cukup besar (> 10MB). Pastikan koneksi stabil agar upload berhasil.");
+      toast.warning("Peringatan: Ukuran file cukup besar (> 10MB). Pastikan koneksi stabil agar upload berhasil.");
     }
 
     // Only read Base64 for Image Previews (UI only)
@@ -1822,7 +1820,7 @@ export default function App() {
   const handleDeleteDoc = async (e, docId) => {
     e.stopPropagation();
     if (!docId) {
-      alert("Error: ID dokumen tidak valid.");
+      toast.error("Error: ID dokumen tidak valid.");
       return;
     }
     if (window.confirm('Hapus dokumen?')) {
@@ -1830,7 +1828,7 @@ export default function App() {
         await deleteDocument(docId);
         await fetchLogs();
         addLog(currentUser?.name, 'Hapus Dokumen', `ID ${docId}`);
-      } catch (e) { alert(e.message); }
+      } catch (e) { toast.error(e); }
     }
   };
 
@@ -2047,7 +2045,7 @@ export default function App() {
         downloadUrl = URL.createObjectURL(blob);
         fileName += '_error_log.txt';
 
-        alert(errorMsg + " Mengunduh log error & metadata sebagai gantinya.");
+        toast.warning("File asli tidak ditemukan. Mengunduh log error & metadata sebagai gantinya.");
       }
 
       element.href = downloadUrl;
@@ -2064,7 +2062,7 @@ export default function App() {
       addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
     } catch (e) {
       console.error("Download error:", e);
-      alert("Gagal mengunduh file: " + e.message);
+      toast.error("Gagal mengunduh file: " + e.message);
     }
   };
 
@@ -2077,9 +2075,9 @@ export default function App() {
         const updated = await api.getDocumentById(docId);
         if (updated) setViewDocData(updated);
       }
-      alert("Berhasil mengembalikan versi dokumen.");
+      toast.success("Berhasil mengembalikan versi dokumen.");
     } catch (e) {
-      alert("Gagal mengembalikan versi: " + e.message);
+      toast.error("Gagal mengembalikan versi: " + e.message);
     }
   };
 
@@ -2096,7 +2094,7 @@ export default function App() {
       );
 
       if (duplicate) {
-        alert(`Data ${currentType} untuk ${taxForm.month} ${taxForm.year} (Pembetulan ${taxForm.pembetulan || 0}) sudah ada.`);
+        toast.warning(`Data ${currentType} untuk ${taxForm.month} ${taxForm.year} (Pembetulan ${taxForm.pembetulan || 0}) sudah ada.`);
         return;
       }
 
@@ -2131,7 +2129,7 @@ export default function App() {
       localStorage.setItem('tax_summaries', JSON.stringify(freshData));
 
       setIsModalOpen(false);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleTaxImport = async (importedData) => {
@@ -2157,12 +2155,12 @@ export default function App() {
       addLog(currentUser?.name, 'Import Pajak', `Import selesai: ${successCount} sukses, ${failCount} gagal`);
 
       if (failCount > 0) {
-        alert(`Import selesai. Berhasil: ${successCount}, Gagal: ${failCount}. Pastikan koneksi backend stabil.`);
+        toast.warning(`Import selesai. Berhasil: ${successCount}, Gagal: ${failCount}. Pastikan koneksi backend stabil.`);
       } else {
-        alert(`Berhasil mengimport ${successCount} data ke database permanen.`);
+        toast.success(`Berhasil mengimport ${successCount} data ke database permanen.`);
       }
     } catch (error) {
-      alert("Terjadi kesalahan sistem saat sinkronisasi import.");
+      toast.error("Terjadi kesalahan sistem saat sinkronisasi import.");
     }
   };
 
@@ -2178,7 +2176,7 @@ export default function App() {
       });
       await fetchLogs();
       addLog(currentUser?.name, 'Create Folder', `Folder: ${folderData.name} (${folderData.privacy})`);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleEditFolder = async (e, folder, newData) => {
@@ -2195,7 +2193,7 @@ export default function App() {
     try {
       await updateFolder(folder.id, newData);
       addLog(currentUser?.name, 'Update Folder', `${folder.name} -> ${newData.name}`);
-    } catch (e) { alert(e.message); }
+    } catch (e) { toast.error(e); }
   };
 
   const handleRenameDoc = async (e, doc) => {
@@ -2641,25 +2639,16 @@ export default function App() {
                 users={users}
                 roles={roles}
                 departments={departments}
-                flows={flows} // Pass flows to MasterData
-                userSearchQuery={userSearchQuery}
-                setUserSearchQuery={setUserSearchQuery}
-                handleDeleteUser={handleDeleteUser}
                 handleCreateUser={handleCreateUser}
                 handleEditUser={handleEditUser}
-                handleEditRole={handleEditRole}
-                handleDeleteRole={handleDeleteRole}
-                handleCreateRole={handleCreateRole}
                 handleCreateDept={handleCreateDept}
                 handleEditDept={handleEditDept}
-                handleDeleteDept={handleDeleteDept}
-                handleCreateFlow={handleCreateFlow} // Pass flow handlers
+                handleCreateRole={handleCreateRole}
+                handleCreateFlow={handleCreateFlow}
                 handleEditFlow={handleEditFlow}
                 handleDeleteFlow={handleDeleteFlow}
                 setIsModalOpen={setIsModalOpen}
                 setModalTab={setModalTab}
-                setRoles={setRoles}
-                setDepartments={setDepartments}
                 hasPermission={hasPermission}
               />
             )}

@@ -8,10 +8,12 @@ import {
     LayoutGrid, List
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
-import { db as api, API_URL } from '../services/database';
+import { documentService as api } from '../services/documentService';
+import { API_URL } from '../services/apiClient';
 import Modal from '../components/common/Modal';
 import PdfViewer from '../components/ui/PdfViewer';
 import { useDocStore } from '../store/useDocStore';
+import { useToast } from '../components/ui/Toast';
 
 export default function Documents({
     docList, folders, currentFolderId, setCurrentFolderId,
@@ -28,6 +30,7 @@ export default function Documents({
         deleteDocument, copyDocument, moveDocument, restoreDocumentVersion,
         promoteCommentAttachment, addComment
     } = useDocStore();
+    const { toast } = useToast();
 
     const [showHistory, setShowHistory] = useState(false);
     const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
@@ -185,7 +188,7 @@ export default function Documents({
                 }
             } catch (e) {
                 console.error("Preview error:", e);
-                alert(`Gagal memuat preview dokumen: ${e.message}`);
+                toast.error(`Gagal memuat preview dokumen: ${e.message}`);
             }
         }
         setIsGeneratingPreview(false);
@@ -216,7 +219,7 @@ export default function Documents({
             setCommentAttachment(null);
             fetchComments(selectedDocPreview.id);
         } else {
-            alert("Gagal mengirim komentar. Pastikan koneksi server stabil.");
+            toast.error("Gagal mengirim komentar. Pastikan koneksi server stabil.");
         }
         setIsPostingComment(false);
     };
@@ -225,7 +228,7 @@ export default function Documents({
         if (!window.confirm("Jadikan file lampiran ini sebagai revisi terbaru dokumen? Proses OCR akan dijalankan.")) return;
         const res = await promoteCommentAttachment(selectedDocPreview.id, commentId);
         if (res.success) {
-            alert("Berhasil menjadikan revisi. Dokumen sedang diproses OCR.");
+            toast.success("Berhasil menjadikan revisi. Dokumen sedang diproses OCR.");
             setSelectedDocPreview(null);
             // onRefresh() is now handled by store
         }
@@ -276,7 +279,7 @@ export default function Documents({
                 if (onRefresh) onRefresh();
             }, 500);
         } catch (e) {
-            alert("Operasi gagal: " + e.message);
+            toast.error("Operasi gagal: " + e);
             setIsExecutingOp(false);
             setOpProgress(0);
         }
@@ -291,7 +294,7 @@ export default function Documents({
             setIsRevisionModalOpen(false);
             // onRefresh() is now handled by store
         } catch (e) {
-            alert("Gagal mengembalikan versi: " + e.message);
+            toast.error("Gagal mengembalikan versi: " + e);
         } finally {
             setIsRestoring(false);
         }
@@ -320,7 +323,7 @@ export default function Documents({
             setSelectedDocIds(new Set());
             // onRefresh() is now handled by store
         } catch (e) {
-            alert("Gagal menghapus beberapa file: " + e.message);
+            toast.error("Gagal menghapus beberapa file: " + e);
         } finally {
             setIsBulkDeleting(false);
         }

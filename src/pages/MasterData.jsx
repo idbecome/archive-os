@@ -1,19 +1,19 @@
 import React, { useState, useMemo } from 'react';
 import { Plus, Edit3, Trash2, Building2, GitCommit, ShieldCheck, ChevronRight, Users, User, Shield } from 'lucide-react';
 import { Card } from '../components/ui/Card';
+import { useUserStore } from '../store/useUserStore';
+import { useDocStore } from '../store/useDocStore';
 
 export default function MasterData({
-    users, roles, departments, flows = [],
-    handleDeleteUser, handleEditRole, handleDeleteRole,
-    handleSaveDept, handleDeleteDept,
     handleCreateUser, handleEditUser,
     handleCreateDept, handleEditDept,
     handleCreateRole,
     handleCreateFlow, handleEditFlow, handleDeleteFlow,
-    setRoles, setDepartments,
     setIsModalOpen, setModalTab,
     hasPermission
 }) {
+    const { users, roles, departments, deleteUser, deleteRole, deleteDepartment } = useUserStore();
+    const { flows } = useDocStore();
     const [masterTab, setMasterTab] = useState('users');
     const [userSearchQuery, setUserSearchQuery] = useState('');
     const [expandedDepts, setExpandedDepts] = useState({});
@@ -26,7 +26,7 @@ export default function MasterData({
     };
 
     const groupedUsers = useMemo(() => {
-        const filtered = users.filter(u => 
+        const filtered = users.filter(u =>
             u.name.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
             (u.department || '').toLowerCase().includes(userSearchQuery.toLowerCase())
         );
@@ -77,7 +77,7 @@ export default function MasterData({
                         ) : (
                             Object.entries(groupedUsers).map(([deptName, deptUsers]) => (
                                 <div key={deptName} className="space-y-2">
-                                    <button 
+                                    <button
                                         onClick={() => toggleDept(deptName)}
                                         className="w-full flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl hover:shadow-md transition-all group"
                                     >
@@ -121,7 +121,7 @@ export default function MasterData({
                                                             <button onClick={() => handleEditUser(u)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-colors"><Edit3 size={16} /></button>
                                                         )}
                                                         {hasPermission('master', 'delete') && (
-                                                            <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"><Trash2 size={16} /></button>
+                                                            <button onClick={() => deleteUser(u.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"><Trash2 size={16} /></button>
                                                         )}
                                                     </div>
                                                 </div>
@@ -155,31 +155,32 @@ export default function MasterData({
                                 try { perms = JSON.parse(perms); } catch { perms = {}; }
                             }
                             return (
-                            <div key={r.id} className="p-4 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
-                                <div className="flex justify-between items-start mb-4">
-                                    <div>
-                                        <div className="font-bold text-lg dark:text-white">{r.label || r.name}</div>
-                                        <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Hak Akses Modul</div>
-                                    </div>
-                                    <div className="flex gap-1">
-                                        {hasPermission('master', 'edit') && (
-                                            <button onClick={() => handleEditRole(r)} className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"><Edit3 size={16} /></button>
-                                        )}
-                                        {hasPermission('master', 'delete') && (
-                                            <button onClick={() => handleDeleteRole(r.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 size={16} /></button>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="flex flex-wrap gap-2">
-                                    {Object.entries(perms).map(([mod, actions]) => (
-                                        <div key={mod} className="px-2 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded text-[10px] flex flex-col">
-                                            <span className="font-bold text-indigo-500 uppercase">{mod}</span>
-                                            <span className="text-gray-400">{Array.isArray(actions) ? actions.join(', ') : ''}</span>
+                                <div key={r.id} className="p-4 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div>
+                                            <div className="font-bold text-lg dark:text-white">{r.label || r.name}</div>
+                                            <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Hak Akses Modul</div>
                                         </div>
-                                    ))}
+                                        <div className="flex gap-1">
+                                            {hasPermission('master', 'edit') && (
+                                                <button onClick={() => handleEditRole(r)} className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"><Edit3 size={16} /></button>
+                                            )}
+                                            {hasPermission('master', 'delete') && (
+                                                <button onClick={() => deleteRole(r.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 size={16} /></button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {Object.entries(perms).map(([mod, actions]) => (
+                                            <div key={mod} className="px-2 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded text-[10px] flex flex-col">
+                                                <span className="font-bold text-indigo-500 uppercase">{mod}</span>
+                                                <span className="text-gray-400">{Array.isArray(actions) ? actions.join(', ') : ''}</span>
+                                            </div>
+                                        ))}
+                                    </div>
                                 </div>
-                            </div>
-                        )})}
+                            )
+                        })}
                     </div>
                 </Card>
             )}
@@ -247,7 +248,7 @@ export default function MasterData({
                                 <div className="font-bold dark:text-white text-sm">{d.name}</div>
                                 <div className="text-[10px] text-gray-400 mt-1 uppercase">ID: {d.id}</div>
                                 {hasPermission('master', 'delete') && (
-                                    <button onClick={() => handleDeleteDept(d.id)} className="mt-2 text-red-500 hover:text-red-700 text-xs"><Trash2 size={14} /></button>
+                                    <button onClick={() => deleteDepartment(d.id)} className="mt-2 text-red-500 hover:text-red-700 text-xs"><Trash2 size={14} /></button>
                                 )}
                             </div>
                         ))}

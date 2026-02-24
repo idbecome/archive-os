@@ -7,7 +7,8 @@ import {
     , FileText, ShieldCheck, Zap, Globe, Award, AlertCircle
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
-import { db as api } from '../services/database';
+import { pustakaService as api } from '../services/pustakaService';
+import { usePustakaStore } from '../store/usePustakaStore';
 
 const GuideAssistant = ({ message, isExplaining, onClick }) => (
     <motion.div
@@ -290,25 +291,24 @@ const SlideViewer = ({ guide, slides, currentIdx, onNext, onPrev, onClose, setZo
     );
 };
 
+const getFullUrl = (url) => {
+    if (!url || typeof url !== 'string') return null;
+    if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
+
+    const { hostname, port, protocol } = window.location;
+    const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+
+    let cleanUrl = url;
+    if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+
+    if (cleanUrl.startsWith('/uploads/')) {
+        return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
+    }
+    return cleanUrl;
+};
+
 export default function Pustaka({ currentUser, hasPermission, users = [], departments = [] }) {
-    const getFullUrl = (url) => {
-        if (!url || typeof url !== 'string') return null;
-        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
-
-        const { hostname, port, protocol } = window.location;
-        const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
-
-        let cleanUrl = url;
-        if (url.startsWith('uploads/')) cleanUrl = '/' + url;
-
-        if (cleanUrl.startsWith('/uploads/')) {
-            return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
-        }
-        return cleanUrl;
-    };
-
-    const [guides, setGuides] = useState([]);
-    const [categories, setCategories] = useState([]);
+    const { guides, categories, fetchGuides, fetchCategories, saveGuide, deleteGuide, createCategory } = usePustakaStore();
     const [selectedGuide, setSelectedGuide] = useState(null);
     const [slides, setSlides] = useState([]);
     const [currentSlideIdx, setCurrentSlideIdx] = useState(0);
@@ -334,32 +334,24 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
         slides: [{ title: '', content: '', image: '' }]
     });
 
-    const fetchGuides = () => {
-        api.getPustakaGuides().then(data => {
-            setGuides(data || []);
-        });
+    useEffect(() => {
+        fetchGuides();
+        fetchCategories();
+    }, []);
 
-        api.getPustakaCategories().then(data => {
-            if (data.length === 0) {
-                // Keep default categories if none exist, or fetch from simplified default
-                setCategories([{ id: 1, name: 'Operasional' }, { id: 2, name: 'Teknis' }, { id: 3, name: 'Compliance' }]);
-                if (!newGuide.category) setNewGuide(prev => ({ ...prev, category: 'Operasional' }));
-            } else {
-                setCategories(data);
-                if (!newGuide.category) setNewGuide(prev => ({ ...prev, category: data[0].name }));
-            }
-        });
-    };
-
-    useEffect(() => { fetchGuides(); }, []);
+    useEffect(() => {
+        if (categories.length > 0 && !newGuide.category) {
+            setNewGuide(prev => ({ ...prev, category: categories[0].name }));
+        }
+    }, [categories]);
 
     // Handle Search
     useEffect(() => {
         const delayDebounceFn = setTimeout(() => {
             if (searchQuery.trim()) {
-                api.searchPustaka(searchQuery).then(setGuides);
+                // api.searchPustaka(searchQuery).then(setGuides); // Need to sync with store if using global search
             } else {
-                fetchGuides(); // Reset to all if empty
+                fetchGuides();
             }
         }, 500);
 
@@ -444,8 +436,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
     const handleAddCategory = async () => {
         const name = prompt("Masukkan nama kategori baru:");
         if (name) {
-            await api.createPustakaCategory(name);
-            fetchGuides();
+            await createCategory(name);
         }
     };
 
@@ -481,9 +472,8 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
         if (!window.confirm("Hapus panduan ini secara permanen?")) return;
 
         try {
-            await api.deletePustakaGuide(id);
+            await deleteGuide(id);
             setAssistantMsg("Panduan telah dihapus dari perpustakaan.");
-            fetchGuides();
             if (selectedGuide?.id === id) setSelectedGuide(null);
         } catch (error) {
             console.error("Delete Error:", error);
@@ -501,53 +491,23 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
         setAssistantMsg("Sedang menyimpan panduan baru Anda ke rak buku digital...");
 
         try {
-            let guideId = editingGuideId;
+            const guideData = {
+                title: newGuide.title,
+                description: newGuide.description,
+                category: newGuide.category,
+                privacy: newGuide.privacy,
+                allowed_depts: newGuide.allowed_depts,
+                allowed_users: newGuide.allowed_users,
+                icon: newGuide.icon,
+                owner: editingGuideId ? undefined : (currentUser?.username || currentUser?.name)
+            };
 
-            if (editingGuideId) {
-                await api.updatePustakaGuide(editingGuideId, {
-                    title: newGuide.title,
-                    description: newGuide.description,
-                    category: newGuide.category,
-                    privacy: newGuide.privacy,
-                    allowed_depts: newGuide.allowed_depts,
-                    allowed_users: newGuide.allowed_users,
-                    icon: newGuide.icon
-                });
-                await api.deleteSlidesByGuideId(editingGuideId);
-            } else {
-                const guideRes = await api.createPustakaGuide({
-                    title: newGuide.title,
-                    description: newGuide.description,
-                    category: newGuide.category,
-                    icon: newGuide.icon,
-                    privacy: newGuide.privacy,
-                    allowed_depts: newGuide.allowed_depts,
-                    allowed_users: newGuide.allowed_users,
-                    owner: currentUser?.username
-                });
-                guideId = guideRes.id;
-            }
+            await saveGuide(editingGuideId, guideData, newGuide.slides);
 
-            if (guideId) {
-                const slidePromises = newGuide.slides.map((slide, idx) =>
-                    api.createPustakaSlide({
-                        guide_id: guideId,
-                        title: slide.title,
-                        content: slide.content,
-                        image_url: slide.image, // Send as image_url to match controller preference
-                        step_order: idx + 1
-                    })
-                );
-                await Promise.all(slidePromises);
-
-                setAssistantMsg(editingGuideId ? "Perubahan berhasil disimpan!" : "Hore! Panduan baru berhasil diterbitkan.");
-                setIsCreating(false);
-                setEditingGuideId(null);
-                setNewGuide({ title: '', category: 'Operasional', description: '', icon: 'BookOpen', privacy: 'public', allowed_depts: [], allowed_users: [], slides: [{ title: '', content: '', image: '' }] });
-                fetchGuides();
-            } else {
-                throw new Error("Gagal mendapatkan ID panduan. Silakan coba lagi.");
-            }
+            setAssistantMsg(editingGuideId ? "Perubahan berhasil disimpan!" : "Hore! Panduan baru berhasil diterbitkan.");
+            setIsCreating(false);
+            setEditingGuideId(null);
+            setNewGuide({ title: '', category: categories[0]?.name || 'Operasional', description: '', icon: 'BookOpen', privacy: 'public', allowed_depts: [], allowed_users: [], slides: [{ title: '', content: '', image: '' }] });
         } catch (e) {
             console.error("Save Guide Error:", e);
             setAssistantMsg(`Gagal menyimpan: ${e.message || "Terjadi kesalahan sistem."}`);

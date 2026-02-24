@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import { db as api } from '../services/database';
+import { inventoryService as api } from '../services/inventoryService';
+import { handleApiError } from '../utils/errorHelper';
 import { TOTAL_SLOTS } from '../utils/constants';
 
 export const useInventoryStore = create((set, get) => ({
@@ -74,20 +75,73 @@ export const useInventoryStore = create((set, get) => ({
 
     // Mutation Actions
     updateInventory: async (id, data) => {
-        await api.updateInventory(id, data);
-        await get().fetchInventory();
+        const prev = get().inventory;
+        set({
+            inventory: prev.map(item => item.id === id ? { ...item, ...data } : item)
+        });
+        try {
+            await api.updateInventory(id, data);
+            await get().fetchInventory();
+        } catch (error) {
+            set({ inventory: prev });
+            const msg = await handleApiError(error);
+            console.error("Failed to update inventory:", msg);
+            throw msg;
+        }
     },
     moveInventory: async (sourceId, targetId, user) => {
-        const res = await api.moveInventory(sourceId, targetId, user);
-        await get().fetchInventory();
-        return res;
+        const prev = get().inventory;
+        const sourceSlot = prev.find(s => s.id === sourceId);
+        const targetSlot = prev.find(s => s.id === targetId);
+
+        if (!sourceSlot || !targetSlot) return;
+
+        // Optimistic Swap/Move
+        const newInventory = prev.map(s => {
+            if (s.id === sourceId) return { ...s, status: 'EMPTY', boxData: null };
+            if (s.id === targetId) return { ...s, status: sourceSlot.status, boxData: sourceSlot.boxData };
+            return s;
+        });
+
+        set({ inventory: newInventory });
+
+        try {
+            const res = await api.moveInventory(sourceId, targetId, user);
+            await get().fetchInventory();
+            return res;
+        } catch (error) {
+            set({ inventory: prev });
+            const msg = await handleApiError(error);
+            console.error("Failed to move inventory:", msg);
+            throw msg;
+        }
     },
     createExternalItem: async (item) => {
-        await api.createExternalItem(item);
-        await get().fetchInventory();
+        const prev = get().externalItems;
+        const tempId = `temp-${Date.now()}`;
+        const newItem = { ...item, id: tempId };
+        set({ externalItems: [newItem, ...prev] });
+        try {
+            await api.createExternalItem(item);
+            await get().fetchInventory();
+        } catch (error) {
+            set({ externalItems: prev });
+            const msg = await handleApiError(error);
+            console.error("Failed to create external item:", msg);
+            throw msg;
+        }
     },
     deleteExternalItem: async (id) => {
-        await api.deleteExternalItem(id);
-        await get().fetchInventory();
+        const prev = get().externalItems;
+        set({ externalItems: prev.filter(item => item.id !== id) });
+        try {
+            await api.deleteExternalItem(id);
+            await get().fetchInventory();
+        } catch (error) {
+            set({ externalItems: prev });
+            const msg = await handleApiError(error);
+            console.error("Failed to delete external item:", msg);
+            throw msg;
+        }
     }
 }));

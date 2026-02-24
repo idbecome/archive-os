@@ -2,7 +2,7 @@ import React from 'react';
 import { Search, Download, FileText, Upload, Trash2, Copy, ChevronLeft, ChevronRight } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Card } from '../ui/Card';
-import { API_URL } from '../../services/database';
+import { API_URL } from '../../services/apiClient';
 
 export default function TaxWpDatabase({
     savedData, searchTerm, setSearchTerm,

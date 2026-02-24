@@ -3,11 +3,13 @@ import { Calculator, Sparkles, TrendingUp, AlertCircle, FileText, Search, Databa
 import * as XLSX from 'xlsx';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
-import { API_URL } from '../services/database';
+import { API_URL } from '../services/apiClient';
+import { useToast } from '../components/ui/Toast';
 import TaxObjectForm from '../components/tax/TaxObjectForm';
 import TaxWpDatabase from '../components/tax/TaxWpDatabase';
 
 export default function TaxCalculation({ onCopy, hasPermission }) {
+    const { toast } = useToast();
     const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database'
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -137,14 +139,14 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             });
             const result = await res.json();
             if (res.ok) {
-                alert(result.message);
+                toast.success(result.message);
                 fetchDatabase();
             } else {
-                alert('Gagal import: ' + result.error);
+                toast.error('Gagal import: ' + result.error);
             }
         } catch (error) {
             console.error("Import error:", error);
-            alert('Terjadi kesalahan saat upload.');
+            toast.error('Terjadi kesalahan saat upload.');
         } finally {
             setIsImporting(false);
             e.target.value = null; // Reset input
@@ -166,14 +168,14 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             });
             const result = await res.json();
             if (res.ok) {
-                alert(result.message);
+                toast.success(result.message);
                 fetchMasterData();
             } else {
-                alert('Gagal import master: ' + result.error);
+                toast.error('Gagal import master: ' + result.error);
             }
         } catch (error) {
             console.error("Import master error:", error);
-            alert('Terjadi kesalahan saat upload master.');
+            toast.error('Terjadi kesalahan saat upload master.');
         } finally {
             setIsImporting(false);
             e.target.value = null; // Reset input
@@ -193,12 +195,12 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     const handleSave = async () => {
         if (!formData.identityNumber || !formData.name) {
-            alert('Nomor Identitas dan Nama Wajib Pajak wajib diisi!');
+            toast.warning('Nomor Identitas dan Nama Wajib Pajak wajib diisi!');
             return;
         }
 
         if (formData.identityNumber.length !== 16) {
-            alert('Nomor Identitas (NPWP/NIK) harus berjumlah 16 digit angka!');
+            toast.warning('Nomor Identitas (NPWP/NIK) harus berjumlah 16 digit angka!');
             return;
         }
 
@@ -233,7 +235,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
             if (res.ok) {
                 const result = await res.json();
-                alert(`Data berhasil ${editingId ? 'diperbarui' : 'disimpan'} ke Database WP!`);
+                toast.success(`Data berhasil ${editingId ? 'diperbarui' : 'disimpan'} ke Database WP!`);
                 setEditingId(null);
                 setFormData({
                     idType: 'NPWP',
@@ -252,11 +254,11 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             } else {
                 const errorText = await res.text();
                 const isHtml = errorText.includes('<!DOCTYPE');
-                alert(`Gagal menyimpan (Status ${res.status}): ${isHtml ? 'API /tax/wp tidak ditemukan.' : errorText}`);
+                toast.error(`Gagal menyimpan (Status ${res.status}): ${isHtml ? 'API /tax/wp tidak ditemukan.' : errorText}`);
             }
         } catch (error) {
             console.error("Error saving data:", error);
-            alert('Terjadi kesalahan saat menyimpan data.');
+            toast.error('Terjadi kesalahan saat menyimpan data.');
         } finally {
             setIsLoading(false);
         }
@@ -296,7 +298,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     const handleDeleteAll = async () => {
         if (!window.confirm('PERINGATAN: Anda akan menghapus SELURUH data di Database WP. Tindakan ini tidak dapat dibatalkan. Lanjutkan?')) return; // Use window.confirm
-        if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
+        if (!canDelete) return toast.error('Anda tidak memiliki izin untuk menghapus data.');
 
         setIsLoading(true);
         try {
@@ -304,16 +306,16 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                 method: 'DELETE'
             });
             if (res.ok) {
-                alert('Seluruh data Database WP berhasil dihapus.');
+                toast.success('Seluruh data Database WP berhasil dihapus.');
                 fetchDatabase();
             } else {
                 const errorText = await res.text();
                 const isHtml = errorText.includes('<!DOCTYPE');
-                alert(`Gagal menghapus (Status ${res.status}): ${isHtml ? 'API /tax/wp-all tidak ditemukan.' : errorText}`);
+                toast.error(`Gagal menghapus (Status ${res.status}): ${isHtml ? 'API /tax/wp-all tidak ditemukan.' : errorText}`);
             }
         } catch (error) {
             console.error("Delete all error:", error);
-            alert('Terjadi kesalahan saat menghapus data.');
+            toast.error('Terjadi kesalahan saat menghapus data.');
         } finally {
             setIsLoading(false);
         }
@@ -321,7 +323,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     const handleDelete = async (id) => {
         if (!window.confirm('Yakin ingin menghapus data ini?')) return; // Use window.confirm
-        if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
+        if (!canDelete) return toast.error('Anda tidak memiliki izin untuk menghapus data.');
         try {
             const res = await fetch(`${API_URL}/tax/wp/${id}`, { method: 'DELETE' });
             if (res.ok) {
@@ -329,7 +331,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             } else {
                 const errorText = await res.text();
                 const isHtml = errorText.includes('<!DOCTYPE');
-                alert(`Gagal menghapus (Status ${res.status}): ${isHtml ? 'API tidak ditemukan.' : errorText}`);
+                toast.error(`Gagal menghapus (Status ${res.status}): ${isHtml ? 'API tidak ditemukan.' : errorText}`);
             }
         } catch (error) {
             console.error("Error deleting data:", error);

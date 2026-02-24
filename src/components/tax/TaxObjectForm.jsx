@@ -3,7 +3,7 @@ import { User, FileText, Download, Upload, Save, TrendingUp } from 'lucide-react
 import * as XLSX from 'xlsx';
 import { Card } from '../ui/Card';
 import TaxCalculator from './TaxCalculator';
-import { API_URL } from '../../services/database';
+import { API_URL } from '../../services/apiClient';
 
 export default function TaxObjectForm({
     formData, setFormData,
@@ -165,17 +165,17 @@ export default function TaxObjectForm({
                     </div>
                 </Card>
 
-                <TaxCalculator 
-                    title="Perhitungan Pajak" 
-                    onCalculate={setCalcData} 
-                    initialDpp={calcData.dpp || ''} 
-                    initialRate={calcData.rate || ''} 
-                    initialDiscount={calcData.discount || ''} 
-                    initialMarkupMode={calcData.markupMode} 
-                    initialIsPph21BukanPegawai={calcData.isPph21BukanPegawai} 
-                    initialUsePpn={calcData.usePpn} 
-                    onCopy={onCopy} 
-                    isReadOnly={isReadOnly} 
+                <TaxCalculator
+                    title="Perhitungan Pajak"
+                    onCalculate={setCalcData}
+                    initialDpp={calcData.dpp || ''}
+                    initialRate={calcData.rate || ''}
+                    initialDiscount={calcData.discount || ''}
+                    initialMarkupMode={calcData.markupMode}
+                    initialIsPph21BukanPegawai={calcData.isPph21BukanPegawai}
+                    initialUsePpn={calcData.usePpn}
+                    onCopy={onCopy}
+                    isReadOnly={isReadOnly}
                 />
 
                 {!isReadOnly && <div className="flex justify-end gap-3">

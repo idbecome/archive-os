@@ -4,7 +4,7 @@ import { Card, SummaryCard } from '../components/ui/Card';
 import QueueStatus from '../components/ui/QueueStatus';
 import WarehouseMap from '../components/WarehouseMap';
 import TaxAnalytics from '../components/TaxAnalytics';
-import { API_URL } from '../services/database';
+import { API_URL } from '../services/apiClient';
 
 export default function Dashboard({
     stats: propStats,

@@ -8,9 +8,11 @@ import {
 import WorkflowViewer from '../components/workflow/WorkflowViewer';
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
-import { db as api } from '../services/database';
+import { documentService as api } from '../services/documentService';
+import { useToast } from '../components/ui/Toast';
 
 export default function DocumentApproval({ approvals = [], users = [], departments = [], currentUser, onRefresh, hasPermission, flows = [], syncApprovalFolder }) {
+    const { toast } = useToast();
     const getFullUrl = (url) => {
         if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
         const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
@@ -125,7 +127,7 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
     };
 
     const handleSubmit = async () => {
-        if (!form.title || form.steps.length === 0) return alert("Judul dan minimal 1 Approver wajib diisi!");
+        if (!form.title || form.steps.length === 0) return toast.warning("Judul dan minimal 1 Approver wajib diisi!");
         setIsSubmitting(true);
 
         // Sync folder ApprovalDoc
@@ -165,7 +167,7 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             setNoteAttachment(null);
             onRefresh();
         } catch (e) {
-            alert(e.message);
+            toast.error(e.message);
         } finally {
             setIsSubmitting(false);
         }
@@ -187,7 +189,7 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             setActionAttachment(null);
             setSelectedApproval(null);
             onRefresh();
-        } catch (e) { alert(e.message); }
+        } catch (e) { toast.error(e.message); }
     };
 
     const handleResetStep = async (stepIndex) => {
@@ -197,7 +199,7 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             await api.resetApprovalStep(selectedApproval.id, stepIndex);
             onRefresh();
             setSelectedApproval(null);
-        } catch (e) { alert(e.message); }
+        } catch (e) { toast.error(e.message); }
     };
 
     const handleDelete = async (id, e) => {
@@ -206,7 +208,7 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
         try {
             await api.deleteApproval(id);
             onRefresh();
-        } catch (e) { alert(e.message); }
+        } catch (e) { toast.error(e.message); }
     };
 
     const visibleApprovals = (approvals || []).filter(a => {

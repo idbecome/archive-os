@@ -12,6 +12,55 @@ import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { generateEmbedding } from './ai_search.js';
 
 import { pathToFileURL } from 'url';
+import { ocrQueue } from './queue.js';
+
+
+// --- TESSERACT WORKER POOL ---
+class TesseractPool {
+    constructor(concurrency = 1) {
+        this.concurrency = concurrency;
+        this.workers = [];
+        this.idleWorkers = [];
+        this.queue = [];
+    }
+
+    async getWorker() {
+        if (this.idleWorkers.length > 0) {
+            return this.idleWorkers.pop();
+        }
+
+        if (this.workers.length < this.concurrency) {
+            console.log(`[TesseractPool] Creating new worker (${this.workers.length + 1}/${this.concurrency})`);
+            const worker = await createWorker('eng+ind');
+            this.workers.push(worker);
+            return worker;
+        }
+
+        return new Promise(resolve => {
+            this.queue.push(resolve);
+        });
+    }
+
+    releaseWorker(worker) {
+        if (this.queue.length > 0) {
+            const resolve = this.queue.shift();
+            resolve(worker);
+        } else {
+            this.idleWorkers.push(worker);
+        }
+    }
+
+    async terminate() {
+        for (const worker of this.workers) {
+            await worker.terminate();
+        }
+        this.workers = [];
+        this.idleWorkers = [];
+    }
+}
+
+const tessPool = new TesseractPool(process.env.MAX_OCR_CONCURRENCY ? parseInt(process.env.MAX_OCR_CONCURRENCY) : 1);
+
 
 // Configure PDF.js worker
 const workerPath = path.join(path.dirname(require.resolve('pdfjs-dist/package.json')), 'legacy', 'build', 'pdf.worker.mjs');
@@ -201,14 +250,14 @@ async function processOCRJob(job) {
             if (effectiveFileType.startsWith('image/')) {
                 let tess = null;
                 try {
-                    tess = await createWorker('eng+ind');
+                    tess = await tessPool.getWorker();
                     const { data: { text } } = await tess.recognize(filePath);
                     extractedText = `[OCR IMAGE]\n${text}`;
                 } catch (ocrErr) {
                     console.error("[Worker] Tesseract Image OCR Failed:", ocrErr);
                     extractedText = `[OCR FAILED] ${ocrErr.message}`;
                 } finally {
-                    if (tess) await tess.terminate();
+                    if (tess) tessPool.releaseWorker(tess);
                 }
             }
             else if (effectiveFileType === 'application/pdf') {
@@ -254,13 +303,16 @@ async function processOCRJob(job) {
                     try {
                         const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
                         if (images.length > 0) {
-                            const tess = await createWorker('eng+ind');
+                            const tess = await tessPool.getWorker();
                             let ocrText = "";
-                            for (const imgBuffer of images) {
-                                const { data: { text } } = await tess.recognize(imgBuffer);
-                                ocrText += text + "\n";
+                            try {
+                                for (const imgBuffer of images) {
+                                    const { data: { text } } = await tess.recognize(imgBuffer);
+                                    ocrText += text + "\n";
+                                }
+                            } finally {
+                                tessPool.releaseWorker(tess);
                             }
-                            await tess.terminate();
 
                             if (ocrText.trim().length > 20) {
                                 extractedText = `[OCR-SCAN]\n${ocrText}\n\n[METADATA]\n${extractedText}`;
@@ -442,9 +494,13 @@ async function processOCRJob(job) {
     }
 }
 
+// --- CONCURRENCY CONTROL ---
+const MAX_CONCURRENT_JOBS = process.env.MAX_OCR_CONCURRENCY ? parseInt(process.env.MAX_OCR_CONCURRENCY) : 1;
+let activeJobsCount = 0;
+
 // --- POLLING WORKER (Replaces BullMQ/Redis) ---
 async function startPolling() {
-    console.log("[Worker] Starting MySQL Polling (No Redis)...");
+    console.log(`[Worker] Starting MySQL Polling (Concurrency: ${MAX_CONCURRENT_JOBS})...`);
 
     // FIX: Reset stuck jobs on startup (Active -> Waiting)
     await knex('job_queue')
@@ -453,21 +509,37 @@ async function startPolling() {
     console.log("[Worker] Startup: Reset stuck 'active' jobs to 'waiting'.");
 
     const poll = async () => {
+        if (activeJobsCount >= MAX_CONCURRENT_JOBS) {
+            // Re-poll later when a slot is free
+            return setTimeout(poll, 1000);
+        }
+
         try {
-            // 1. Fetch one waiting job
-            const row = await knex('job_queue')
-                .where('status', 'waiting')
-                .orderBy('created_at', 'asc')
-                .first();
+            // 1. ATOMIC CLAIM (MariaDB/Older MySQL Compatible)
+            const row = await knex.transaction(async trx => {
+                // Find first waiting job
+                const job = await trx('job_queue')
+                    .where('status', 'waiting')
+                    .orderBy('created_at', 'asc')
+                    .first();
+
+                if (job) {
+                    // Try to claim it
+                    const affected = await trx('job_queue')
+                        .where('id', job.id)
+                        .where('status', 'waiting') // Double check status hasn't changed
+                        .update({
+                            status: 'active',
+                            processed_at: knex.fn.now()
+                        });
+
+                    if (affected > 0) return job;
+                }
+                return null;
+            });
 
             if (row) {
-                // 2. Mark as Active
-                await knex('job_queue')
-                    .where('id', row.id)
-                    .update({
-                        status: 'active',
-                        processed_at: knex.fn.now()
-                    });
+                activeJobsCount++;
 
                 // Construct Job Object
                 let jobData;
@@ -478,6 +550,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({ status: 'failed', error: 'Corrupt JSON Data' });
+                    activeJobsCount--;
                     return setTimeout(poll, 100);
                 }
 
@@ -491,34 +564,41 @@ async function startPolling() {
                     }
                 };
 
-                try {
-                    // Race against timeout (3 minutes)
-                    await Promise.race([
-                        processOCRJob(job),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error("Job Timeout (3m)")), 180000))
-                    ]);
+                // Process in background to allow next poll to initiate if concurrency allowed
+                (async () => {
+                    try {
+                        // Race against timeout (3 minutes)
+                        await Promise.race([
+                            processOCRJob(job),
+                            new Promise((_, reject) => setTimeout(() => reject(new Error("Job Timeout (3m)")), 180000))
+                        ]);
 
-                    // 3. Mark Completed
-                    await knex('job_queue')
-                        .where('id', row.id)
-                        .update({
-                            status: 'completed',
-                            finished_at: knex.fn.now(),
-                            progress: 100
-                        });
-                    setTimeout(poll, 100); // Process next immediately
-                } catch (e) {
-                    // 4. Mark Failed
-                    console.error(`[Worker] Job ${row.id} Failed or Timed Out:`, e.message);
-                    await knex('job_queue')
-                        .where('id', row.id)
-                        .update({
-                            status: 'failed',
-                            finished_at: knex.fn.now(),
-                            error: e.message
-                        });
-                    setTimeout(poll, 1000);
-                }
+                        // 3. Mark Completed
+                        await knex('job_queue')
+                            .where('id', row.id)
+                            .update({
+                                status: 'completed',
+                                finished_at: knex.fn.now(),
+                                progress: 100
+                            });
+                        console.log(`[Worker] Job ${row.id} completed successfully.`);
+                    } catch (e) {
+                        // 4. Mark Failed
+                        console.error(`[Worker] Job ${row.id} Failed or Timed Out:`, e.message);
+                        await knex('job_queue')
+                            .where('id', row.id)
+                            .update({
+                                status: 'failed',
+                                finished_at: knex.fn.now(),
+                                error: e.message
+                            });
+                    } finally {
+                        activeJobsCount--;
+                    }
+                })();
+
+                // Immediately check for more work if we have capacity
+                setTimeout(poll, 100);
             } else {
                 // No jobs, wait 2 seconds
                 setTimeout(poll, 2000);
@@ -529,7 +609,14 @@ async function startPolling() {
         }
     };
 
+    // 2. Periodic Cleanup (Every 5 minutes)
+    setInterval(() => {
+        ocrQueue.cleanupStaleJobs(10).catch(err => console.error("[Worker] Periodic Cleanup Error:", err));
+    }, 5 * 60 * 1000);
+
     poll();
 }
 
 startPolling();
+
+

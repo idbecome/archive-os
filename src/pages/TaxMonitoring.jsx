@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp, FileDigit, Image as ImageIcon, Edit3, Eye } from 'lucide-react';
-import { db as api } from '../services/database';
+import { taxService as api } from '../services/taxService';
+import { documentService } from '../services/documentService';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
 import AuditStepTracker from '../components/tax/AuditStepTracker';
 import TaxFileDetailModal from '../components/modals/TaxFileDetailModal';
 import TaxUploadModal from '../components/modals/TaxUploadModal';
+import { useTaxStore } from '../store/useTaxStore';
 import { useToast, ToastContainer } from '../components/ui/Toast';
 
 // ... (code)
@@ -22,7 +24,8 @@ const AUDIT_STEPS = [
     { id: 7, title: 'LHP & SKP', description: 'Laporan Hasil Pemeriksaan dan Penerbitan Surat Ketetapan Pajak.' }
 ];
 
-export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, onRefresh, syncAuditFolder }) {
+export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, syncAuditFolder }) {
+    const { taxAudits, createTaxAudit, updateTaxAudit, deleteTaxAudit, updateAuditStep, saveAuditNote } = useTaxStore();
     const { toasts, toast, removeToast, updateToast } = useToast();
     const [selectedAudit, setSelectedAudit] = useState(null);
     const [activeStep, setActiveStep] = useState(1);
@@ -84,7 +87,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     useEffect(() => {
         const loadGeneralAttachments = async () => {
             try {
-                const docs = await api.getDocuments({ stepIndex: 0 });
+                const docs = await documentService.getDocs({ stepIndex: 0 });
                 if (Array.isArray(docs)) {
                     const map = {};
                     docs.forEach(d => { if (d.auditId) map[d.auditId] = d; });
@@ -129,7 +132,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             const params = { stepIndex: activeStep, auditId: audit.id };
             if (folderId) params.folderId = folderId;
 
-            const files = await api.getDocuments(params);
+            const files = await documentService.getDocs(params);
             // Normalisasi data file agar terbaca dari berbagai format key
             const normalizedFiles = (Array.isArray(files) ? files : []).map(f => ({
                 ...f,
@@ -165,7 +168,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             setNoteAttachment(null);
             loadStepNotes();
         } else {
-            alert("Gagal mengirim catatan.");
+            toast.error("Gagal mengirim catatan.");
         }
         setIsPostingNote(false);
     };
@@ -184,7 +187,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         if (file.id && String(file.id).startsWith('note-')) return;
 
         try {
-            const fullDoc = await api.getDocumentById(file.id);
+            const fullDoc = await documentService.getDocumentById(file.id);
             if (fullDoc) {
                 setSelectedFileDetail(fullDoc);
             }
@@ -196,18 +199,18 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const getOrCreateAuditFolder = async (auditTitle) => {
         const folderName = `Pemeriksaan - ${auditTitle}`;
         try {
-            const folders = await api.getFolders();
+            const folders = await documentService.getFolders();
             const existing = folders.find(f => f.name.trim().toLowerCase() === folderName.trim().toLowerCase());
             if (existing) return existing.id;
 
-            const res = await api.createFolder({
+            const res = await documentService.createFolder({
                 name: folderName,
                 parentId: null,
                 privacy: 'public',
                 owner: currentUser?.name || 'System'
             });
             if (res && res.id) return res.id;
-            const freshFolders = await api.getFolders();
+            const freshFolders = await documentService.getFolders();
             return freshFolders.find(f => f.name === folderName)?.id || null;
         } catch (e) {
             console.error("Folder creation failed", e);
@@ -252,7 +255,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 } else {
                     console.log("Data file lokal kosong di TaxMonitoring, mencoba fetch ulang...", file.id);
                     try {
-                        const fullDoc = await api.getDocumentById(file.id);
+                        const fullDoc = await documentService.getDocumentById(file.id);
                         if (fullDoc) {
                             base64Content = fullDoc.fileData || fullDoc.file_data || fullDoc.filedata;
                         }
@@ -304,7 +307,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             }
 
             if (!downloadUrl) {
-                alert("File asli tidak ditemukan di database (Mungkin file terlalu besar saat upload atau data corrupt). Mengunduh hasil OCR/Teks saja.");
+                toast.warning("File asli tidak ditemukan di database (Mungkin file terlalu besar saat upload atau data corrupt). Mengunduh hasil OCR/Teks saja.");
                 const blob = new Blob([file.ocrContent || file.description || 'File tidak tersedia'], { type: 'text/plain' });
                 downloadUrl = URL.createObjectURL(blob);
                 fileName += '.txt';
@@ -321,7 +324,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             }
         } catch (e) {
             console.error("Download error", e);
-            alert("Gagal download: " + e.message);
+            toast.error("Gagal download: " + e.message);
         }
     };
 
@@ -346,7 +349,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     };
 
     const handleSaveAudit = async () => {
-        if (!newAuditTitle.trim()) { alert("Judul Pemeriksaan wajib diisi!"); return; }
+        if (!newAuditTitle.trim()) { toast.warning("Judul Pemeriksaan wajib diisi!"); return; }
         setIsSaving(true);
 
         try {
@@ -364,11 +367,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     auditor: newAuditAuditor,
                     startDate: payload_startDate
                 };
-                await api.updateTaxAudit(updatedAudit.id, updatedAudit);
+                await updateTaxAudit(updatedAudit.id, updatedAudit);
                 if (selectedAudit && selectedAudit.id === editingAudit.id) {
                     setSelectedAudit({ ...selectedAudit, ...updatedAudit });
                 }
-                currentAuditId = updatedAudit.id;
             } else {
                 const auditId = String(Date.now());
                 const newAudit = {
@@ -382,8 +384,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     steps: Array(7).fill({ notes: [], status: 'Pending', startDate: null, endDate: null }).map((s, i) => i === 0 ? { ...s, status: 'On Progress', startDate: payload_startDate } : s)
                 };
 
-                await api.createTaxAudit(newAudit);
-                currentAuditId = auditId;
+                await createTaxAudit(newAudit);
 
                 if (newAuditFile) {
                     const folderId = await syncAuditFolder(newAuditTitle, 'ACTIVE');
@@ -394,7 +395,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                         type: newAuditFile.type,
                         size: (newAuditFile.size / 1024 / 1024).toFixed(2) + ' MB',
                         uploadDate: new Date().toISOString(),
-                        auditId: currentAuditId,
+                        auditId: newAudit.id,
                         stepIndex: 0,
                         folderId: folderId,
                         department: 'Tax',
@@ -403,7 +404,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                         file: newAuditFile
                     };
 
-                    await api.createDocument(docPayload);
+                    await documentService.createDocument(docPayload);
                 }
             }
 
@@ -414,7 +415,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             setNewAuditFile(null);
             if (onRefresh) onRefresh();
         } catch (e) {
-            alert('Gagal menyimpan: ' + e.message);
+            toast.error('Gagal menyimpan: ' + e.message);
             console.error("Failed to save audit or upload initial file:", e);
         } finally {
             setIsSaving(false);
@@ -429,10 +430,10 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             if (audit) {
                 await syncAuditFolder(audit.title, 'REMOVED');
             }
-            await api.deleteTaxAudit(id);
+            await deleteTaxAudit(id);
             if (onRefresh) onRefresh();
         } catch (e) {
-            alert('Gagal menghapus: ' + e.message);
+            toast.error('Gagal menghapus: ' + e.message);
         }
     };
 
@@ -447,52 +448,34 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         stepData.endDate = new Date().toISOString();
 
         if (activeStep < 7) {
-            updatedSteps[activeStep].status = 'On Progress';
-            updatedSteps[activeStep].startDate = new Date().toISOString();
-            updatedSteps[activeStep].notes = updatedSteps[activeStep].notes || [];
+            await updateAuditStep(selectedAudit.id, activeStep - 1, { status: 'Done', endDate: new Date().toISOString() });
+            await updateAuditStep(selectedAudit.id, activeStep, { status: 'On Progress', startDate: new Date().toISOString() });
 
-            const updatedAudit = { ...selectedAudit, steps: updatedSteps, currentStep: activeStep + 1 };
-            if (activeStep + 1 === 7 && updatedSteps[6].status === 'Done') updatedAudit.status = 'Done';
-            setSelectedAudit(updatedAudit);
-            await api.updateTaxAudit(selectedAudit.id, updatedAudit);
-            setIsSaving(false);
-            if (onRefresh) onRefresh();
+            // If it's the 6th step (index 5) moving to 7th (index 6)
+            if (activeStep === 6) {
+                // Potential overall status update logic... 
+                // Using updateTaxAudit for the full object if needed, or refine updateAuditStep
+            }
         } else {
-            const updatedAudit = { ...selectedAudit, steps: updatedSteps, status: 'Done' };
-            setSelectedAudit(updatedAudit);
-            await api.updateTaxAudit(selectedAudit.id, updatedAudit);
-            setIsSaving(false);
-            if (onRefresh) onRefresh();
+            await updateAuditStep(selectedAudit.id, 6, { status: 'Done', endDate: new Date().toISOString() });
+            await updateTaxAudit(selectedAudit.id, { ...selectedAudit, status: 'Done' });
         }
+        setIsSaving(false);
+        if (onRefresh) onRefresh();
     };
 
     const handleSendbackStep = async () => {
         if (!selectedAudit) return;
         if (!confirm("Batalkan status selesai untuk tahap ini? Tahap berikutnya akan kembali ke status Pending.")) return;
 
+        await updateAuditStep(selectedAudit.id, activeStep - 1, { status: 'On Progress', endDate: null });
+
+        // Reset subsequent steps
         const updatedSteps = [...selectedAudit.steps];
-        const currentData = updatedSteps[activeStep - 1];
-
-        // Revert current step to On Progress
-        currentData.status = 'On Progress';
-        currentData.endDate = null;
-
-        // Reset all subsequent steps to Pending
         for (let i = activeStep; i < updatedSteps.length; i++) {
-            updatedSteps[i].status = 'Pending';
-            updatedSteps[i].startDate = null;
-            updatedSteps[i].endDate = null;
+            updatedSteps[i] = { ...updatedSteps[i], status: 'Pending', startDate: null, endDate: null };
         }
-
-        const updatedAudit = {
-            ...selectedAudit,
-            steps: updatedSteps,
-            currentStep: activeStep,
-            status: 'On Progress' // If it was Done, revert to On Progress
-        };
-
-        setSelectedAudit(updatedAudit);
-        await api.updateTaxAudit(selectedAudit.id, updatedAudit);
+        await updateTaxAudit(selectedAudit.id, { ...selectedAudit, steps: updatedSteps, currentStep: activeStep, status: 'On Progress' });
         if (onRefresh) onRefresh();
     };
 
@@ -502,7 +485,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         if (!file) return;
 
         if (file.size > 30 * 1024 * 1024) {
-            alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
+            toast.error("File terlalu besar! Maksimal ukuran file adalah 30MB.");
             e.target.value = null;
             return;
         }
@@ -562,7 +545,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 file: uploadForm.file // File object
             };
 
-            await api.createDocument(docPayload);
+            await documentService.createDocument(docPayload);
             updateToast(toastId, { message: `"${docPayload.title}" berhasil diupload`, type: 'success' });
 
             loadFiles(selectedAudit); // Reload list
@@ -576,11 +559,11 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
     const handleDeleteFile = async (docId) => {
         if (!confirm("Hapus dokumen ini?")) return;
         try {
-            await api.deleteDocument(docId);
+            await documentService.deleteDocument(docId);
             loadFiles(selectedAudit);
             if (onRefresh) onRefresh();
         } catch (e) {
-            alert("Gagal menghapus file: " + e.message);
+            toast.error("Gagal menghapus file: " + e.message);
         }
     };
 
@@ -901,11 +884,11 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                                     <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Step Tracking</h3>
 
                                     {/* Desktop/Tablet Horizontal Flow */}
-                                    <AuditStepTracker 
-                                        AUDIT_STEPS={AUDIT_STEPS} 
-                                        selectedAudit={selectedAudit} 
-                                        activeStep={activeStep} 
-                                        setActiveStep={setActiveStep} 
+                                    <AuditStepTracker
+                                        AUDIT_STEPS={AUDIT_STEPS}
+                                        selectedAudit={selectedAudit}
+                                        activeStep={activeStep}
+                                        setActiveStep={setActiveStep}
                                     />
 
                                     {/* Mobile Vertical Flow (Fallback) */}

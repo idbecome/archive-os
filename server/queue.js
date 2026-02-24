@@ -62,6 +62,23 @@ class DbQueue {
             return [];
         }
     }
+    async cleanupStaleJobs(ttlMinutes = 10) {
+        try {
+            const staleTime = new Date(Date.now() - ttlMinutes * 60 * 1000);
+            const count = await knex('job_queue')
+                .where('status', 'active')
+                .where('processed_at', '<', staleTime)
+                .update({
+                    status: 'failed',
+                    error: `Stale Job (Active for > ${ttlMinutes}m)`
+                });
+            if (count > 0) console.log(`[Queue] Cleaned up ${count} stale jobs.`);
+            return count;
+        } catch (err) {
+            console.error("Cleanup Stale Jobs Error:", err);
+            return 0;
+        }
+    }
 }
 
 export const ocrQueue = new DbQueue('OCR_QUEUE');
