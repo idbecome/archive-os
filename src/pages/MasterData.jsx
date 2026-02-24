@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Edit3, Trash2, Building2, GitCommit, ShieldCheck, ChevronRight, Users, User, Shield } from 'lucide-react';
+import { Plus, Edit3, Trash2, Building2, GitCommit, ShieldCheck, ChevronRight, Users, User, Shield, Search, History } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { useUserStore } from '../store/useUserStore';
 import { useDocStore } from '../store/useDocStore';
@@ -12,7 +12,10 @@ export default function MasterData({
     setIsModalOpen, setModalTab,
     hasPermission
 }) {
-    const { users, roles, departments, deleteUser, deleteRole, deleteDepartment } = useUserStore();
+    const {
+        users, roles, departments, logs, logPagination, fetchLogs,
+        deleteUser, deleteRole, deleteDepartment
+    } = useUserStore();
     const { flows } = useDocStore();
     const [masterTab, setMasterTab] = useState('users');
     const [userSearchQuery, setUserSearchQuery] = useState('');
@@ -41,13 +44,16 @@ export default function MasterData({
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
             <div className="flex gap-4 mb-4">
-                {['users', 'roles', 'departments', 'flows'].map(tab => (
+                {['users', 'roles', 'departments', 'flows', 'logs'].map(tab => (
                     <button
                         key={tab}
-                        onClick={() => setMasterTab(tab)}
+                        onClick={() => {
+                            setMasterTab(tab);
+                            if (tab === 'logs') fetchLogs(1, 15);
+                        }}
                         className={`px-4 py-2 rounded-lg capitalize transition-colors ${masterTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
                     >
-                        {tab}
+                        {tab === 'logs' ? 'System Logs' : tab}
                     </button>
                 ))}
             </div>
@@ -222,6 +228,136 @@ export default function MasterData({
                                 </div>
                             </div>
                         ))}
+                    </div>
+                </Card>
+            )}
+
+            {masterTab === 'logs' && (
+                <Card>
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
+                        <div className="flex items-center gap-2">
+                            <History className="text-indigo-600" size={20} />
+                            <h3 className="font-bold text-lg dark:text-white">Monitoring Activity Logs</h3>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
+                            <div className="relative flex-1 sm:w-64">
+                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                <input
+                                    type="text"
+                                    placeholder="Search logs..."
+                                    className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
+                                    defaultValue={logPagination.search}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        // Simple manual debounce to avoid store spam if needed, 
+                                        // but fetchLogs is usually fast enough.
+                                        clearTimeout(window.logSearchTimer);
+                                        window.logSearchTimer = setTimeout(() => {
+                                            fetchLogs(1, 15, val);
+                                        }, 400);
+                                    }}
+                                />
+                            </div>
+
+                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
+                                <button
+                                    disabled={logPagination.currentPage <= 1}
+                                    onClick={() => fetchLogs(logPagination.currentPage - 1, 15, logPagination.search)}
+                                    className="p-1 px-2 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-800 disabled:opacity-30 transition-all"
+                                >
+                                    Prev
+                                </button>
+
+                                {(() => {
+                                    const curr = logPagination.currentPage;
+                                    const total = logPagination.totalPages;
+                                    const pages = [];
+
+                                    if (total <= 7) {
+                                        for (let i = 1; i <= total; i++) pages.push(i);
+                                    } else {
+                                        pages.push(1);
+                                        if (curr > 4) pages.push('...');
+
+                                        const start = Math.max(2, curr - 1);
+                                        const end = Math.min(total - 1, curr + 1);
+
+                                        for (let i = start; i <= end; i++) pages.push(i);
+
+                                        if (curr < total - 3) pages.push('...');
+                                        pages.push(total);
+                                    }
+
+                                    return pages.map((p, idx) => (
+                                        <button
+                                            key={idx}
+                                            disabled={p === '...'}
+                                            onClick={() => typeof p === 'number' && fetchLogs(p, 15, logPagination.search)}
+                                            className={`w-7 h-7 flex items-center justify-center text-xs rounded transition-all ${p === curr
+                                                ? 'bg-indigo-600 text-white shadow-sm'
+                                                : p === '...'
+                                                    ? 'cursor-default text-slate-400'
+                                                    : 'hover:bg-white dark:hover:bg-slate-800 dark:text-slate-400'
+                                                }`}
+                                        >
+                                            {p}
+                                        </button>
+                                    ));
+                                })()}
+
+                                <button
+                                    disabled={logPagination.currentPage >= logPagination.totalPages}
+                                    onClick={() => fetchLogs(logPagination.currentPage + 1, 15, logPagination.search)}
+                                    className="p-1 px-2 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-800 disabled:opacity-30 transition-all"
+                                >
+                                    Next
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="overflow-x-auto">
+                        <table className="w-full text-left">
+                            <thead className="bg-slate-50 dark:bg-slate-900/50 text-[10px] uppercase tracking-wider text-slate-500 font-bold border-b dark:border-slate-800">
+                                <tr>
+                                    <th className="px-4 py-3">Timestamp</th>
+                                    <th className="px-4 py-3">User</th>
+                                    <th className="px-4 py-3">Action</th>
+                                    <th className="px-4 py-3">Details</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y dark:divide-slate-800">
+                                {logs.map(log => (
+                                    <tr key={log.id} className="text-xs hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
+                                        <td className="px-4 py-3 whitespace-nowrap text-slate-500">
+                                            {log.timestamp ? new Date(log.timestamp).toLocaleString() : '-'}
+                                        </td>
+                                        <td className="px-4 py-3 font-medium dark:text-slate-300">
+                                            {log.user}
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${log.action?.includes('FAILED') || log.action === 'ERROR'
+                                                ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
+                                                : log.action?.includes('START')
+                                                    ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+                                                }`}>
+                                                {log.action}
+                                            </span>
+                                        </td>
+                                        <td className="px-4 py-3">
+                                            <div className="max-w-md truncate text-slate-600 dark:text-slate-400" title={log.details}>
+                                                {log.details}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                        {logs.length === 0 && (
+                            <div className="text-center py-10 text-slate-400 italic">Belum ada log tersedia.</div>
+                        )}
                     </div>
                 </Card>
             )}

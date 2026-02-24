@@ -7,6 +7,13 @@ export const useUserStore = create((set, get) => ({
     roles: [],
     departments: [],
     logs: [],
+    logPagination: {
+        totalItems: 0,
+        totalPages: 0,
+        currentPage: 1,
+        limit: 15,
+        search: ''
+    },
     isLoading: false,
 
     fetchUsers: async () => {
@@ -21,9 +28,20 @@ export const useUserStore = create((set, get) => ({
         const data = await api.getDepartments();
         set({ departments: data || [] });
     },
-    fetchLogs: async () => {
-        const data = await api.getLogs();
-        set({ logs: data || [] });
+    fetchLogs: async (page = 1, limit = 15, search = '') => {
+        set({ isLoading: true });
+        try {
+            const res = await api.getLogs(page, limit, search);
+            set({
+                logs: res.data || [],
+                logPagination: {
+                    ...(res.pagination || { totalItems: 0, totalPages: 0, currentPage: page, limit }),
+                    search
+                }
+            });
+        } finally {
+            set({ isLoading: false });
+        }
     },
 
     // User Actions

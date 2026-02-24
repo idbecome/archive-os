@@ -1,4 +1,5 @@
 import { knex } from './db.js';
+import logger from './utils/logger.js';
 
 // Simple MySQL-based Queue Replacement for BullMQ
 class DbQueue {
@@ -16,7 +17,11 @@ class DbQueue {
             });
             return { id, name, data };
         } catch (err) {
-            console.error("Queue Add Error:", err);
+            logger.error({
+                action: 'QUEUE_ERROR',
+                message: `Failed to add job ${name} to queue`,
+                error: err.message
+            });
             throw err;
         }
     }
@@ -72,10 +77,19 @@ class DbQueue {
                     status: 'failed',
                     error: `Stale Job (Active for > ${ttlMinutes}m)`
                 });
-            if (count > 0) console.log(`[Queue] Cleaned up ${count} stale jobs.`);
+            if (count > 0) {
+                logger.warn({
+                    action: 'QUEUE_CLEANUP',
+                    message: `Cleaned up ${count} stale jobs from queue.`
+                });
+            }
             return count;
         } catch (err) {
-            console.error("Cleanup Stale Jobs Error:", err);
+            logger.error({
+                action: 'QUEUE_ERROR',
+                message: 'Cleanup Stale Jobs Failed',
+                error: err.message
+            });
             return 0;
         }
     }
@@ -94,7 +108,11 @@ export const addOCRJob = async (docId, filePath, fileType, originalName, context
             .first();
 
         if (existing) {
-            console.log(`[Queue] DEDUP: Job for DocID ${docId} with same file path already in queue (Job #${existing.id}). Skipping.`);
+            logger.info({
+                action: 'QUEUE_DEDUP',
+                message: `DEDUP: Job for DocID ${docId} already in queue`,
+                jobId: existing.id
+            });
             return {
                 id: existing.id,
                 name: 'process-ocr',
@@ -103,7 +121,11 @@ export const addOCRJob = async (docId, filePath, fileType, originalName, context
             };
         }
 
-        console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}, File: ${originalName}`);
+        logger.info({
+            action: 'QUEUE_ADD',
+            message: `Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}`,
+            originalName
+        });
 
         return await ocrQueue.add('process-ocr', {
             docId,

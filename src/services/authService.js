@@ -89,12 +89,13 @@ export const authService = {
         return await apiClient.fetchRaw(`${API_URL}/departments/${id}`, { method: 'DELETE' });
     },
 
-    async getLogs() {
+    async getLogs(page = 1, limit = 15, search = '') {
         try {
-            return await apiClient.fetchJson(`${API_URL}/logs`);
+            const url = `${API_URL}/logs?page=${page}&limit=${limit}${search ? `&search=${encodeURIComponent(search)}` : ''}`;
+            return await apiClient.fetchJson(url);
         } catch (e) {
             console.error("authService Error (getLogs):", e);
-            return [];
+            return { data: [], pagination: { totalItems: 0, totalPages: 0, currentPage: 1, limit: 15 } };
         }
     },
 

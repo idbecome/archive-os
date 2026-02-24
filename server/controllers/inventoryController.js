@@ -7,11 +7,25 @@ export const getInventory = async (req, res) => {
         let query = knex('inventory').select('*');
 
         if (search) {
+            // Use relational tables for fast indexed search instead of LIKE on JSON
+            const matchingInventoryIds = await knex('boxes')
+                .leftJoin('ordners', 'ordners.box_ref_id', 'boxes.id')
+                .leftJoin('invoices', 'invoices.ordner_ref_id', 'ordners.id')
+                .where('boxes.box_id', 'like', `%${search}%`)
+                .orWhere('ordners.no_ordner', 'like', `%${search}%`)
+                .orWhere('invoices.invoice_no', 'like', `%${search}%`)
+                .orWhere('invoices.vendor', 'like', `%${search}%`)
+                .select('boxes.inventory_id')
+                .groupBy('boxes.inventory_id');
+
+            const relationalIds = matchingInventoryIds.map(r => r.inventory_id).filter(Boolean);
+
             query = query.where(builder => {
                 builder.where('status', 'like', `%${search}%`)
-                    .orWhere('rack', 'like', `%${search}%`)
-                    .orWhere('id', 'like', `%${search}%`)
-                    .orWhere('box_data', 'like', `%${search}%`); // Search inside JSON string
+                    .orWhere('id', 'like', `%${search}%`);
+                if (relationalIds.length > 0) {
+                    builder.orWhereIn('id', relationalIds);
+                }
             });
         }
 

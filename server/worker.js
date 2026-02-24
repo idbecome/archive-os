@@ -13,6 +13,7 @@ import { generateEmbedding } from './ai_search.js';
 
 import { pathToFileURL } from 'url';
 import { ocrQueue } from './queue.js';
+import logger from './utils/logger.js';
 
 
 // --- TESSERACT WORKER POOL ---
@@ -204,12 +205,17 @@ async function extractImagesFromPDF(pdfBuffer, maxPages = Infinity, job = null) 
     return images;
 }
 
-// Core Processing Logic (Decoupled from Queue System)
 async function processOCRJob(job) {
     const { docId, filePath, fileType, originalName, context } = job.data;
     const isInventory = context && context.type === 'inventory';
 
-    console.log(`[Worker] Processing Job ${job.id} for ${isInventory ? 'Inventory Invoice' : 'Document'}: ${docId}`);
+    logger.info({
+        action: 'OCR_START',
+        message: `Processing Job ${job.id} for ${isInventory ? 'Inventory Invoice' : 'Document'}`,
+        docId,
+        filePath,
+        contextType: context?.type
+    });
 
     try {
         // 1. Validate File
@@ -254,7 +260,13 @@ async function processOCRJob(job) {
                     const { data: { text } } = await tess.recognize(filePath);
                     extractedText = `[OCR IMAGE]\n${text}`;
                 } catch (ocrErr) {
-                    console.error("[Worker] Tesseract Image OCR Failed:", ocrErr);
+                    logger.error({
+                        action: 'OCR_IMAGE_FAILED',
+                        message: `Tesseract Image OCR Failed for ${docId}`,
+                        docId,
+                        error: ocrErr.message,
+                        stack: ocrErr.stack
+                    });
                     extractedText = `[OCR FAILED] ${ocrErr.message}`;
                 } finally {
                     if (tess) tessPool.releaseWorker(tess);
@@ -323,7 +335,13 @@ async function processOCRJob(job) {
                             extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
                         }
                     } catch (ocrErr) {
-                        console.error("[Worker] OCR Failed:", ocrErr);
+                        logger.error({
+                            action: 'OCR_PDF_FAILED',
+                            message: `OCR Processing Failed for PDF ${docId}`,
+                            docId,
+                            error: ocrErr.message,
+                            stack: ocrErr.stack
+                        });
                         extractedText += `\n[OCR-ERROR] ${ocrErr.message}`;
                     }
                 } else {

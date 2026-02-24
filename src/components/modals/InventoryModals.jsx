@@ -3,7 +3,7 @@ import {
     Package, History, Edit3, Trash2, ChevronRight, ChevronLeft,
     FolderOpen, Paperclip, Plus, Save, RefreshCw,
     Eye, X, ArrowLeftRight, CheckCircle2, Clock,
-    AlertCircle, Truck, LogOut, FileText, Download
+    AlertCircle, Truck, LogOut, FileText, Download, Shield, User
 } from 'lucide-react';
 import PdfViewer from '../ui/PdfViewer';
 
@@ -340,7 +340,12 @@ export default function InventoryModals({
                             <div className="absolute left-[39px] top-4 bottom-4 w-1 bg-slate-100 dark:bg-slate-800 rounded-full"></div>
 
                             {(() => {
-                                const history = (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.history : selectedExternalItem?.history) || [];
+                                let historyRaw = (selectedSlotId ? (inventory.find(s => s.id == selectedSlotId) || inventory[selectedSlotId - 1])?.history : selectedExternalItem?.history) || [];
+                                // Safe parse: history may be a JSON string from DB
+                                if (typeof historyRaw === 'string') {
+                                    try { historyRaw = JSON.parse(historyRaw); } catch { historyRaw = []; }
+                                }
+                                const history = Array.isArray(historyRaw) ? historyRaw : [];
                                 if (history.length === 0) {
                                     return (
                                         <div className="text-center py-20 text-slate-400 italic">
@@ -378,10 +383,10 @@ export default function InventoryModals({
                                                 <div className="flex justify-between items-start mb-3">
                                                     <div>
                                                         <span className={`text-[10px] font-black uppercase tracking-widest px-2 py-1 rounded-lg ${config.bg} ${config.text}`}>
-                                                            {hist.action}
+                                                            {String(hist.action || '')}
                                                         </span>
                                                         <h4 className="mt-2 font-bold text-slate-800 dark:text-white text-sm leading-tight">
-                                                            {hist.note}
+                                                            {String(hist.note || hist.details || '')}
                                                         </h4>
                                                     </div>
                                                     <div className="text-right">
@@ -399,7 +404,7 @@ export default function InventoryModals({
                                                         <div className="w-6 h-6 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-[10px] font-black text-slate-500">
                                                             {hist.user?.charAt(0).toUpperCase()}
                                                         </div>
-                                                        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Oleh: <span className="text-indigo-500">{hist.user}</span></span>
+                                                        <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Oleh: <span className="text-indigo-500">{String(hist.user || 'System')}</span></span>
                                                     </div>
                                                     <div className="text-[10px] font-black text-slate-300 uppercase tracking-tighter">Verified Trail</div>
                                                 </div>

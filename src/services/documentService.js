@@ -209,6 +209,26 @@ export const documentService = {
         }
     },
 
+    async createApprovalFlow(data) {
+        return await apiClient.fetchJson(`${API_URL}/approval-flows`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    async updateApprovalFlow(id, data) {
+        return await apiClient.fetchJson(`${API_URL}/approval-flows/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        });
+    },
+
+    async deleteApprovalFlow(id) {
+        return await apiClient.fetchRaw(`${API_URL}/approval-flows/${id}`, { method: 'DELETE' });
+    },
+
     async getComments(docId) {
         try {
             return await apiClient.fetchJson(`${API_URL}/documents/${docId}/comments`);

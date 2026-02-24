@@ -701,8 +701,6 @@ export default function App() {
   const addLog = async (user, action, details) => {
     try {
       await api.createLog({ user, action, details });
-      const updatedLogs = await api.getLogs();
-      setLogs(updatedLogs);
     } catch (error) {
       console.error("Failed to add log:", error);
     }
@@ -728,7 +726,16 @@ export default function App() {
 
   const handleLogin = async (username, password, onError) => {
     try {
-      // Hardcoded fallbacks for specific accounts if they are not in DB yet (or as emergency)
+      // Guest login: blank credentials
+      if (!username && !password) {
+        const guestUser = { name: 'Tamu', role: 'viewer', username: 'guest' };
+        setCurrentUser(guestUser);
+        localStorage.setItem('archive_user', JSON.stringify(guestUser));
+        addLog('Tamu', 'Login', 'Guest logged in (read-only)');
+        return;
+      }
+
+      // Hardcoded fallback for admin
       if (username === 'admin' && password === 'admin') {
         const adminUser = { name: 'Administrator', role: 'admin', username: 'admin' };
         setCurrentUser(adminUser);
@@ -1640,7 +1647,7 @@ export default function App() {
       await api.deleteApprovalFlow(id);
       setFlows(await api.getApprovalFlows());
       addLog(currentUser?.name, 'Delete Flow', `ID ${id}`);
-    } catch (e) { toast.error(e); }
+    } catch (e) { toast.error(e?.message || String(e)); }
   };
 
   const handleAddFlowStep = (user) => {

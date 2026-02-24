@@ -52,6 +52,7 @@ export default function Documents({
     const [previewHtml, setPreviewHtml] = useState('');
     const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
     const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
+    const [largeFileWarning, setLargeFileWarning] = useState(null); // { buffer, type, size }
 
     // --- BULK SELECTION STATE ---
     const [selectedDocIds, setSelectedDocIds] = useState(new Set());
@@ -109,6 +110,7 @@ export default function Documents({
     const handlePreview = async (doc, isAttachment = false) => {
         setIsGeneratingPreview(true);
         setPreviewHtml('');
+        setLargeFileWarning(null);
         // Clear previous PDF data
         if (pdfBlobUrl) setPdfBlobUrl(null);
 
@@ -179,12 +181,26 @@ export default function Documents({
                 if (buffer && isPdf) {
                     setPdfBlobUrl(buffer);
                 } else if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
-                    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-                    setPreviewHtml(result.value);
+                    const sizeMB = buffer.byteLength / (1024 * 1024);
+                    if (sizeMB > 15) {
+                        setLargeFileWarning({ size: sizeMB, type: 'word', downloadUrl: content });
+                    } else if (sizeMB > 5) {
+                        setLargeFileWarning({ buffer, size: sizeMB, type: 'word', downloadUrl: content });
+                    } else {
+                        const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+                        setPreviewHtml(result.value);
+                    }
                 } else if (buffer && (type?.includes('sheet') || type?.includes('excel') || name?.endsWith('.xlsx') || name?.endsWith('.xls'))) {
-                    const wb = XLSX.read(buffer, { type: 'array' });
-                    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-                    setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
+                    const sizeMB = buffer.byteLength / (1024 * 1024);
+                    if (sizeMB > 15) {
+                        setLargeFileWarning({ size: sizeMB, type: 'excel', downloadUrl: content });
+                    } else if (sizeMB > 5) {
+                        setLargeFileWarning({ buffer, size: sizeMB, type: 'excel', downloadUrl: content });
+                    } else {
+                        const wb = XLSX.read(buffer, { type: 'array' });
+                        const firstSheet = wb.Sheets[wb.SheetNames[0]];
+                        setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
+                    }
                 }
             } catch (e) {
                 console.error("Preview error:", e);
@@ -1471,6 +1487,49 @@ export default function Documents({
                                     <button onClick={() => handleDownload(selectedDocPreview)} className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black shadow-lg hover:scale-105 transition-all">DOWNLOAD PDF</button>
                                 </div>
                             )
+                        ) : largeFileWarning ? (
+                            <div className="flex flex-col items-center gap-4 p-10 text-center">
+                                <AlertCircle size={56} className="text-amber-500" />
+                                <p className="font-bold text-slate-700 dark:text-slate-200">
+                                    File Terlalu Besar untuk Preview ({largeFileWarning.size.toFixed(1)} MB)
+                                </p>
+                                <p className="text-xs text-slate-500 max-w-md">
+                                    {largeFileWarning.size > 15
+                                        ? 'File ini melebihi batas aman (15 MB) untuk di-render di browser. Silakan unduh file untuk melihatnya.'
+                                        : 'File ini cukup besar dan mungkin membuat browser lambat. Anda bisa mencoba preview atau langsung mengunduh.'}
+                                </p>
+                                <div className="flex gap-3 mt-2">
+                                    {largeFileWarning.buffer && (
+                                        <button
+                                            onClick={async () => {
+                                                const { buffer, type } = largeFileWarning;
+                                                setLargeFileWarning(null);
+                                                try {
+                                                    if (type === 'word') {
+                                                        const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+                                                        setPreviewHtml(result.value);
+                                                    } else {
+                                                        const wb = XLSX.read(buffer, { type: 'array' });
+                                                        const firstSheet = wb.Sheets[wb.SheetNames[0]];
+                                                        setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
+                                                    }
+                                                } catch (e) {
+                                                    toast.error(`Preview gagal: ${e.message}`);
+                                                }
+                                            }}
+                                            className="px-5 py-2 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600 transition-all"
+                                        >
+                                            Preview Anyway
+                                        </button>
+                                    )}
+                                    <button
+                                        onClick={() => handleDownload(selectedDocPreview)}
+                                        className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all"
+                                    >
+                                        Download File
+                                    </button>
+                                </div>
+                            </div>
                         ) : previewHtml ? (
                             <div className="w-full h-full p-8 bg-white dark:bg-slate-900 overflow-auto prose dark:prose-invert max-w-none shadow-inner" dangerouslySetInnerHTML={{ __html: previewHtml }} />
                         ) : (
