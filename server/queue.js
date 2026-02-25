@@ -1,4 +1,5 @@
 import { knex } from './db.js';
+import { JOB_STATUS } from './constants/status.js';
 
 // Simple MySQL-based Queue Replacement for BullMQ
 class DbQueue {
@@ -10,7 +11,7 @@ class DbQueue {
         const jobData = {
             name,
             data: JSON.stringify(data),
-            status: 'waiting',
+            status: JOB_STATUS.WAITING,
             created_at: knex.fn.now()
         };
         try {
@@ -74,7 +75,7 @@ export const addOCRJob = async (docId, filePath, fileType, originalName, context
     try {
         // DEDUP CHECK: Skip if a job for this docId AND filePath is already waiting or active
         const existing = await knex('job_queue')
-            .whereIn('status', ['waiting', 'active'])
+            .whereIn('status', [JOB_STATUS.WAITING, JOB_STATUS.ACTIVE])
             .where('data', 'like', `%"docId":"${docId}"%`)
             .where('data', 'like', `%"filePath":"${filePath.replace(/\\/g, '\\\\')}"%`)
             .first();

@@ -1,4 +1,5 @@
 import { knex } from '../db.js';
+import { JOB_STATUS } from '../constants/status.js';
 
 export const getOCRStatus = async (req, res) => {
     try {
@@ -7,13 +8,18 @@ export const getOCRStatus = async (req, res) => {
             .count('id as count')
             .groupBy('status');
 
-        const countsMap = { waiting: 0, active: 0, completed: 0, failed: 0 };
+        const countsMap = {
+            [JOB_STATUS.WAITING]: 0,
+            [JOB_STATUS.ACTIVE]: 0,
+            [JOB_STATUS.COMPLETED]: 0,
+            [JOB_STATUS.FAILED]: 0
+        };
         counts.forEach(c => {
-            countsMap[c.status] = c.count;
+            if (countsMap[c.status] !== undefined) countsMap[c.status] = c.count;
         });
 
         const activeJobs = await knex('job_queue')
-            .whereIn('status', ['waiting', 'active'])
+            .whereIn('status', [JOB_STATUS.WAITING, JOB_STATUS.ACTIVE])
             .orderBy('created_at', 'asc')
             .limit(10);
 
@@ -38,15 +44,15 @@ export const getOCRStatus = async (req, res) => {
 export const getOCRQueue = async (req, res) => {
     try {
         const jobs = await knex('job_queue')
-            .whereIn('status', ['waiting', 'processing']) // Changed from 'pending' to match DB enum if needed, usually 'waiting'
+            .whereIn('status', [JOB_STATUS.WAITING, JOB_STATUS.ACTIVE])
             .orderBy('created_at', 'asc');
 
-        const active = jobs.filter(j => j.status === 'processing').map(j => ({
+        const active = jobs.filter(j => j.status === JOB_STATUS.ACTIVE).map(j => ({
             ...j,
             data: typeof j.data === 'string' ? JSON.parse(j.data) : j.data
         }));
 
-        const waiting = jobs.filter(j => j.status === 'waiting').map(j => ({
+        const waiting = jobs.filter(j => j.status === JOB_STATUS.WAITING).map(j => ({
             ...j,
             data: typeof j.data === 'string' ? JSON.parse(j.data) : j.data
         }));
@@ -65,9 +71,11 @@ export const retryOCRJob = async (req, res) => {
     try {
         const { id } = req.params;
         await knex('job_queue').where('id', id).update({
-            status: 'pending',
-            attempts: 0,
-            error_log: null
+            status: JOB_STATUS.WAITING,
+            progress: 0,
+            error: null,
+            processed_at: null,
+            finished_at: null
         });
         res.json({ success: true });
     } catch (err) {
@@ -77,7 +85,7 @@ export const retryOCRJob = async (req, res) => {
 
 export const clearCompletedJobs = async (req, res) => {
     try {
-        await knex('job_queue').where('status', 'completed').del();
+        await knex('job_queue').where('status', JOB_STATUS.COMPLETED).del();
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });

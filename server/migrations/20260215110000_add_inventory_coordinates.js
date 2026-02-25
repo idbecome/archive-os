@@ -39,11 +39,15 @@ export const up = async (knex) => {
 };
 
 export const down = async (knex) => {
+    console.warn('⚠️  [MIGRATION DOWN] add_inventory_coordinates: Removing rack/shelf/position');
     if (await knex.schema.hasTable('inventory')) {
-        await knex.schema.table('inventory', (table) => {
-            table.dropColumn('rack');
-            table.dropColumn('shelf');
-            table.dropColumn('position');
-        });
+        const cols = ['rack', 'shelf', 'position'];
+        for (const col of cols) {
+            if (await knex.schema.hasColumn('inventory', col)) {
+                await knex.schema.table('inventory', (table) => {
+                    table.dropColumn(col);
+                });
+            }
+        }
     }
 };

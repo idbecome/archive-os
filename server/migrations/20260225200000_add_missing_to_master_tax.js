@@ -28,12 +28,15 @@ export const up = async (knex) => {
 };
 
 export const down = async (knex) => {
-    console.log("Running migration: add_missing_to_master_tax DOWN");
+    console.warn('⚠️  [MIGRATION DOWN] add_missing_to_master_tax: Removing tax columns');
     if (await knex.schema.hasTable('master_tax_objects')) {
-        await knex.schema.alterTable('master_tax_objects', (table) => {
-            table.dropColumn('is_pph21_bukan_pegawai');
-            table.dropColumn('use_ppn');
-            table.dropColumn('markup_mode');
-        });
+        const cols = ['is_pph21_bukan_pegawai', 'use_ppn', 'markup_mode'];
+        for (const col of cols) {
+            if (await knex.schema.hasColumn('master_tax_objects', col)) {
+                await knex.schema.alterTable('master_tax_objects', (table) => {
+                    table.dropColumn(col);
+                });
+            }
+        }
     }
 };

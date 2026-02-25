@@ -50,25 +50,27 @@ export const up = async (knex) => {
 };
 
 export const down = async (knex) => {
+    console.warn('⚠️  [MIGRATION DOWN] fix_workflow_schema: Removing workflow schema fix columns');
+
     if (await knex.schema.hasTable('approval_steps')) {
-        await knex.schema.alterTable('approval_steps', (table) => {
-            // Check existence before dropping is hard with standard knex API in down, 
-            // usually down assumes up succeeded. 
-            // But we can just try/catch distinct drops or just leave them if we want to be safe.
-            // For now, let's just attempt drop.
-            table.dropColumn('flow_id');
-            table.dropColumn('order_index');
-            table.dropColumn('step_name');
-            table.dropColumn('approver_role');
-        });
+        const cols = ['flow_id', 'order_index', 'step_name', 'approver_role'];
+        for (const col of cols) {
+            if (await knex.schema.hasColumn('approval_steps', col)) {
+                await knex.schema.alterTable('approval_steps', (table) => {
+                    table.dropColumn(col);
+                });
+            }
+        }
     }
 
     if (await knex.schema.hasTable('document_approvals')) {
-        await knex.schema.alterTable('document_approvals', (table) => {
-            table.dropColumn('document_id');
-            table.dropColumn('current_step_id');
-            table.dropColumn('requester');
-            // Flow_id might be used by other parts, careful.
-        });
+        const cols = ['document_id', 'current_step_id', 'requester'];
+        for (const col of cols) {
+            if (await knex.schema.hasColumn('document_approvals', col)) {
+                await knex.schema.alterTable('document_approvals', (table) => {
+                    table.dropColumn(col);
+                });
+            }
+        }
     }
 };

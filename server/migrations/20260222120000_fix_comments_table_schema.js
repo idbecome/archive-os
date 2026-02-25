@@ -60,30 +60,45 @@ export const up = async (knex) => {
 };
 
 export const down = async (knex) => {
-    // Restore logic would need adjustment too, but keeping it simple for now
-    await knex.schema.table('document_comments', (table) => {
-        table.text('attachmentUrl').nullable();
-        table.text('attachmentName').nullable();
-        table.string('attachmentType', 100).nullable();
-        table.string('attachmentSize', 50).nullable();
-    });
+    console.warn('⚠️  [MIGRATION DOWN] fix_comments_table_schema: Restoring old comment attachment columns');
 
-    const rows = await knex('document_comments').select('*');
-    for (const row of rows) {
-        if (row.attachment) {
-            try {
-                const data = JSON.parse(row.attachment);
-                await knex('document_comments').where('id', row.id).update({
-                    attachmentUrl: data.url,
-                    attachmentName: data.name,
-                    attachmentType: data.type,
-                    attachmentSize: data.size
-                });
-            } catch (e) { }
+    if (!(await knex.schema.hasTable('document_comments'))) return;
+
+    // Restore old columns if they don't already exist
+    const colsToAdd = {
+        attachmentUrl: 'text',
+        attachmentName: 'text',
+        attachmentType: 'string',
+        attachmentSize: 'string'
+    };
+    for (const [col, type] of Object.entries(colsToAdd)) {
+        if (!(await knex.schema.hasColumn('document_comments', col))) {
+            await knex.schema.table('document_comments', (table) => {
+                if (type === 'text') table.text(col).nullable();
+                else table.string(col, col === 'attachmentType' ? 100 : 50).nullable();
+            });
         }
     }
 
-    await knex.schema.table('document_comments', (table) => {
-        table.dropColumn('attachment');
-    });
+    // Migrate data back from JSON 'attachment' to individual columns
+    if (await knex.schema.hasColumn('document_comments', 'attachment')) {
+        const rows = await knex('document_comments').select('*');
+        for (const row of rows) {
+            if (row.attachment) {
+                try {
+                    const data = JSON.parse(row.attachment);
+                    await knex('document_comments').where('id', row.id).update({
+                        attachmentUrl: data.url,
+                        attachmentName: data.name,
+                        attachmentType: data.type,
+                        attachmentSize: data.size
+                    });
+                } catch (e) { }
+            }
+        }
+
+        await knex.schema.table('document_comments', (table) => {
+            table.dropColumn('attachment');
+        });
+    }
 };

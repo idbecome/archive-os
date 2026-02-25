@@ -8,6 +8,7 @@ import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { knex } from './db.js';
+import { JOB_STATUS, DOC_STATUS } from './constants/status.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { generateEmbedding } from './ai_search.js';
 
@@ -405,7 +406,7 @@ async function processOCRJob(job) {
                 .where('id', docId)
                 .update({
                     ocrContent: extractedText,
-                    status: 'done'
+                    status: DOC_STATUS.DONE
                 });
             console.log(`[Worker] Document OCR Completed & Saved: ${docId}`);
         }
@@ -448,15 +449,15 @@ async function startPolling() {
 
     // FIX: Reset stuck jobs on startup (Active -> Waiting)
     await knex('job_queue')
-        .where('status', 'active')
-        .update({ status: 'waiting' });
+        .where('status', JOB_STATUS.ACTIVE)
+        .update({ status: JOB_STATUS.WAITING });
     console.log("[Worker] Startup: Reset stuck 'active' jobs to 'waiting'.");
 
     const poll = async () => {
         try {
             // 1. Fetch one waiting job
             const row = await knex('job_queue')
-                .where('status', 'waiting')
+                .where('status', JOB_STATUS.WAITING)
                 .orderBy('created_at', 'asc')
                 .first();
 
@@ -465,7 +466,7 @@ async function startPolling() {
                 await knex('job_queue')
                     .where('id', row.id)
                     .update({
-                        status: 'active',
+                        status: JOB_STATUS.ACTIVE,
                         processed_at: knex.fn.now()
                     });
 
@@ -477,7 +478,7 @@ async function startPolling() {
                     console.error(`[Worker] Job ${row.id} has corrupt JSON data. Marking failed.`);
                     await knex('job_queue')
                         .where('id', row.id)
-                        .update({ status: 'failed', error: 'Corrupt JSON Data' });
+                        .update({ status: JOB_STATUS.FAILED, error: 'Corrupt JSON Data' });
                     return setTimeout(poll, 100);
                 }
 
@@ -502,7 +503,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({
-                            status: 'completed',
+                            status: JOB_STATUS.COMPLETED,
                             finished_at: knex.fn.now(),
                             progress: 100
                         });
@@ -513,7 +514,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({
-                            status: 'failed',
+                            status: JOB_STATUS.FAILED,
                             finished_at: knex.fn.now(),
                             error: e.message
                         });
