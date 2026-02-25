@@ -2,16 +2,16 @@
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
-import { authService } from './services/authService';
-import { API_URL } from './services/apiClient';
-import { documentService } from './services/documentService';
-import { taxService } from './services/taxService';
-import { inventoryService } from './services/inventoryService';
-import { pustakaService } from './services/pustakaService';
-const api = { ...authService, ...documentService, ...taxService, ...inventoryService, ...pustakaService };
+import { db as api, API_URL } from './services/database';
 import { TOTAL_SLOTS, getStatusStyle } from './utils/constants'; // Import constants
 import { checkPermission, APP_MODULES } from './utils/permissions';
 import { performAdvancedOCR } from './utils/ocr';
+import { parseApiError } from './utils/errorHandler';
+import { documentService } from './services/documentService';
+import { inventoryService } from './services/inventoryService';
+import { taxService } from './services/taxService';
+import { authService } from './services/authService';
+import { pustakaService } from './services/pustakaService';
 import Sidebar from './components/layout/Sidebar';
 import Modal from './components/common/Modal';
 import MasterDataModals from './components/modals/MasterDataModals';
@@ -31,9 +31,6 @@ import { useAuthStore } from './store/useAuthStore';
 import { useAppStore } from './store/useAppStore';
 import { useDocStore } from './store/useDocStore';
 import { useInventoryStore } from './store/useInventoryStore';
-import { useTaxStore } from './store/useTaxStore';
-import { usePustakaStore } from './store/usePustakaStore';
-import { useUserStore } from './store/useUserStore';
 
 import {
   Package,
@@ -105,6 +102,8 @@ import MasterData from './pages/MasterData';
 import Profile from './pages/Profile';
 import DocumentApproval from './pages/DocumentApproval';
 import Pustaka from './pages/Pustaka';
+import SystemLogs from './pages/SystemLogs';
+import SopFlow from './pages/SopFlow';
 import { useToast, ToastContainer } from './components/ui/Toast';
 import PdfViewer from './components/ui/PdfViewer';
 import AiChatAssistant from './components/AiChatAssistant';
@@ -138,17 +137,15 @@ export default function App() {
     isModalOpen, setIsModalOpen,
     modalTab, setModalTab,
     copyNotification, setCopyNotification,
+    logs, setLogs
   } = useAppStore();
 
   const {
     currentUser, setCurrentUser,
+    users, setUsers,
+    roles, setRoles,
+    departments, setDepartments
   } = useAuthStore();
-
-  const {
-    users, roles, departments, logs,
-    fetchUsers, fetchRoles, fetchDepartments, fetchLogs,
-    saveUser, deleteUser, saveRole, deleteRole, saveDepartment, deleteDepartment
-  } = useUserStore();
 
   const {
     docList, setDocList,
@@ -174,20 +171,6 @@ export default function App() {
     updateInventory, moveInventory,
     createExternalItem, deleteExternalItem
   } = useInventoryStore();
-
-  const {
-    taxSummaries, taxAudits, taxWp,
-    fetchTaxSummaries, fetchTaxAudits, fetchTaxWp,
-    saveTaxSummary, deleteTaxSummary,
-    createTaxAudit, updateTaxAudit, deleteTaxAudit,
-    saveTaxWp, deleteTaxWp
-  } = useTaxStore();
-
-  const {
-    guides, categories,
-    fetchGuides, fetchCategories,
-    saveGuide, deleteGuide, createCategory
-  } = usePustakaStore();
 
   const handleCloseLanding = () => setShowInitialLanding(false);
   const handleOpenLanding = () => setShowInitialLanding(true);
@@ -223,8 +206,8 @@ export default function App() {
     const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
     let cleanUrl = url;
     if (url.startsWith('uploads/')) cleanUrl = '/' + url;
-    if (cleanUrl.startsWith('/uploads/')) return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
-    if (cleanUrl.includes('localhost:5000')) return cleanUrl.replace('localhost', hostname);
+    if (cleanUrl.startsWith('/uploads/')) return isDev ? `${protocol}//${hostname}:5005${cleanUrl}` : cleanUrl;
+    if (cleanUrl.includes('localhost:5005')) return cleanUrl.replace('localhost', hostname);
     return cleanUrl;
   };
 
@@ -238,16 +221,14 @@ export default function App() {
   const excelInputRef = useRef(null);
   const invoiceFileInputRef = useRef(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
-  const [viewDocData, setViewDocData] = useState(null);
   const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [previewHtml, setPreviewHtml] = useState('');
-  // Digital Doc Upload/Edit/View State
-  const [uploadForm, setUploadForm] = useState({
-    id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
-    previewUrl: null, fileData: null, isProcessing: false,
-    processingMessage: '', editMode: false, originalDoc: null
-  });
+  const [viewDocData, setViewDocData] = useState(null);
+
+  // Remaining features state
+  const [taxAudits, setTaxAudits] = useState([]);
+  const [taxSummaries, setTaxSummaries] = useState([]);
 
   const [isFlowModalOpen, setIsFlowModalOpen] = useState(false);
   const [editingFlow, setEditingFlow] = useState(null);
@@ -279,7 +260,12 @@ export default function App() {
     const fetchOcrStatus = async () => {
       try {
         const url = `${API_BASE}/ocr/status`;
-        const res = await fetch(url);
+        const token = localStorage.getItem('archive_token');
+        const res = await fetch(url, {
+          headers: {
+            'Authorization': token ? `Bearer ${token}` : ''
+          }
+        });
         if (!res.ok) return;
         const data = await res.json();
 
@@ -290,7 +276,7 @@ export default function App() {
         const newActive = data?.counts?.active || 0;
 
         // Completion Toast & Refresh
-        if (lastOcrCompletedRef.current > 0 && newCompleted > lastOcrCompletedRef.current) {
+        if (newCompleted > lastOcrCompletedRef.current) {
           const finishedCount = newCompleted - lastOcrCompletedRef.current;
           toast.success(`OCR Selesai: ${finishedCount} dokumen berhasil diproses.`);
           console.log("OCR Job Completed! Refreshing data...");
@@ -356,7 +342,17 @@ export default function App() {
     setTimeout(fetchOcrStatus, 1000);
 
     return () => clearInterval(interval);
-  }, [currentUser, fetchDocs, fetchInventory, fetchLogs, toast, removeToast, updateToast, setOcrStats]); // Dependency on currentUser ensures it runs only when logged in
+  }, [currentUser]); // Dependency on currentUser ensures it runs only when logged in
+
+  const fetchLogs = async () => {
+    const data = await api.getLogs();
+    setLogs(data);
+  };
+
+  const fetchTaxAudits = async () => {
+    const data = await api.getTaxAudits();
+    setTaxAudits(data);
+  };
 
   useEffect(() => {
     if (!currentUser) return; // Only fetch data if logged in
@@ -366,22 +362,24 @@ export default function App() {
       await Promise.all([
         fetchDocs(),
         fetchFolders(),
-        fetchUsers(),
-        fetchRoles(),
-        fetchDepartments(),
         fetchLogs(),
         fetchTaxAudits(),
-        fetchTaxSummaries(),
-        fetchTaxWp(),
-        fetchGuides(),
-        fetchCategories(),
         fetchApprovals(),
         fetchInventory(),
-        documentService.getApprovalFlows().then(setFlows) // Fetch flows on init
+        api.getTaxSummaries().then(setTaxSummaries),
+        api.getUsers().then(setUsers),
+        api.getRoles().then(setRoles),
+        api.getDepartments().then(setDepartments),
+        api.getApprovalFlows().then(setFlows) // Fetch flows on init
       ]);
       // Initialize OCR completion count
       try {
-        const ocrRes = await fetch(`/api/ocr/status`);
+        const token = localStorage.getItem('archive_token');
+        const ocrRes = await fetch(`/api/ocr/status`, {
+          headers: {
+            'Authorization': token ? `Bearer ${token}` : ''
+          }
+        });
         const ocrData = await ocrRes.json();
         lastOcrCompletedRef.current = ocrData?.counts?.completed || 0;
       } catch (e) { console.warn("Initial OCR status fetch failed", e); }
@@ -426,6 +424,12 @@ export default function App() {
   const [moveTargetSlot, setMoveTargetSlot] = useState('');
   const [showMoveInput, setShowMoveInput] = useState(false);
 
+  // Digital Doc Upload/Edit/View State
+  const [uploadForm, setUploadForm] = useState({
+    id: '', title: '', ocrContent: '', fileType: '', fileSize: '',
+    previewUrl: null, fileData: null, isProcessing: false,
+    processingMessage: '', editMode: false, originalDoc: null
+  });
 
 
 
@@ -459,16 +463,16 @@ export default function App() {
       const currentFolders = existingFolders || folders;
 
       // 1. Cari atau Buat folder sistem "DataBox" di Root
-      let dataBoxFolder = currentFolders.find(f => f.name === 'DataBox' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      let dataBoxFolder = currentFolders.find(f => f.name === 'DataBox' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
       if (!dataBoxFolder) {
         const allFolders = await api.getFolders();
-        dataBoxFolder = allFolders.find(f => f.name === 'DataBox' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+        dataBoxFolder = allFolders.find(f => f.name === 'DataBox' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
       }
 
       if (!dataBoxFolder && status !== 'EMPTY' && status !== 'REMOVED') {
         await api.createFolder({
           name: 'DataBox',
-          parentId: null,
+          parent_id: null,
           privacy: 'public',
           owner: 'System'
         });
@@ -485,11 +489,22 @@ export default function App() {
 
       // Helper function untuk mencari folder di parent tertentu
       const findInParent = (list, pId) => list.find(f => {
-        const fParentId = (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0') ? null : String(f.parentId);
+        const fParentId = f.parentId || f.parent_id;
+        const isRootF = !fParentId || fParentId === 'null' || fParentId === 0 || fParentId === '0' || fParentId === null;
+
         const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
-        if (fParentId !== targetParentId) return false;
         const targetId = oldBoxId || boxId;
-        return f.name === targetId || f.name.startsWith(`${targetId}_`);
+        if (targetParentId === null) {
+          if (!isRootF) return false;
+        } else if (String(fParentId) !== targetParentId) return false;
+
+        const n = f.name || '';
+        return n === targetId ||
+          n.startsWith(`RM_${targetId}`) ||
+          n.startsWith(`ED_${targetId}`) ||
+          n.startsWith(`MV_${targetId}`) ||
+          n.startsWith(`TR_${targetId}`) ||
+          n.startsWith(`[INV] ${targetId}`);
       });
 
       // 2. Cari folder box di dalam DataBox
@@ -520,7 +535,7 @@ export default function App() {
       if (!folder && status !== 'EMPTY' && status !== 'REMOVED') {
         await api.createFolder({
           name: boxId,
-          parentId: dataBoxId,
+          parent_id: dataBoxId,
           privacy: 'public',
           owner: currentUser?.name || 'System'
         });
@@ -531,17 +546,24 @@ export default function App() {
 
       if (folder) {
         let newName = boxId;
-        // Jika box pindah/dihapus/keluar, rename dengan format: no_box_uniq no_status box
-        if (status !== 'STORED' && status !== 'IMPORTED') {
-          const dateStr = new Date().toISOString().split('T')[0];
-          newName = `[INV] ${boxId} - ${status} (${dateStr}_${Date.now().toString().slice(-4)})`;
-        } else if (oldBoxId && oldBoxId !== boxId) {
-          const dateStr = new Date().toISOString().split('T')[0];
-          newName = `[INV] ${boxId} (Renamed from ${oldBoxId}) ${dateStr}`;
+
+        if (status === 'REMOVED' || status === 'EMPTY') {
+          newName = `RM_${boxId}`;
+        } else if (status === 'UPDATED') {
+          newName = `ED_${boxId}`;
+        } else if (status === 'MOVED') {
+          newName = `MV_${boxId}`;
+        } else if (status === 'EXTERNAL') {
+          newName = `TR_${boxId}`;
         }
 
-        if (newName !== folder.name) {
-          await api.updateFolder(folder.id, { name: newName });
+        // FORCE CHECK: Pastikan nama sesuai DAN folder berada di dalam DataBox
+        const currentParentId = folder.parentId || folder.parent_id;
+        if (newName !== folder.name || String(currentParentId) !== String(dataBoxId)) {
+          await api.updateFolder(folder.id, {
+            name: newName,
+            parentId: dataBoxId // Paksa masuk ke DataBox
+          });
           await fetchFolders();
         }
         return folder.id;
@@ -557,16 +579,16 @@ export default function App() {
     if (!auditTitle) return null;
     try {
       // 1. Cari atau Buat folder sistem "TaxAudit" di Root
-      let taxAuditParent = folders.find(f => f.name === 'TaxAudit' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      let taxAuditParent = folders.find(f => f.name === 'TaxAudit' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
       if (!taxAuditParent) {
         const allFolders = await api.getFolders();
-        taxAuditParent = allFolders.find(f => f.name === 'TaxAudit' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+        taxAuditParent = allFolders.find(f => f.name === 'TaxAudit' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
       }
 
       if (!taxAuditParent) {
         await api.createFolder({
           name: 'TaxAudit',
-          parentId: null,
+          parent_id: null,
           privacy: 'public',
           owner: 'System'
         });
@@ -579,7 +601,7 @@ export default function App() {
       const folderName = `Pemeriksaan - ${auditTitle}`;
 
       const findInParent = (list, pId, name) => list.find(f => {
-        const fParentId = (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0') ? null : String(f.parentId);
+        const fParentId = (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0') ? null : String(f.parent_id);
         const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
         return fParentId === targetParentId && f.name === name;
       });
@@ -606,7 +628,7 @@ export default function App() {
       if (!folder && taxAuditParentId && status === 'ACTIVE') {
         await api.createFolder({
           name: folderName,
-          parentId: taxAuditParentId,
+          parent_id: taxAuditParentId,
           privacy: 'public',
           owner: currentUser?.name || 'System'
         });
@@ -635,20 +657,153 @@ export default function App() {
     }
   };
 
+  const syncPustakaFolder = async (guideTitle, oldTitle = null) => {
+    if (!guideTitle) return null;
+    try {
+      // Selalu ambil data terbaru untuk akurasi folder ID
+      const allFolders = await api.getFolders();
+
+      let pustakaParent = allFolders.find(f => f.name === 'PUSTAKA' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
+
+      if (!pustakaParent) {
+        await api.createFolder({
+          name: 'PUSTAKA',
+          parent_id: null,
+          privacy: 'public',
+          owner: 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        pustakaParent = updatedFolders.find(f => f.name === 'PUSTAKA');
+      }
+
+      const pustakaParentId = pustakaParent?.id || null;
+      const folderName = guideTitle;
+
+      const findInParent = (list, pId, name) => list.find(f => {
+        const fParentId = f.parentId || f.parent_id;
+        const isRootF = !fParentId || [0, '0', 'null'].includes(fParentId);
+        const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
+        if (targetParentId === null) return isRootF && f.name === name;
+        return String(fParentId) === targetParentId && f.name === name;
+      });
+
+      let folder = findInParent(allFolders, pustakaParentId, folderName) ||
+        (oldTitle ? findInParent(folders, pustakaParentId, oldTitle) : null);
+
+      // Migrasi jika folder panduan terlanjur ada di root
+      if (!folder && pustakaParentId) {
+        let rootFolder = findInParent(allFolders, null, folderName);
+        if (!rootFolder) {
+          const allFolders = await api.getFolders();
+          rootFolder = findInParent(allFolders, null, folderName);
+        }
+        if (rootFolder) {
+          await api.moveFolder(rootFolder.id, pustakaParentId);
+          await fetchFolders();
+          folder = rootFolder;
+        }
+      }
+
+      // FORCE MOVE & RENAME: Pastikan nama sesuai dan berada di dalam PUSTAKA
+      const currentParentId = folder?.parentId || folder?.parent_id;
+      if (folder && (folder.name !== folderName || String(currentParentId) !== String(pustakaParentId))) {
+        await api.updateFolder(folder.id, {
+          name: folderName,
+          parentId: pustakaParentId
+        });
+        await fetchFolders();
+        folder = { ...folder, name: folderName };
+      }
+
+      if (!folder && pustakaParentId) {
+        await api.createFolder({
+          name: folderName,
+          parent_id: pustakaParentId,
+          privacy: 'public',
+          owner: currentUser?.name || 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        folder = findInParent(updatedFolders, pustakaParentId, folderName);
+      }
+
+      return folder?.id || null;
+    } catch (err) {
+      console.error("Pustaka folder sync failed:", err);
+      return null;
+    }
+  };
+
+  const syncSopFolder = async (sopTitle, oldTitle = null) => {
+    if (!sopTitle) return null;
+    try {
+      const allFolders = await api.getFolders();
+
+      let sopParent = allFolders.find(f => f.name === 'SOP' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
+
+      if (!sopParent) {
+        await api.createFolder({ name: 'SOP', parent_id: null, privacy: 'public', owner: 'System' });
+        await fetchFolders();
+        const updated = await api.getFolders();
+        sopParent = updated.find(f => f.name === 'SOP');
+      }
+
+      const sopParentId = sopParent?.id || null;
+      const findInParent = (list, pId, name) => list.find(f => {
+        const fParentId = f.parentId || f.parent_id;
+        const isRootF = !fParentId || [0, '0', 'null'].includes(fParentId);
+        const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
+        if (targetParentId === null) return isRootF && f.name === name;
+        return String(fParentId) === targetParentId && f.name === name;
+      });
+
+      let folder = findInParent(allFolders, sopParentId, sopTitle) ||
+        (oldTitle ? findInParent(folders, sopParentId, oldTitle) : null);
+
+      const currentParentId = folder?.parentId || folder?.parent_id;
+      if (folder && (folder.name !== sopTitle || String(currentParentId) !== String(sopParentId))) {
+        await api.updateFolder(folder.id, {
+          name: sopTitle,
+          parentId: sopParentId
+        });
+        await fetchFolders();
+        folder = { ...folder, name: sopTitle };
+      }
+
+      if (!folder && sopParentId) {
+        await api.createFolder({
+          name: sopTitle,
+          parentId: sopParentId,
+          privacy: 'public',
+          owner: currentUser?.name || 'System'
+        });
+        await fetchFolders();
+        const updatedFolders = await api.getFolders();
+        folder = findInParent(updatedFolders, sopParentId, sopTitle);
+      }
+
+      return folder?.id || null;
+    } catch (err) {
+      console.error("SOP folder sync failed:", err);
+      return null;
+    }
+  };
+
   const syncApprovalFolder = async (approvalTitle, status = 'ACTIVE') => {
     if (!approvalTitle) return null;
     try {
       // 1. Cari atau Buat folder sistem "ApprovalDoc" di Root
-      let approvalParent = folders.find(f => f.name === 'ApprovalDoc' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+      let approvalParent = folders.find(f => f.name === 'ApprovalDoc' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
       if (!approvalParent) {
         const allFolders = await api.getFolders();
-        approvalParent = allFolders.find(f => f.name === 'ApprovalDoc' && (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0'));
+        approvalParent = allFolders.find(f => f.name === 'ApprovalDoc' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
       }
 
       if (!approvalParent) {
         await api.createFolder({
           name: 'ApprovalDoc',
-          parentId: null,
+          parent_id: null,
           privacy: 'public',
           owner: 'System'
         });
@@ -661,7 +816,7 @@ export default function App() {
       const folderName = approvalTitle;
 
       const findInParent = (list, pId, name) => list.find(f => {
-        const fParentId = (!f.parentId || f.parentId === 'null' || f.parentId === 0 || f.parentId === '0') ? null : String(f.parentId);
+        const fParentId = (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0') ? null : String(f.parent_id);
         const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
         return fParentId === targetParentId && f.name === name;
       });
@@ -675,7 +830,7 @@ export default function App() {
       if (!folder && approvalParentId && status === 'ACTIVE') {
         await api.createFolder({
           name: folderName,
-          parentId: approvalParentId,
+          parent_id: approvalParentId,
           privacy: 'public',
           owner: currentUser?.name || 'System'
         });
@@ -701,6 +856,8 @@ export default function App() {
   const addLog = async (user, action, details) => {
     try {
       await api.createLog({ user, action, details });
+      const updatedLogs = await api.getLogs();
+      setLogs(updatedLogs);
     } catch (error) {
       console.error("Failed to add log:", error);
     }
@@ -726,20 +883,12 @@ export default function App() {
 
   const handleLogin = async (username, password, onError) => {
     try {
-      // Guest login: blank credentials
-      if (!username && !password) {
-        const guestUser = { name: 'Tamu', role: 'viewer', username: 'guest' };
-        setCurrentUser(guestUser);
-        localStorage.setItem('archive_user', JSON.stringify(guestUser));
-        addLog('Tamu', 'Login', 'Guest logged in (read-only)');
-        return;
-      }
-
-      // Hardcoded fallback for admin
+      // Hardcoded fallbacks for specific accounts if they are not in DB yet (or as emergency)
       if (username === 'admin' && password === 'admin') {
-        const adminUser = { name: 'Administrator', role: 'admin', username: 'admin' };
+        const adminUser = { name: 'Administrator', role: 'admin', username: 'admin', token: 'dev-token' };
         setCurrentUser(adminUser);
         localStorage.setItem('archive_user', JSON.stringify(adminUser));
+        localStorage.setItem('archive_token', 'dev-token');
         addLog('Admin', 'Login', 'Admin logged in');
         return;
       }
@@ -747,6 +896,7 @@ export default function App() {
       const user = await api.login(username, password);
       setCurrentUser(user);
       localStorage.setItem('archive_user', JSON.stringify(user));
+      if (user.token) localStorage.setItem('archive_token', user.token);
       addLog(user.name, 'Login', 'User logged in');
     } catch (error) {
       if (onError) onError(error.message);
@@ -883,7 +1033,8 @@ export default function App() {
       try {
         // --- SYNC FOLDER (Get or Create Box Folder) ---
         const oldBoxId = currentSlot.boxData?.id;
-        const boxFolderId = await syncBoxFolder(boxId, 'STORED', oldBoxId);
+        const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
+        const boxFolderId = await syncBoxFolder(boxId, isNew ? 'STORED' : 'UPDATED', oldBoxId);
         // --- END SYNC FOLDER ---
 
         // --- BATCH UPLOAD START ---
@@ -899,19 +1050,6 @@ export default function App() {
               let inv = updatedInvoices[iIdx];
 
               if (inv.rawFile) {
-                // --- CLIENT-SIDE OCR FOR INVOICE ---
-                const invToastId = toast.loading(`Memproses OCR: ${inv.invoiceNo || inv.fileName || 'Invoice'}...`);
-                let invOcr = '';
-                try {
-                  invOcr = await performAdvancedOCR(inv.rawFile, (msg) => {
-                    updateToast(invToastId, { message: msg, type: 'loading' });
-                  });
-                  updateToast(invToastId, { message: `OCR Berhasil: ${inv.invoiceNo || inv.fileName}`, type: 'success' });
-                } catch (oErr) {
-                  console.warn("Invoice OCR failed:", oErr);
-                  updateToast(invToastId, { message: `OCR Terlewati: ${oErr.message}`, type: 'info' });
-                }
-
                 const fileType = inv.rawFile.type;
                 const fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
                 const uploadRes = await api.uploadFile(inv.rawFile);
@@ -921,7 +1059,7 @@ export default function App() {
                   updatedInvoices[iIdx] = {
                     ...inv,
                     file: uploadRes.url,
-                    ocrContent: invOcr,
+                    ocrContent: '', // Akan diisi otomatis oleh server via Queue
                     rawFile: undefined // Clear raw file
                   };
                   inv = updatedInvoices[iIdx]; // Update local reference for next step
@@ -937,7 +1075,7 @@ export default function App() {
                       uploadDate: new Date().toISOString(),
                       folderId: String(boxFolderId),
                       uploader: capturedCurrentUser?.name || 'Admin',
-                      ocrContent: inv.ocrContent || '',
+                      ocrContent: '',
                       url: uploadRes.url,
                       fileData: null
                     };
@@ -958,7 +1096,6 @@ export default function App() {
         }
         // --- BATCH UPLOAD END ---
 
-        const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
         let newHistory = isNew
           ? [createHistoryItem('CREATED', `Kardus baru: ${boxId}`), createHistoryItem('STORED', `Masuk Slot #${slotId}`)]
           : [createHistoryItem('UPDATED', oldBoxId !== boxId ? `Rename: ${oldBoxId} -> ${boxId}` : `Update data ${boxId}`)];
@@ -1006,7 +1143,8 @@ export default function App() {
       runBackgroundSave(selectedSlotId, currentSlot, { ...boxForm }, { ...currentUser });
 
     } catch (err) {
-      toast.error("Gagal inisialisasi penyimpanan: " + err.message);
+      const msg = await parseApiError(err);
+      toast.error("Gagal inisialisasi penyimpanan: " + msg);
     }
   };
 
@@ -1014,6 +1152,8 @@ export default function App() {
     if (!selectedSlotId) return;
     const slotIndex = selectedSlotId - 1;
     const currentSlot = inventory[slotIndex];
+
+    const previousInventory = [...inventory];
 
     // --- SYNC FOLDER (Rename jika status berubah) ---
     if (currentSlot.boxData) {
@@ -1033,7 +1173,9 @@ export default function App() {
       toast.success(`Status berhasil diubah ke ${label}`);
       setIsModalOpen(false);
     } catch (error) {
-      toast.error("Gagal update status: " + error.message);
+      setInventory(previousInventory);
+      const msg = await parseApiError(error);
+      toast.error("Gagal update status: " + msg);
     }
   };
 
@@ -1043,6 +1185,8 @@ export default function App() {
 
     const sourceSlot = inventory[selectedSlotId - 1];
     const targetSlot = inventory[targetId - 1];
+
+    const previousInventory = [...inventory];
 
     // --- SYNC FOLDER (Rename karena pindah slot) ---
     if (sourceSlot.boxData) {
@@ -1057,6 +1201,7 @@ export default function App() {
       toast.success(`Box berhasil dipindahkan ke Slot #${targetId}`);
       setIsModalOpen(false);
     } catch (error) {
+      setInventory(previousInventory);
       toast.error("Gagal memindahkan box: " + error.message);
     }
   };
@@ -1065,6 +1210,9 @@ export default function App() {
     if (!selectedSlotId) return;
     if (!window.confirm(`Kirim ke ${destination} pada tanggal ${date}?`)) return;
     const currentSlot = inventory[selectedSlotId - 1];
+
+    const previousInventory = [...inventory];
+    const previousExternal = [...externalItems];
 
     try {
       // 1. Save to External Items
@@ -1089,6 +1237,8 @@ export default function App() {
       setIsModalOpen(false);
       setShowExternalForm(false);
     } catch (error) {
+      setInventory(previousInventory);
+      setExternalItems(previousExternal);
       toast.error("Gagal transfer keluar: " + error.message);
     }
   };
@@ -1102,6 +1252,9 @@ export default function App() {
     if (targetSlot.status !== 'EMPTY') { toast.error(`Slot #${targetId} tidak kosong!`); return; }
 
     if (!window.confirm(`Kembalikan Box ${selectedExternalItem.boxId} ke Slot #${targetId}?`)) return;
+
+    const previousInventory = [...inventory];
+    const previousExternal = [...externalItems];
 
     try {
       // Rename folder kembali ke nama asli (tanpa status/timestamp)
@@ -1129,6 +1282,8 @@ export default function App() {
       setSelectedExternalItem(null);
       setIsModalOpen(false); // Close generic modal if open?
     } catch (error) {
+      setInventory(previousInventory);
+      setExternalItems(previousExternal);
       toast.error("Gagal restore: " + error.message);
     }
   };
@@ -1148,6 +1303,8 @@ export default function App() {
       if (!window.confirm("Kosongkan slot? Data kardus akan dihapus.")) return;
       const currentSlot = inventory[selectedSlotId - 1];
 
+      const previousInventory = [...inventory];
+
       if (currentSlot.boxData) {
         await syncBoxFolder(currentSlot.boxData.id, 'REMOVED');
       }
@@ -1160,16 +1317,21 @@ export default function App() {
         toast.success("Slot berhasil dikosongkan.");
         setIsModalOpen(false);
       } catch (error) {
+        setInventory(previousInventory);
         toast.error("Gagal mengosongkan slot: " + error.message);
       }
     } else if (selectedExternalItem) {
       if (!window.confirm("Hapus data box ini secara permanen dari Indoarsip?")) return;
+      const previousExternal = [...externalItems];
+      setExternalItems(externalItems.filter(e => e.id !== selectedExternalItem.id));
+
       try {
         await deleteExternalItem(selectedExternalItem.id);
         addLog(currentUser?.name || 'Admin', 'Hapus Permanen', `Box ${selectedExternalItem.boxId} dihapus dari Eksternal`);
         toast.success("Data box eksternal berhasil dihapus permanen.");
         setIsModalOpen(false);
       } catch (error) {
+        setExternalItems(previousExternal);
         toast.error("Gagal menghapus: " + error.message);
       }
     }
@@ -1202,7 +1364,7 @@ export default function App() {
       setTaxSummaries(await api.getTaxSummaries());
       setShowTaxForm(false);
       addLog(currentUser?.name, 'Update Pajak', `${taxForm.month} ${taxForm.year}`);
-    } catch (e) { toast.error(e); }
+    } catch (e) { alert(e.message); }
   };
 
 
@@ -1219,11 +1381,6 @@ export default function App() {
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
         const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-        if (inventory.length === 0) {
-          toast.warning("Data inventory belum siap. Mohon tunggu beberapa detik atau refresh halaman lalu coba lagi.");
-          return;
-        }
 
         let importedCount = 0;
         let skippedLogs = [];
@@ -1279,10 +1436,12 @@ export default function App() {
         const groupedEntries = Object.entries(groupedBySlot);
         if (groupedEntries.length === 0) {
           toast.error("Format Excel tidak dikenal atau data kosong. Pastikan ada kolom 'No Slot' dan 'No Kardus'.");
+          e.target.value = '';
           return;
         }
 
-        const tid = toast.loading(`Mengimport 0/${groupedEntries.length} box...`);
+        let tid = null;
+        tid = toast.loading(`Mengimport 0/${groupedEntries.length} box...`);
         let actualFolders = await api.getFolders(); // Prefetch for optimization
 
         // 2. Iterasi hasil grouping untuk update database
@@ -1300,11 +1459,15 @@ export default function App() {
             continue;
           }
 
-          // Cari slot berdasarkan ID (bukan indeks array) untuk akurasi
-          const currentSlot = inventory.find(s => Number(s.id) === currentProcessingSlot) || { id: currentProcessingSlot, status: 'EMPTY', history: [] };
+          // VALIDASI: Pastikan slot ada di database (mencegah 404)
+          const currentSlot = inventory.find(s => Number(s.id) === currentProcessingSlot);
 
-          // VALIDATION: Skip jika slot sudah terisi (Permintaan User: Cegah menimpa isi slot)
-          if (currentSlot.status !== 'EMPTY') {
+          if (!currentSlot) {
+            skippedLogs.push(`Slot #${currentProcessingSlot} Gagal: Slot tidak terdaftar di sistem.`);
+            continue;
+          } else if (currentSlot.status !== 'EMPTY' && currentSlot.boxData !== null) {
+            // Hanya skip jika slot terisi DAN datanya valid. 
+            // Jika status terisi tapi boxData null (rusak), maka izinkan untuk ditimpa.
             const errorMsg = `Slot #${currentProcessingSlot} Gagal: Slot sudah terisi Box ${currentSlot.boxData?.id || 'Unknown'}`;
             skippedLogs.push(errorMsg);
             // toast.error(errorMsg); // Don't spam toasts in a loop, rely on summary toast
@@ -1314,7 +1477,7 @@ export default function App() {
           // Siapkan struktur data box
           const ordners = Object.values(data.ordnerMap).map(o => ({
             ...o,
-            id: Date.now() + Math.random()
+            id: Math.floor(Date.now() + Math.random() * 1000000)
           }));
 
           const boxData = { id: data.boxId, ordners };
@@ -1325,8 +1488,8 @@ export default function App() {
           const updatedSlot = {
             ...currentSlot,
             status: 'IMPORTED',
-            box_id: data.boxId, // SYNC COLUMN: Ensure the top-level box_id is updated for searching/filtering
-            boxData: boxData,
+            box_id: data.boxId, // FIX: Gunakan snake_case agar sesuai kolom DB
+            box_data: boxData,  // FIX: Gunakan snake_case agar sesuai kolom DB
             lastUpdated: new Date().toISOString(),
             history: [...(Array.isArray(currentSlot.history) ? currentSlot.history : []), createHistoryItem('IMPORTED', `Import: ${data.boxId}`)]
           };
@@ -1336,19 +1499,12 @@ export default function App() {
         }
 
         updateToast(tid, { type: 'success', message: `Import Selesai: ${importedCount} box berhasil.` });
-
         await fetchInventory();
-
-        if (importedCount > 0) {
-          toast.success(`Berhasil mengimport ${importedCount} box.`);
-        }
-
         if (skippedLogs.length > 0) {
-          // Jika tidak ada yang berhasil sama sekali, toast error saja. Jika ada yang berhasil, warning.
           if (importedCount === 0) {
-            toast.error(`Gagal: ${skippedLogs.length} slot sudah terisi. Tidak ada data yang diimport.`);
+            toast.error(`Gagal: ${skippedLogs.length} slot bermasalah (tidak terdaftar/penuh).`);
           } else {
-            toast.warning(`${importedCount} Berhasil, ${skippedLogs.length} Gagal (Slot Penuh).`);
+            toast.warning(`${importedCount} Berhasil, ${skippedLogs.length} Gagal/Dilewati.`);
           }
           console.log("Detail Skip Import:", skippedLogs);
         }
@@ -1356,7 +1512,8 @@ export default function App() {
         addLog(currentUser?.name, 'Import Excel', `Import ${importedCount}, Skip ${skippedLogs.length}`);
       } catch (error) {
         console.error("Excel import error:", error);
-        toast.error(`Gagal Import Excel: ${error.message}`);
+        if (tid) updateToast(tid, { type: 'error', message: `Gagal Import: ${error.message}` });
+        else toast.error(`Gagal Import Excel: ${error.message}`);
       }
     };
     reader.readAsArrayBuffer(file);
@@ -1445,7 +1602,7 @@ export default function App() {
 
   const handleDownloadInvoice = (inv) => {
     console.log("Downloading Invoice:", inv.fileName, "URL:", inv.file);
-    if (!inv.file) return toast.warning("Tidak ada file lampiran.");
+    if (!inv.file) return alert("Tidak ada file lampiran.");
     try {
       const link = document.createElement('a');
       link.href = inv.file;
@@ -1453,7 +1610,7 @@ export default function App() {
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
-    } catch (e) { toast.error("Gagal download: " + e.message); }
+    } catch (e) { alert("Gagal download: " + e.message); }
   };
 
   const handleExportInventory = () => {
@@ -1547,18 +1704,44 @@ export default function App() {
 
   const handleSaveUser = async () => {
     try {
-      await saveUser(userForm.id, userForm);
+      const previousUsers = [...users];
+      // Optimistic Update
+      if (userForm.id) {
+        setUsers(users.map(u => u.id === userForm.id ? { ...u, ...userForm } : u));
+      } else {
+        setUsers([...users, { ...userForm, id: Date.now().toString() }]);
+      }
+
       setIsModalOpen(false);
-      addLog(currentUser?.name, userForm.id ? 'Update User' : 'Create User', userForm.username);
-    } catch (e) { toast.error(e); }
+
+      try {
+        if (userForm.id) await api.updateUser(userForm.id, userForm);
+        else await api.createUser(userForm);
+        addLog(currentUser?.name, userForm.id ? 'Update User' : 'Create User', userForm.username);
+      } catch (e) {
+        setUsers(previousUsers);
+        const msg = await parseApiError(e);
+        toast.error("Gagal simpan user: " + msg);
+      }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleDeleteUser = async (id) => {
     if (!window.confirm("Hapus user ini?")) return;
+    const previousUsers = [...users];
+    setUsers(users.filter(u => u.id !== id));
+
     try {
-      await deleteUser(id);
+      await api.deleteUser(id);
       addLog(currentUser?.name, 'Delete User', `ID ${id}`);
-    } catch (e) { toast.error(e); }
+    } catch (e) {
+      setUsers(previousUsers);
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleEditDept = (dept) => {
@@ -1575,14 +1758,41 @@ export default function App() {
 
   const handleSaveDept = async () => {
     try {
-      await saveDepartment(deptForm.id, deptForm.name);
+      const previousDepts = [...departments];
+      // Optimistic Update
+      if (deptForm.id) {
+        setDepartments(departments.map(d => d.id === deptForm.id ? { ...d, name: deptForm.name } : d));
+      } else {
+        setDepartments([...departments, { id: Date.now().toString(), name: deptForm.name }]);
+      }
+
       setIsModalOpen(false);
-    } catch (e) { toast.error(e); }
+
+      try {
+        if (deptForm.id) await api.updateDepartment(deptForm.id, deptForm.name);
+        else await api.createDepartment(deptForm.name);
+      } catch (e) {
+        setDepartments(previousDepts);
+        const msg = await parseApiError(e);
+        toast.error("Gagal simpan departemen: " + msg);
+      }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleDeleteDept = async (id) => {
     if (!window.confirm("Hapus dept?")) return;
-    try { await deleteDepartment(id); } catch (e) { toast.error(e); }
+    const previousDepts = [...departments];
+    setDepartments(departments.filter(d => d.id !== id));
+    try {
+      await api.deleteDepartment(id);
+    } catch (e) {
+      setDepartments(previousDepts);
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleCreateRole = () => {
@@ -1613,15 +1823,41 @@ export default function App() {
         access: roleForm.permissions
       };
 
-      await saveRole(editingRole?.id, payload);
+      const previousRoles = [...roles];
+      // Optimistic Update
+      if (editingRole) {
+        setRoles(roles.map(r => r.id === editingRole.id ? { ...r, ...payload } : r));
+      } else {
+        setRoles([...roles, { ...payload, id: Date.now().toString() }]);
+      }
+
       setIsModalOpen(false);
-      setEditingRole(null);
-    } catch (e) { toast.error(e); }
+
+      try {
+        if (editingRole) await api.updateRole(editingRole.id, payload);
+        else await api.createRole(payload);
+      } catch (e) {
+        setRoles(previousRoles);
+        const msg = await parseApiError(e);
+        toast.error("Gagal simpan role: " + msg);
+      }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleDeleteRole = async (id) => {
     if (!window.confirm("Hapus role?")) return;
-    try { await deleteRole(id); } catch (e) { toast.error(e); }
+    const previousRoles = [...roles];
+    setRoles(roles.filter(r => r.id !== id));
+    try {
+      await api.deleteRole(id);
+    } catch (e) {
+      setRoles(previousRoles);
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleCreateFlow = () => {
@@ -1643,11 +1879,16 @@ export default function App() {
 
   const handleDeleteFlow = async (id) => {
     if (!window.confirm("Hapus alur persetujuan ini?")) return;
+    const previousFlows = [...flows];
+    setFlows(flows.filter(f => f.id !== id));
+
     try {
       await api.deleteApprovalFlow(id);
-      setFlows(await api.getApprovalFlows());
       addLog(currentUser?.name, 'Delete Flow', `ID ${id}`);
-    } catch (e) { toast.error(e?.message || String(e)); }
+    } catch (e) {
+      setFlows(previousFlows);
+      alert(e.message);
+    }
   };
 
   const handleAddFlowStep = (user) => {
@@ -1662,32 +1903,56 @@ export default function App() {
   };
 
   const handleSaveFlow = async () => {
-    if (!flowForm.name) return toast.warning("Nama alur wajib diisi!");
+    if (!flowForm.name) return alert("Nama alur wajib diisi!");
     try {
+      const previousFlows = [...flows];
+      // Optimistic Update
       if (editingFlow) {
-        await api.updateApprovalFlow(editingFlow.id, flowForm);
+        setFlows(flows.map(f => f.id === editingFlow.id ? { ...f, ...flowForm } : f));
       } else {
-        await api.createApprovalFlow(flowForm);
+        setFlows([...flows, { ...flowForm, id: Date.now().toString() }]);
       }
-      setFlows(await api.getApprovalFlows());
+
       setIsFlowModalOpen(false);
-      addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow', flowForm.name);
-    } catch (e) { toast.error(e); }
+      try {
+        if (editingFlow) await api.updateApprovalFlow(editingFlow.id, flowForm);
+        else await api.createApprovalFlow(flowForm);
+      } catch (e) {
+        setFlows(previousFlows);
+        const msg = await parseApiError(e);
+        toast.error("Gagal simpan alur: " + msg);
+      }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleSaveVisualFlow = async (updatedPayload) => {
-    if (!updatedPayload.name) return toast.warning("Nama alur wajib diisi!");
+    if (!updatedPayload.name) return alert("Nama alur wajib diisi!");
     try {
+      const previousFlows = [...flows];
+      // Optimistic Update
       if (editingFlow) {
-        await api.updateApprovalFlow(editingFlow.id, updatedPayload);
+        setFlows(flows.map(f => f.id === editingFlow.id ? { ...f, ...updatedPayload } : f));
       } else {
-        await api.createApprovalFlow(updatedPayload);
+        setFlows([...flows, { ...updatedPayload, id: Date.now().toString() }]);
       }
-      setFlows(await api.getApprovalFlows());
+
       setIsFlowModalOpen(false);
-      addLog(currentUser?.name, editingFlow ? 'Update Flow' : 'Create Flow (Visual)', updatedPayload.name);
-      toast.success('Workflow berhasil disimpan');
-    } catch (e) { toast.error(e); }
+      try {
+        if (editingFlow) await api.updateApprovalFlow(editingFlow.id, updatedPayload);
+        else await api.createApprovalFlow(updatedPayload);
+        toast.success('Workflow berhasil disimpan');
+      } catch (e) {
+        setFlows(previousFlows);
+        const msg = await parseApiError(e);
+        toast.error("Gagal simpan workflow: " + msg);
+      }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
 
@@ -1698,7 +1963,7 @@ export default function App() {
     if (!file) return;
 
     if (file.size > 30 * 1024 * 1024) {
-      toast.error("File terlalu besar! Maksimal ukuran file adalah 30MB.");
+      alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
       if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
@@ -1706,7 +1971,7 @@ export default function App() {
     const fileSize = (file.size / 1024 / 1024).toFixed(2) + ' MB';
 
     if (file.size > 10 * 1024 * 1024) {
-      toast.warning("Peringatan: Ukuran file cukup besar (> 10MB). Pastikan koneksi stabil agar upload berhasil.");
+      alert("Peringatan: Ukuran file cukup besar (> 10MB). Pastikan koneksi stabil agar upload berhasil.");
     }
 
     // Only read Base64 for Image Previews (UI only)
@@ -1735,6 +2000,7 @@ export default function App() {
   const handleProcessDoc = async () => {
     const capturedForm = { ...uploadForm };
     const file = capturedForm.fileData; // Raw File object
+    if (uploadForm.isProcessing) return;
 
     if (!file && !capturedForm.editMode) {
       toast.warning("File belum dipilih.");
@@ -1748,48 +2014,49 @@ export default function App() {
       }
     }
 
-    setIsModalOpen(false);
-    const toastId = toast.loading(capturedForm.editMode ? `Memperbarui "${capturedForm.title}"...` : `Mengupload "${capturedForm.title}"...`);
-
-    let ocrResult = capturedForm.ocrContent || '';
-    if (file instanceof File) {
-      try {
-        updateToast(toastId, { message: `Menjalankan OCR: ${capturedForm.title}...`, type: 'loading' });
-        ocrResult = await performAdvancedOCR(file, (msg) => {
-          updateToast(toastId, { message: msg, type: 'loading' });
-        });
-      } catch (ocrErr) {
-        console.warn("OCR failed:", ocrErr);
-      }
-    }
-
+    const previousDocs = [...docList];
     const docPayload = {
       id: capturedForm.editMode ? capturedForm.id : String(Date.now()),
       title: capturedForm.title,
       uploadDate: new Date().toISOString(),
-      ocrContent: ocrResult,
+      ocrContent: capturedForm.ocrContent || '',
       size: capturedForm.fileSize,
       type: capturedForm.fileType,
       owner: currentUser?.name || 'Admin',
       folderId: currentFolderId,
       department: capturedForm.department || '',
-      file: file // File object
+      status: 'processing' // Status optimis
     };
+
+    // Update UI Seketika
+    if (capturedForm.editMode) {
+      setDocList(docList.map(d => d.id === capturedForm.id ? { ...d, ...docPayload } : d));
+    } else {
+      setDocList([...docList, docPayload]);
+    }
+
+    setUploadForm(prev => ({ ...prev, isProcessing: true }));
+    setIsModalOpen(false);
+    const toastId = toast.loading(capturedForm.editMode ? `Memperbarui "${capturedForm.title}"...` : `Mengupload "${capturedForm.title}"...`);
 
     try {
       if (capturedForm.editMode) {
-        await updateDocument(capturedForm.id, docPayload);
+        await updateDocument(capturedForm.id, { ...docPayload, file });
         addLog(currentUser?.name, 'Revisi Dokumen', `Revisi ${docPayload.title}`);
         updateToast(toastId, { message: `"${docPayload.title}" diperbarui`, type: 'success' });
       } else {
-        await createDocument(docPayload);
+        await createDocument({ ...docPayload, file });
         addLog(currentUser?.name, 'Upload Dokumen', `Upload ${docPayload.title}`);
         updateToast(toastId, { message: `"${docPayload.title}" diupload`, type: 'success' });
       }
       await fetchLogs();
     } catch (e) {
       console.error("Upload failed:", e);
-      updateToast(toastId, { message: `Gagal: ${e.message}`, type: 'error' });
+      setDocList(previousDocs); // Rollback jika gagal
+      const msg = await parseApiError(e);
+      updateToast(toastId, { message: `Gagal: ${msg}`, type: 'error' });
+    } finally {
+      setUploadForm(prev => ({ ...prev, isProcessing: false }));
     }
   };
 
@@ -1827,15 +2094,22 @@ export default function App() {
   const handleDeleteDoc = async (e, docId) => {
     e.stopPropagation();
     if (!docId) {
-      toast.error("Error: ID dokumen tidak valid.");
+      alert("Error: ID dokumen tidak valid.");
       return;
     }
     if (window.confirm('Hapus dokumen?')) {
+      const previousDocs = [...docList];
+      // Optimistic update: hapus dari list lokal segera
+      setDocList(docList.filter(d => d.id !== docId));
+
       try {
         await deleteDocument(docId);
         await fetchLogs();
         addLog(currentUser?.name, 'Hapus Dokumen', `ID ${docId}`);
-      } catch (e) { toast.error(e); }
+      } catch (e) {
+        setDocList(previousDocs); // Rollback jika API gagal
+        toast.error("Gagal menghapus dokumen: " + e.message);
+      }
     }
   };
 
@@ -2052,7 +2326,7 @@ export default function App() {
         downloadUrl = URL.createObjectURL(blob);
         fileName += '_error_log.txt';
 
-        toast.warning("File asli tidak ditemukan. Mengunduh log error & metadata sebagai gantinya.");
+        alert(errorMsg + " Mengunduh log error & metadata sebagai gantinya.");
       }
 
       element.href = downloadUrl;
@@ -2069,7 +2343,7 @@ export default function App() {
       addLog(currentUser?.name, 'Download', `Mengunduh file: ${doc.title}`);
     } catch (e) {
       console.error("Download error:", e);
-      toast.error("Gagal mengunduh file: " + e.message);
+      alert("Gagal mengunduh file: " + e.message);
     }
   };
 
@@ -2082,61 +2356,44 @@ export default function App() {
         const updated = await api.getDocumentById(docId);
         if (updated) setViewDocData(updated);
       }
-      toast.success("Berhasil mengembalikan versi dokumen.");
+      alert("Berhasil mengembalikan versi dokumen.");
     } catch (e) {
-      toast.error("Gagal mengembalikan versi: " + e.message);
+      alert("Gagal mengembalikan versi: " + e.message);
     }
   };
 
   const handleSaveTaxSummary = async () => {
     try {
-      // 1. Uniqueness Check (Month + Year + Pembetulan + Type)
       const currentType = taxForm.type || 'PPH';
-      const duplicate = taxSummaries.find(s =>
-        s.month === taxForm.month &&
-        s.year === taxForm.year &&
-        (s.pembetulan || 0) === (taxForm.pembetulan || 0) &&
-        (s.type || 'PPH') === currentType &&
-        s.id !== taxForm.id
-      );
-
-      if (duplicate) {
-        toast.warning(`Data ${currentType} untuk ${taxForm.month} ${taxForm.year} (Pembetulan ${taxForm.pembetulan || 0}) sudah ada.`);
-        return;
-      }
-
-      // Ensure data structure integrity
       const payload = {
         ...taxForm,
         type: currentType,
         pembetulan: taxForm.pembetulan || 0,
-        // Fallback for legacy fields if needed by backend
         pph23: taxForm.data?.pph?.['PPh 23'] || 0,
         pph42: taxForm.data?.pph?.['PPh 4(2)'] || 0,
       };
 
-      let updatedList;
+      const previousSummaries = [...taxSummaries];
       if (taxForm.id) {
-        // Edit
-        updatedList = taxSummaries.map(s => s.id === taxForm.id ? payload : s);
-        addLog(currentUser?.name, 'Update Pajak', `${taxForm.type} - ${taxForm.month} ${taxForm.year}`);
+        setTaxSummaries(taxSummaries.map(s => s.id === taxForm.id ? payload : s));
       } else {
-        // Create - Ensure ID
         const newRecord = { ...payload, id: Date.now().toString() };
-        updatedList = [...taxSummaries, newRecord];
-        addLog(currentUser?.name, 'Create Pajak', `${taxForm.type} - ${taxForm.month} ${taxForm.year}`);
+        setTaxSummaries([...taxSummaries, newRecord]);
       }
 
-      // 1. Simpan ke Database
-      await api.saveTaxSummary(payload);
-
-      // 2. Ambil data terbaru untuk memastikan sinkronisasi
-      const freshData = await api.getTaxSummaries();
-      setTaxSummaries(freshData);
-      localStorage.setItem('tax_summaries', JSON.stringify(freshData));
-
       setIsModalOpen(false);
-    } catch (e) { toast.error(e); }
+      try {
+        await api.saveTaxSummary(payload);
+        addLog(currentUser?.name, taxForm.id ? 'Update Pajak' : 'Create Pajak', `${taxForm.type} - ${taxForm.month} ${taxForm.year}`);
+      } catch (e) {
+        setTaxSummaries(previousSummaries);
+        const msg = await parseApiError(e);
+        toast.error("Gagal sinkronisasi ke server: " + msg);
+      }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      toast.error(msg);
+    }
   };
 
   const handleTaxImport = async (importedData) => {
@@ -2162,12 +2419,13 @@ export default function App() {
       addLog(currentUser?.name, 'Import Pajak', `Import selesai: ${successCount} sukses, ${failCount} gagal`);
 
       if (failCount > 0) {
-        toast.warning(`Import selesai. Berhasil: ${successCount}, Gagal: ${failCount}. Pastikan koneksi backend stabil.`);
+        alert(`Import selesai. Berhasil: ${successCount}, Gagal: ${failCount}. Pastikan koneksi backend stabil.`);
       } else {
-        toast.success(`Berhasil mengimport ${successCount} data ke database permanen.`);
+        alert(`Berhasil mengimport ${successCount} data ke database permanen.`);
       }
     } catch (error) {
-      toast.error("Terjadi kesalahan sistem saat sinkronisasi import.");
+      const msg = await parseApiError(error);
+      alert("Gagal sinkronisasi import: " + msg);
     }
   };
 
@@ -2176,14 +2434,31 @@ export default function App() {
     if (!folderData || !folderData.name) return;
 
     try {
-      await createFolder({
+      const previousFolders = [...folders];
+      const payload = {
         ...folderData,
         parent_id: currentFolderId,
         owner: currentUser?.name || 'Admin'
-      });
+      };
+
+      // Hapus field yang mungkin terbawa dari state UI
+      delete payload.id;
+
+      // Optimistic Update
+      setFolders([...folders, { ...payload, id: Date.now().toString() }]);
+
+      try {
+        await createFolder(payload);
+      } catch (e) {
+        setFolders(previousFolders);
+        const msg = await parseApiError(e);
+        toast.error("Gagal membuat folder: " + msg);
+      }
       await fetchLogs();
-      addLog(currentUser?.name, 'Create Folder', `Folder: ${folderData.name} (${folderData.privacy})`);
-    } catch (e) { toast.error(e); }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleEditFolder = async (e, folder, newData) => {
@@ -2198,9 +2473,22 @@ export default function App() {
     }
 
     try {
-      await updateFolder(folder.id, newData);
+      const previousFolders = [...folders];
+      // Optimistic Update
+      setFolders(folders.map(f => f.id === folder.id ? { ...f, ...newData } : f));
+
+      try {
+        await updateFolder(folder.id, newData);
+      } catch (e) {
+        setFolders(previousFolders);
+        const msg = await parseApiError(e);
+        toast.error("Gagal update folder: " + msg);
+      }
       addLog(currentUser?.name, 'Update Folder', `${folder.name} -> ${newData.name}`);
-    } catch (e) { toast.error(e); }
+    } catch (e) {
+      const msg = await parseApiError(e);
+      alert(msg);
+    }
   };
 
   const handleRenameDoc = async (e, doc) => {
@@ -2208,11 +2496,22 @@ export default function App() {
     const newTitle = prompt("Nama File Baru:", doc.title);
     if (newTitle && newTitle !== doc.title) {
       try {
-        const updatedDoc = { ...doc, title: newTitle };
-        await updateDocument(doc.id, updatedDoc);
+        const previousDocs = [...docList];
+        // Optimistic Update
+        setDocList(docList.map(d => d.id === doc.id ? { ...d, title: newTitle } : d));
+
+        try {
+          await updateDocument(doc.id, { ...doc, title: newTitle });
+        } catch (err) {
+          setDocList(previousDocs);
+          const msg = await parseApiError(err);
+          toast.error("Gagal rename file: " + msg);
+        }
         await fetchLogs();
-        addLog(currentUser?.name, 'Rename File', `${doc.title} -> ${newTitle}`);
-      } catch (err) { alert(err.message); }
+      } catch (err) {
+        const msg = await parseApiError(err);
+        alert(msg);
+      }
     }
   };
 
@@ -2227,9 +2526,18 @@ export default function App() {
     }
 
     if (window.confirm("Hapus folder ini beserta isinya?")) {
-      await deleteFolder(id);
-      await fetchLogs();
-      addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
+      const previousFolders = [...folders];
+      // Optimistic delete
+      setFolders(folders.filter(f => f.id !== id));
+
+      try {
+        await deleteFolder(id);
+        addLog(currentUser?.name, 'Delete Folder', `ID ${id}`);
+      } catch (e) {
+        setFolders(previousFolders);
+        const msg = await parseApiError(e);
+        toast.error("Gagal menghapus folder: " + msg);
+      }
     }
   };
 
@@ -2308,12 +2616,16 @@ export default function App() {
 
   const handleDeleteTaxRecord = async (id) => {
     if (window.confirm("Apakah Anda yakin ingin menghapus data ini secara permanen?")) {
+      const previousSummaries = [...taxSummaries];
+      setTaxSummaries(taxSummaries.filter(s => s.id !== id));
+
       try {
         await api.deleteTaxSummary(id);
-        const updated = taxSummaries.filter(s => s.id !== id);
-        setTaxSummaries(updated);
-        localStorage.setItem('tax_summaries', JSON.stringify(updated));
-      } catch (e) { alert("Gagal menghapus data dari server: " + e.message); }
+        addLog(currentUser?.name, 'Hapus Rekod Pajak', `ID ${id}`);
+      } catch (e) {
+        setTaxSummaries(previousSummaries);
+        toast.error("Gagal menghapus data dari server: " + e.message);
+      }
     }
   };
 
@@ -2600,12 +2912,16 @@ export default function App() {
                 handleEditFolder={handleEditFolder}
                 handleDownload={handleDownload}
                 ocrStats={ocrStats}
+                syncPustakaFolder={syncPustakaFolder}
               />
             )}
             {activeTab === 'tax-monitoring' && (
               <TaxMonitoring
                 taxAudits={taxAudits}
-                onRefresh={() => { fetchTaxAudits(); fetchDocs(); fetchFolders(); fetchLogs(); }}
+                onRefresh={(optimisticData) => {
+                  if (optimisticData) setTaxAudits(optimisticData);
+                  else { fetchTaxAudits(); fetchDocs(); fetchFolders(); fetchLogs(); }
+                }}
                 hasPermission={hasPermission}
                 currentUser={currentUser}
                 syncAuditFolder={syncAuditFolder}
@@ -2646,16 +2962,26 @@ export default function App() {
                 users={users}
                 roles={roles}
                 departments={departments}
+                flows={flows} // Pass flows to MasterData
+                userSearchQuery={userSearchQuery}
+                setUserSearchQuery={setUserSearchQuery}
+                handleDeleteUser={handleDeleteUser}
                 handleCreateUser={handleCreateUser}
                 handleEditUser={handleEditUser}
+                handleEditRole={handleEditRole}
+                handleDeleteRole={handleDeleteRole}
+                handleCreateRole={handleCreateRole}
                 handleCreateDept={handleCreateDept}
                 handleEditDept={handleEditDept}
-                handleCreateRole={handleCreateRole}
-                handleCreateFlow={handleCreateFlow}
+                handleDeleteDept={handleDeleteDept}
+                handleCreateFlow={handleCreateFlow} // Pass flow handlers
                 handleEditFlow={handleEditFlow}
                 handleDeleteFlow={handleDeleteFlow}
                 setIsModalOpen={setIsModalOpen}
+                logs={logs}
                 setModalTab={setModalTab}
+                setRoles={setRoles}
+                setDepartments={setDepartments}
                 hasPermission={hasPermission}
               />
             )}
@@ -2671,6 +2997,21 @@ export default function App() {
                 hasPermission={hasPermission}
                 users={users}
                 departments={departments}
+                syncPustakaFolder={syncPustakaFolder}
+                syncSopFolder={syncSopFolder}
+              />
+            )}
+            {activeTab === 'system-logs' && (
+              <SystemLogs
+                isDarkMode={isDarkMode}
+              />
+            )}
+            {activeTab === 'flow' && (
+              <SopFlow
+                currentUser={currentUser}
+                hasPermission={hasPermission}
+                users={users}
+                syncSopFolder={syncSopFolder}
               />
             )}
           </div>

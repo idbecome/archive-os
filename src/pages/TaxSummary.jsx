@@ -9,20 +9,16 @@ import {
     Tooltip, Legend, ResponsiveContainer, AreaChart, Area, ComposedChart, PieChart, Pie, Cell
 } from 'recharts';
 import * as XLSX from 'xlsx';
-import { taxService as api } from "../services/taxService";
-import { documentService } from "../services/documentService";
-import { useTaxStore } from '../store/useTaxStore';
+import { api } from '../api';
+import { parseApiError } from '../utils/errorHandler';
 import { Card, SummaryCard } from '../components/ui/Card';
-import { useToast } from '../components/ui/Toast';
 
-export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, onRefresh, onCopy }) {
-    const { taxSummaries, saveTaxSummary, deleteTaxSummary } = useTaxStore();
+export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, setModalTab, setIsModalOpen, config, saveConfig, handleDeleteRecord, handleRenameTaxType, onRefresh, onImport, onCopy }) {
     const [activeTab, setActiveTab] = useState('pph'); // pph, ppn, comparison
     const [viewMode, setViewMode] = useState('chart'); // chart, table
     const [filters, setFilters] = useState({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
     const fileInputRef = useRef(null);
     const [importMode, setImportMode] = useState(null); // 'pph' or 'ppn'
-    const { toast } = useToast();
 
     // Helper: Reset filters
     const resetFilters = () => setFilters({ month: 'All', year: 'All', pembetulan: 'All', status: 'All' });
@@ -182,12 +178,12 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
         const isPPh = type === 'pph';
         const headers = [
             "Template Type", "Month (1-12)", "Year", "Pembetulan",
-            ...(isPPh
-                ? config.pphTypes
+            ...(isPPh 
+                ? config.pphTypes 
                 : [
-                    ...config.ppnInTypes.map(t => `IN_${t}`),
+                    ...config.ppnInTypes.map(t => `IN_${t}`), 
                     ...config.ppnOutTypes.map(t => `OUT_${t}`)
-                ]
+                  ]
             )
         ];
 
@@ -215,7 +211,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
             const jsonData = XLSX.utils.sheet_to_json(ws);
 
             if (jsonData.length === 0) {
-                toast.warning("File kosong.");
+                alert("File kosong.");
                 return;
             }
 
@@ -234,17 +230,17 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
             const fileTypeMarker = String(jsonData[0]?.["Template Type"] || "").toUpperCase();
 
             if (importMode === 'ppn' && (fileTypeMarker === 'PPH' || (!hasPpnMarkers && fileTypeMarker !== 'PPN'))) {
-                toast.error("⚠️ Gagal Import PPN: File ini terdeteksi sebagai template PPh. Harap gunakan tombol 'Import PPh' atau gunakan template PPN yang benar.");
+                alert("⚠️ Gagal Import PPN: File ini terdeteksi sebagai template PPh. Harap gunakan tombol 'Import PPh' atau gunakan template PPN yang benar.");
                 return;
             }
 
             if (importMode === 'pph' && (fileTypeMarker === 'PPN' || hasPpnMarkers)) {
-                toast.error("⚠️ Gagal Import PPh: File ini terdeteksi sebagai template PPN. Harap gunakan tombol 'Import PPN' atau gunakan template PPh yang benar.");
+                alert("⚠️ Gagal Import PPh: File ini terdeteksi sebagai template PPN. Harap gunakan tombol 'Import PPN' atau gunakan template PPh yang benar.");
                 return;
             }
-
+            
             // Gunakan copy dari config agar bisa langsung dipakai parsing di bawah
-            let localConfig = JSON.parse(JSON.stringify(config));
+            let localConfig = JSON.parse(JSON.stringify(config)); 
             let configChanged = false;
             let newColumns = [];
 
@@ -304,7 +300,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
 
             if (configChanged) {
                 saveConfig(localConfig); // Simpan ke App state / LocalStorage
-                toast.info(`Menambahkan kolom baru: ${newColumns.join(', ')}`);
+                alert(`Menambahkan kolom baru: ${newColumns.join(', ')}`);
             }
 
             const payloads = [];
@@ -374,23 +370,13 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                 payloads.push(payload);
             }
 
-            if (payloads.length > 0) {
-                // Bulk import using store
-                const toastId = toast.loading(`Mengimport ${payloads.length} data...`);
-                let success = 0;
-                for (const p of payloads) {
-                    try {
-                        await saveTaxSummary(p);
-                        success++;
-                    } catch (e) {
-                        console.error("Import item failed", e);
-                    }
-                }
-                toast.success(`Berhasil mengimport ${success} data.`);
+            if (payloads.length > 0 && onImport) {
+                onImport(payloads);
             }
         } catch (error) {
             console.error("Import failed", error);
-            toast.error("Gagal mengimport file: " + error.message);
+            const msg = await parseApiError(error);
+            alert("Gagal mengimport file: " + msg);
         } finally {
             setImportMode(null);
             if (fileInputRef.current) fileInputRef.current.value = '';
@@ -490,7 +476,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                             <p className="text-lg font-black text-white">
                                 Rp {grandTotalPPh.toLocaleString('id-ID')}
                             </p>
-                            <button
+                            <button 
                                 onClick={(e) => { e.stopPropagation(); onCopy(grandTotalPPh, "Estimasi PPh Terutang"); }}
                                 className="p-2 bg-white/20 hover:bg-white/30 rounded-xl text-white transition-all active:scale-90"
                                 title="Salin Total"
@@ -505,7 +491,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                             <div className="absolute right-0 top-0 w-16 h-16 bg-gradient-to-br from-indigo-500/10 to-transparent rounded-bl-3xl -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
                             <div className="flex justify-between items-start">
                                 <h4 className="text-xs text-gray-500 dark:text-slate-400 font-semibold uppercase tracking-wider mb-1">{type}</h4>
-                                <button
+                                <button 
                                     onClick={(e) => { e.stopPropagation(); onCopy(totalPerType[type], type); }}
                                     className="opacity-0 group-hover:opacity-100 p-1 text-slate-400 hover:text-indigo-600 transition-all"
                                 >
@@ -539,25 +525,25 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                             <div className="flex gap-2">
                                 {hasPermission('tax-summary', 'create') && (
                                     <button
-                                        onClick={() => {
-                                            setTaxForm({
-                                                type: 'PPH',
-                                                month: 'Januari',
-                                                year: new Date().getFullYear(),
-                                                pembetulan: 0,
-                                                data: {
-                                                    pph: config.pphTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {}),
-                                                    ppnIn: {},
-                                                    ppnOut: {}
-                                                }
-                                            });
-                                            setModalTab('tax-form-pph');
-                                            setIsModalOpen(true);
-                                        }}
-                                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20"
-                                    >
-                                        <Plus size={14} /> Input PPh
-                                    </button>
+                                    onClick={() => {
+                                        setTaxForm({
+                                            type: 'PPH',
+                                            month: 'Januari',
+                                            year: new Date().getFullYear(),
+                                            pembetulan: 0,
+                                            data: {
+                                                pph: config.pphTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {}),
+                                                ppnIn: {},
+                                                ppnOut: {}
+                                            }
+                                        });
+                                        setModalTab('tax-form-pph');
+                                        setIsModalOpen(true);
+                                    }}
+                                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20"
+                                >
+                                    <Plus size={14} /> Input PPh
+                                </button>
                                 )}
                                 <button className="p-2 hover:bg-gray-100 rounded-lg dark:hover:bg-slate-700"><Download size={16} className="text-gray-500" /></button>
                             </div>
@@ -639,21 +625,21 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                                                 {t}
                                                 {hasPermission('tax-summary', 'edit') && (
                                                     <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleRenameTaxType('pphTypes', t); }}
-                                                            className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                                                            title="Ubah Nama"
-                                                        >
-                                                            <Edit3 size={12} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleDeleteType('pphTypes', t); }}
-                                                            className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                                            title="Hapus Kolom"
-                                                        >
-                                                            <Trash2 size={12} />
-                                                        </button>
-                                                    </div>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleRenameTaxType('pphTypes', t); }}
+                                                        className="p-1 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                        title="Ubah Nama"
+                                                    >
+                                                        <Edit3 size={12} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDeleteType('pphTypes', t); }}
+                                                        className="p-1 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                                        title="Hapus Kolom"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </button>
+                                                </div>
                                                 )}
                                             </div>
                                         </th>
@@ -667,9 +653,9 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                                 {getFilteredData(sortedSummaries, 'pph').map((s, idx) => {
                                     let rowTotal = 0;
                                     return (
-                                        <tr key={idx}
+                                        <tr key={idx} 
                                             style={{ animationDelay: `${idx * 50}ms` }}
-                                            className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group animate-in zoom-in-95 fade-in fill-mode-both duration-500 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`}
+                                            className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 transition-colors group animate-in zoom-in-95 fade-in fill-mode-both duration-500 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} 
                                             onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s)}>
                                             <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
                                             {config.pphTypes.map(t => {
@@ -684,7 +670,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                                                         <button onClick={(e) => { e.stopPropagation(); handleEditRow(s, 'pph') }} className="p-1.5 text-blue-500 hover:bg-blue-50 rounded-lg transition-colors border border-transparent hover:border-blue-100" title="Edit Data"><Settings size={16} /></button>
                                                     )}
                                                     {hasPermission('tax-summary', 'delete') && (
-                                                        <button onClick={(e) => { e.stopPropagation(); if (window.confirm("Hapus record ini?")) deleteTaxSummary(s.id); }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
+                                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteRecord(s.id) }} className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors border border-transparent hover:border-red-100" title="Hapus Data"><Trash2 size={16} /></button>
                                                     )}
                                                 </div>
                                             </td>
@@ -783,25 +769,25 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                             <div className="flex gap-2">
                                 {hasPermission('tax-summary', 'create') && (
                                     <button
-                                        onClick={() => {
-                                            setTaxForm({
-                                                type: 'PPN',
-                                                month: 'Januari',
-                                                year: new Date().getFullYear(),
-                                                pembetulan: 0,
-                                                data: {
-                                                    pph: {},
-                                                    ppnIn: config.ppnInTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {}),
-                                                    ppnOut: config.ppnOutTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {})
-                                                }
-                                            });
-                                            setModalTab('tax-form-ppn');
-                                            setIsModalOpen(true);
-                                        }}
-                                        className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20"
-                                    >
-                                        <Plus size={14} /> Input PPN
-                                    </button>
+                                    onClick={() => {
+                                        setTaxForm({
+                                            type: 'PPN',
+                                            month: 'Januari',
+                                            year: new Date().getFullYear(),
+                                            pembetulan: 0,
+                                            data: {
+                                                pph: {},
+                                                ppnIn: config.ppnInTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {}),
+                                                ppnOut: config.ppnOutTypes.reduce((acc, t) => ({ ...acc, [t]: 0 }), {})
+                                            }
+                                        });
+                                        setModalTab('tax-form-ppn');
+                                        setIsModalOpen(true);
+                                    }}
+                                    className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20"
+                                >
+                                    <Plus size={14} /> Input PPN
+                                </button>
                                 )}
                             </div>
                         </div>
@@ -901,19 +887,19 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                                                 {t}
                                                 {hasPermission('tax-summary', 'edit') && (
                                                     <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleRenameTaxType('ppnInTypes', t); }}
-                                                            className="p-0.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                                                        >
-                                                            <Edit3 size={10} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleDeleteType('ppnInTypes', t); }}
-                                                            className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                                        >
-                                                            <Trash2 size={10} />
-                                                        </button>
-                                                    </div>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleRenameTaxType('ppnInTypes', t); }}
+                                                        className="p-0.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                    >
+                                                        <Edit3 size={10} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDeleteType('ppnInTypes', t); }}
+                                                        className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                                    >
+                                                        <Trash2 size={10} />
+                                                    </button>
+                                                </div>
                                                 )}
                                             </div>
                                         </th>
@@ -924,19 +910,19 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                                                 {t}
                                                 {hasPermission('tax-summary', 'edit') && (
                                                     <div className="flex opacity-0 group-hover/th:opacity-100 transition-opacity">
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleRenameTaxType('ppnOutTypes', t); }}
-                                                            className="p-0.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
-                                                        >
-                                                            <Edit3 size={10} />
-                                                        </button>
-                                                        <button
-                                                            onClick={(e) => { e.stopPropagation(); handleDeleteType('ppnOutTypes', t); }}
-                                                            className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
-                                                        >
-                                                            <Trash2 size={10} />
-                                                        </button>
-                                                    </div>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleRenameTaxType('ppnOutTypes', t); }}
+                                                        className="p-0.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50 rounded"
+                                                    >
+                                                        <Edit3 size={10} />
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDeleteType('ppnOutTypes', t); }}
+                                                        className="p-0.5 text-red-400 hover:text-red-600 hover:bg-red-50 rounded"
+                                                    >
+                                                        <Trash2 size={10} />
+                                                    </button>
+                                                </div>
                                                 )}
                                             </div>
                                         </th>
@@ -952,9 +938,9 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                                     const isLB = net < 0;
 
                                     return (
-                                        <tr key={idx}
+                                        <tr key={idx} 
                                             style={{ animationDelay: `${idx * 50}ms` }}
-                                            className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 group animate-in zoom-in-95 fade-in fill-mode-both duration-500 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`}
+                                            className={`hover:bg-gray-50 dark:hover:bg-slate-800/50 group animate-in zoom-in-95 fade-in fill-mode-both duration-500 ${hasPermission('tax-summary', 'edit') ? 'cursor-pointer' : ''}`} 
                                             onClick={() => hasPermission('tax-summary', 'edit') && handleEditRow(s, 'ppn')}>
                                             <td className="px-6 py-4 font-medium dark:text-white">{s.month} {s.year}</td>
                                             {config.ppnInTypes.map(t => <td key={t} className="px-4 py-4 text-right">Rp {getSafeValue(s, t, 'ppnIn').toLocaleString()}</td>)}
@@ -1016,7 +1002,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
 
         const [compMode, setCompMode] = useState('manual'); // manual, mom, diff_year, yoy, rev
         const [compFilters, setCompFilters] = useState({ month: 'All', year: 'All', pembetulan: 'All' });
-
+        
         // Specific states for modes
         const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
         const [selectedMonth, setSelectedMonth] = useState('Januari');
@@ -1262,7 +1248,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                     </div>
                 </Card>
 
-
+ 
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* PPh Comparison */}
@@ -1270,7 +1256,7 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="font-bold text-gray-900 dark:text-white">Perbandingan PPh</h3>
                             {dataB.data?.pph && (
-                                <button
+                                <button 
                                     onClick={() => onCopy(Object.values(dataB.data.pph).reduce((a, b) => a + b, 0), "Total PPh Periode B")}
                                     className="p-1.5 text-slate-400 hover:text-indigo-600 transition-all"
                                     title="Salin Total PPh Periode B"
@@ -1385,22 +1371,22 @@ export default function TaxSummary({ hasPermission, setTaxForm, setModalTab, set
                     </div>
 
                     <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".xlsx, .xls" />
-
+                    
                     {hasPermission('tax-summary', 'create') && (
-                        <div className="flex gap-1">
-                            <button
-                                onClick={() => { setImportMode('pph'); setTimeout(() => fileInputRef.current?.click(), 0); }}
-                                className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors shadow-sm"
-                            >
-                                <FileSpreadsheet size={16} /> Import PPh
-                            </button>
-                            <button
-                                onClick={() => { setImportMode('ppn'); setTimeout(() => fileInputRef.current?.click(), 0); }}
-                                className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors shadow-sm"
-                            >
-                                <FileSpreadsheet size={16} /> Import PPN
-                            </button>
-                        </div>
+                    <div className="flex gap-1">
+                        <button
+                            onClick={() => { setImportMode('pph'); setTimeout(() => fileInputRef.current?.click(), 0); }}
+                            className="px-3 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors shadow-sm"
+                        >
+                            <FileSpreadsheet size={16} /> Import PPh
+                        </button>
+                        <button
+                            onClick={() => { setImportMode('ppn'); setTimeout(() => fileInputRef.current?.click(), 0); }}
+                            className="px-3 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm flex items-center gap-2 transition-colors shadow-sm"
+                        >
+                            <FileSpreadsheet size={16} /> Import PPN
+                        </button>
+                    </div>
                     )}
                 </div>
             </div>

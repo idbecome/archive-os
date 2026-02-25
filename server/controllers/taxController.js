@@ -1,5 +1,7 @@
 import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
+import XLSX from 'xlsx';
+import fs from 'fs';
 
 // --- TAX OBJECTS ---
 export const getTaxObjects = async (req, res) => {
@@ -267,6 +269,136 @@ export const addAuditNote = async (req, res) => {
         await systemLog(user || 'System', "Add Audit Note", `Added note to audit ${id} step ${stepIndex}`);
         res.json({ success: true, id: noteId });
     } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+};
+
+// --- IMPORT FUNCTIONS ---
+export const importTaxObjects = async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const rawData = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+        if (!rawData || rawData.length === 0) {
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).json({ error: "File Excel kosong atau tidak terbaca" });
+        }
+
+        const formattedData = rawData.map(item => {
+            // Helper to find key case-insensitively
+            const getVal = (possibleKeys) => {
+                const actualKeys = Object.keys(item);
+                for (const pk of possibleKeys) {
+                    const match = actualKeys.find(ak => ak.toLowerCase().replace(/_/g, '') === pk.toLowerCase().replace(/_/g, ''));
+                    if (match) return item[match];
+                }
+                return undefined;
+            };
+
+            return {
+                code: getVal(['tax_object_code', 'code', 'kode']),
+                name: getVal(['tax_object_name', 'name', 'nama']),
+                tax_type: String(getVal(['tax_type', 'type', 'jenis']) || ''),
+                rate: parseFloat(getVal(['rate', 'tarif']) || 0),
+                note: getVal(['note', 'description', 'keterangan']),
+                is_pph21_bukan_pegawai: getVal(['is_pph21_bukan_pegawai', 'isPph21BukanPegawai']) ? 1 : 0,
+                use_ppn: getVal(['use_ppn', 'usePpn']) !== undefined ? (getVal(['use_ppn', 'usePpn']) ? 1 : 0) : 1,
+                markup_mode: getVal(['markup_mode', 'markupMode']) || 'none'
+            };
+        }).filter(row => row.code && row.name);
+
+        if (formattedData.length === 0) {
+            console.warn("[Import Master] No valid rows found. Raw Data Sample:", rawData[0]);
+            if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+            return res.status(400).json({ error: "Tidak ada data valid yang ditemukan. Pastikan kolom 'code' dan 'name' tersedia." });
+        }
+
+        let importCount = 0;
+        for (const row of formattedData) {
+            try {
+                const existing = await knex('master_tax_objects').where('code', row.code).first();
+                if (existing) {
+                    await knex('master_tax_objects').where('code', row.code).update(row);
+                } else {
+                    await knex('master_tax_objects').insert(row);
+                }
+                importCount++;
+            } catch (rowErr) {
+                console.error(`[Import Master] Row error (${row.code}):`, rowErr.message);
+            }
+        }
+
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+        await systemLog('Admin', "Import Tax Objects", `Success: ${importCount}/${formattedData.length} records`);
+        res.json({ message: `Berhasil mengimport ${importCount} data master objek pajak` });
+    } catch (e) {
+        if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+        console.error("Import Master fatal error:", e);
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const importTaxWp = async (req, res) => {
+    try {
+        if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+        const workbook = XLSX.readFile(req.file.path);
+        const sheetName = workbook.SheetNames[0];
+        const data = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+
+        const formattedData = data.map(item => ({
+            id_type: item.id_type || item.idType || 'NPWP',
+            identity_number: item.identity_number || item.identityNumber,
+            name: item.name,
+            email: item.email,
+            tax_type: item.tax_type || item.taxType,
+            tax_object_code: item.tax_object_code || item.taxObjectCode,
+            tax_object_name: item.tax_object_name || item.taxObjectName,
+            dpp: item.dpp || 0,
+            rate: item.rate || 0,
+            pph: item.pph || 0,
+            ppn: item.ppn || 0,
+            total_payable: item.total_payable || item.totalPayable || 0,
+            discount: item.discount || 0,
+            dpp_net: item.dpp_net || item.dppNet || 0,
+            markup_mode: item.markup_mode || item.markupMode || 'none',
+            is_pph21_bukan_pegawai: item.is_pph21_bukan_pegawai !== undefined ? item.is_pph21_bukan_pegawai : (item.isPph21BukanPegawai ? 1 : 0),
+            use_ppn: item.use_ppn !== undefined ? item.use_ppn : (item.usePpn !== undefined ? (item.usePpn ? 1 : 0) : 1)
+        })).filter(row => row.identity_number); // Filter out rows without identity number
+
+        if (formattedData.length === 0) {
+            return res.status(400).json({ error: "Tidak ada data valid yang ditemukan dalam file" });
+        }
+
+        // Batch upsert based on identity_number and tax_object_code? 
+        // Or just insert? User might want to update existing.
+        for (const row of formattedData) {
+            try {
+                const existing = await knex('tax_objects')
+                    .where({ identity_number: row.identity_number, tax_object_code: row.tax_object_code })
+                    .first();
+
+                if (existing) {
+                    await knex('tax_objects').where('id', existing.id).update(row);
+                } else {
+                    await knex('tax_objects').insert(row);
+                }
+            } catch (rowErr) {
+                console.error(`Error importing WP row ${row.identity_number}:`, rowErr);
+            }
+        }
+
+        // Cleanup
+        if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+
+        await systemLog('Admin', "Import Tax WP", `Imported ${formattedData.length} records`);
+        res.json({ message: `Berhasil mengimport ${formattedData.length} data wajib pajak` });
+    } catch (e) {
+        console.error("Import WP error:", e);
         res.status(500).json({ error: e.message });
     }
 };

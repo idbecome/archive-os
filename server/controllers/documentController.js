@@ -82,7 +82,7 @@ export const uploadDocument = async (req, res) => {
                 timestamp: existingDoc.uploadDate || new Date().toISOString(),
                 size: existingDoc.size,
                 type: existingDoc.type,
-                fileData: null,
+                file_data: null,
                 url: archivedUrl,
                 title: existingDoc.title,
                 user: existingDoc.owner || 'System',
@@ -101,20 +101,30 @@ export const uploadDocument = async (req, res) => {
             const initialOcr = req.body.ocrContent || '';
             const status = initialOcr ? 'done' : 'processing';
 
-            await knex('documents')
-                .where('id', existingDoc.id)
-                .update({
-                    title: title,
-                    type: finalType,
-                    size: finalSize,
-                    uploadDate: uploadDate,
-                    url: fileUrl,
-                    ocrContent: initialOcr,
-                    fileData: null,
-                    versionsHistory: JSON.stringify(versionsHistory),
-                    version: knex.raw('COALESCE(version, 1) + 1'),
-                    status: status
-                });
+            const updateData = {
+                title: title,
+                type: finalType,
+                size: finalSize,
+                uploadDate: uploadDate,
+                url: fileUrl,
+                ocrContent: initialOcr,
+                file_data: null,
+                versionsHistory: JSON.stringify(versionsHistory),
+                version: knex.raw('COALESCE(version, 1) + 1'),
+                status: status
+            };
+
+            try {
+                console.log("Attempting to update document with data:", updateData);
+                await knex('documents')
+                    .where('id', existingDoc.id)
+                    .update(updateData);
+            } catch (dbError) {
+                console.error("DATABASE UPDATE FAILED:", dbError.message);
+                console.error("Data that failed:", updateData);
+                throw dbError; // Re-throw to be caught by the main catch block
+            }
+
 
             if (absoluteFilePath && !initialOcr) {
                 try {
@@ -140,7 +150,7 @@ export const uploadDocument = async (req, res) => {
         const status = initialOcr ? 'done' : 'processing';
 
         const newDocId = req.body.id || `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
-        await knex('documents').insert({
+        const newDocData = {
             id: newDocId,
             title: title,
             type: finalType,
@@ -153,9 +163,19 @@ export const uploadDocument = async (req, res) => {
             ocrContent: initialOcr,
             auditId: req.body.auditId || null,
             stepIndex: req.body.stepIndex || null,
-            fileData: null,
+            file_data: null,
             status: status
-        });
+        };
+
+        try {
+            console.log("Attempting to insert new document with data:", newDocData);
+            await knex('documents').insert(newDocData);
+        } catch (dbError) {
+            console.error("DATABASE INSERT FAILED:", dbError.message);
+            console.error("Data that failed:", newDocData);
+            throw dbError; // Re-throw to be caught by the main catch block
+        }
+
 
         if (absoluteFilePath && !initialOcr) {
             try {
@@ -203,8 +223,8 @@ export const deleteDocument = async (req, res) => {
         }
 
         // Manual Cascade Delete
-        await knex('document_comments').where('documentId', subId).del();
-        await knex('document_approvals').where('title', doc.title).del(); // Approx match or needs better link? 
+        await knex('comments').where('documentId', subId).del();
+        await knex('approvals').where('title', doc.title).del(); // Approx match or needs better link? 
         // Note: document_approvals doesn't seem to have documentId FK in schema, just title? 
         // Based on schema: document_approvals has 'id', 'title', 'attachment_url' etc.
         // It seems approvals are separate entities.
@@ -316,7 +336,7 @@ export const restoreVersion = async (req, res) => {
             timestamp: doc.uploadDate || new Date().toISOString(),
             size: doc.size,
             type: doc.type,
-            fileData: null,
+            file_data: null,
             url: doc.url,
             title: doc.title,
             ocrContent: doc.ocrContent || '',
@@ -403,7 +423,7 @@ export const updateDocument = async (req, res) => {
                 timestamp: existingDoc.uploadDate || new Date().toISOString(),
                 size: existingDoc.size,
                 type: existingDoc.type,
-                fileData: null,
+                file_data: null,
                 url: archivedUrl,
                 title: existingDoc.title,
                 user: existingDoc.owner || 'System',
@@ -447,7 +467,7 @@ export const updateDocument = async (req, res) => {
 export const getComments = async (req, res) => {
     try {
         const { id } = req.params;
-        const comments = await knex('document_comments')
+        const comments = await knex('comments')
             .where('documentId', id)
             .orderBy('timestamp', 'asc');
 
@@ -500,7 +520,7 @@ export const addComment = async (req, res) => {
             });
         }
 
-        await knex('document_comments').insert(newComment);
+        await knex('comments').insert(newComment);
 
         // Return flattened version for immediate frontend update
         let responseComment = { ...newComment };
@@ -526,7 +546,7 @@ export const promoteCommentAttachment = async (req, res) => {
         const { id: docId } = req.params;
         const { commentId } = req.body;
 
-        const comment = await knex('document_comments').where('id', commentId).first();
+        const comment = await knex('comments').where('id', commentId).first();
         if (!comment || !comment.attachment) {
             return res.status(404).json({ error: "Comment or attachment not found" });
         }
@@ -557,7 +577,7 @@ export const promoteCommentAttachment = async (req, res) => {
             timestamp: doc.uploadDate || new Date().toISOString(),
             size: doc.size,
             type: doc.type,
-            fileData: null,
+            file_data: null,
             url: archivedUrl,
             title: doc.title,
             ocrContent: doc.ocrContent || '',
@@ -579,7 +599,7 @@ export const promoteCommentAttachment = async (req, res) => {
                 uploadDate: new Date().toISOString(),
                 url: newUrl,
                 ocrContent: '', // Trigger new OCR
-                fileData: null,
+                file_data: null,
                 versionsHistory: JSON.stringify(versionsHistory),
                 version: knex.raw('COALESCE(version, 1) + 1'),
                 status: 'processing'

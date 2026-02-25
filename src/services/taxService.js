@@ -1,70 +1,77 @@
-import { apiClient, API_URL } from './apiClient';
+import { API_URL } from './database';
+import { apiClient } from './apiClient';
 
 export const taxService = {
-    async getTaxSummaries() {
-        try {
-            const data = await apiClient.fetchJson(`${API_URL}/tax-summaries`);
-            return data.map(item => ({
-                ...item,
-                id: String(item.id),
-                data: typeof item.data === 'string' ? JSON.parse(item.data) : (item.data || {})
-            }));
-        } catch (e) {
-            console.error("taxService Error (getTaxSummaries):", e);
-            return [];
-        }
+    // Database Wajib Pajak
+    async getWpDatabase() {
+        return apiClient.fetchJson(`${API_URL}/tax/wp`);
     },
 
-    async saveTaxSummary(data) {
-        const isUpdate = !!data.id;
-        const url = isUpdate ? `${API_URL}/tax-summaries/${data.id}` : `${API_URL}/tax-summaries`;
-        return await apiClient.fetchJson(url, {
-            method: isUpdate ? 'PUT' : 'POST',
-            body: JSON.stringify(data)
+    async saveWpData(payload, id = null) {
+        const url = id ? `${API_URL}/tax/wp/${id}` : `${API_URL}/tax/wp`;
+        const method = id ? 'PUT' : 'POST';
+        return apiClient.fetchJson(url, {
+            method,
+            body: JSON.stringify(payload)
         });
     },
 
-    async deleteTaxSummary(id) {
-        return await apiClient.fetchRaw(`${API_URL}/tax-summaries/${id}`, { method: 'DELETE' });
+    async deleteWpData(id) {
+        return apiClient.fetchJson(`${API_URL}/tax/wp/${id}`, { method: 'DELETE' });
     },
 
+    async deleteAllWpData() {
+        return apiClient.fetchJson(`${API_URL}/tax/wp-all`, { method: 'DELETE' });
+    },
+
+    async importWpExcel(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        return apiClient.upload(`${API_URL}/tax/wp/import`, formData);
+    },
+
+    // Master Objek Pajak
+    async getTaxObjects() {
+        return apiClient.fetchJson(`${API_URL}/tax/objects`);
+    },
+
+    async importMasterExcel(file) {
+        const formData = new FormData();
+        formData.append('file', file);
+        return apiClient.upload(`${API_URL}/tax/objects/import`, formData);
+    },
+
+    // Audit Monitoring
     async getTaxAudits() {
-        try {
-            return await apiClient.fetchJson(`${API_URL}/tax-audits`);
-        } catch (e) {
-            console.error("taxService Error (getTaxAudits):", e);
-            return [];
-        }
+        return apiClient.fetchJson(`${API_URL}/tax-audits`);
     },
-
-    async createTaxAudit(data) {
-        return await apiClient.fetchJson(`${API_URL}/tax-audits`, {
+    async createTaxAudit(payload) {
+        return apiClient.fetchJson(`${API_URL}/tax-audits`, {
             method: 'POST',
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
         });
     },
-
-    async updateTaxAudit(id, data) {
-        return await apiClient.fetchJson(`${API_URL}/tax-audits/${id}`, {
+    async updateTaxAudit(id, payload) {
+        return apiClient.fetchJson(`${API_URL}/tax-audits/${id}`, {
             method: 'PUT',
-            body: JSON.stringify(data)
+            body: JSON.stringify(payload)
         });
     },
-
     async deleteTaxAudit(id) {
-        return await apiClient.fetchRaw(`${API_URL}/tax-audits/${id}`, { method: 'DELETE' });
+        return apiClient.fetchJson(`${API_URL}/tax-audits/${id}`, { method: 'DELETE' });
     },
-
     async getAuditNotes(auditId, stepIndex) {
-        try {
-            return await apiClient.fetchJson(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`);
-        } catch (e) {
-            console.error("taxService Error (getAuditNotes):", e);
-            return [];
-        }
+        return apiClient.fetchJson(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`);
     },
-
     async addAuditNote(auditId, stepIndex, formData) {
-        return await apiClient.upload(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`, formData);
+        // formData handles its own content-type
+        const response = await fetch(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`, {
+            method: 'POST',
+            headers: {
+                'Authorization': localStorage.getItem('archive_token') ? `Bearer ${localStorage.getItem('archive_token')}` : ''
+            },
+            body: formData
+        });
+        return response.json();
     }
 };

@@ -22,10 +22,10 @@ export default function Inventory({
         if (item.boxId && String(item.boxId).toLowerCase().includes(q)) return true;
 
         // 2. Check boxData (could be item.boxData directly or slot.boxData)
-        const data = item.boxData || item;
+        const data = item.boxData;
 
         // Safety check for data object
-        if (!data) return false;
+        if (!data || typeof data !== 'object') return false;
 
         if (data.id && String(data.id).toLowerCase().includes(q)) return true;
         if (data.destination && String(data.destination).toLowerCase().includes(q)) return true;
@@ -179,7 +179,10 @@ export default function Inventory({
                                         <div className="flex gap-2 shrink-0">
                                             {issue.type === 'CORRUPT' && (
                                                 <button
-                                                    onClick={() => handleSlotClick(inventory.find(s => Number(s.id) === Number(issue.slotId)))}
+                                                    onClick={() => {
+                                                        const slot = inventory.find(s => Number(s.id) === Number(issue.slotId));
+                                                        if (slot) handleSlotClick(slot);
+                                                    }}
                                                     className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black rounded-lg transition-all shadow-sm active:scale-95"
                                                 >
                                                     PERBAIKI SLOT #{issue.slotId}
@@ -188,7 +191,10 @@ export default function Inventory({
                                             {issue.type === 'DUPLICATE' && issue.slots.map(sid => (
                                                 <button
                                                     key={sid}
-                                                    onClick={() => handleSlotClick(inventory.find(s => Number(s.id) === Number(sid)))}
+                                                    onClick={() => {
+                                                        const slot = inventory.find(s => Number(s.id) === Number(sid));
+                                                        if (slot) handleSlotClick(slot);
+                                                    }}
                                                     className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-black rounded-lg transition-all shadow-sm active:scale-95"
                                                 >
                                                     CEK SLOT #{sid}

@@ -6,7 +6,11 @@ import {
     clearCompletedJobs
 } from '../controllers/ocrController.js';
 
+import { checkAuth } from '../middleware/auth.js';
+
 const router = express.Router();
+
+router.use(checkAuth);
 
 router.get('/status', getOCRStatus);
 router.get('/queue', getOCRQueue);

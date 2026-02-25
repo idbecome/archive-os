@@ -3,7 +3,7 @@ import { User, FileText, Download, Upload, Save, TrendingUp } from 'lucide-react
 import * as XLSX from 'xlsx';
 import { Card } from '../ui/Card';
 import TaxCalculator from './TaxCalculator';
-import { API_URL } from '../../services/apiClient';
+import { API_URL } from '../../services/database';
 
 export default function TaxObjectForm({
     formData, setFormData,
@@ -57,27 +57,31 @@ export default function TaxObjectForm({
     const handleImportMaster = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+
         setIsLoading(true);
         try {
-            const data = await file.arrayBuffer();
-            const workbook = XLSX.read(data);
-            const worksheet = workbook.Sheets[workbook.SheetNames[0]];
-            const jsonData = XLSX.utils.sheet_to_json(worksheet);
-            if (jsonData.length === 0) return alert("File kosong.");
+            const formData = new FormData();
+            formData.append('file', file);
+
             const res = await fetch(`${API_URL}/tax/objects/import`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ data: jsonData })
+                body: formData
             });
+
+            const result = await res.json();
+
             if (res.ok) {
-                alert("Master data berhasil diimport.");
+                alert(result.message || "Master data berhasil diimport.");
                 fetchMasterData();
+            } else {
+                alert("Gagal import: " + (result.error || "Terjadi kesalahan"));
             }
         } catch (error) {
-            alert('Gagal import master data.');
+            console.error("Import master error:", error);
+            alert('Gagal import master data: ' + error.message);
         } finally {
             setIsLoading(false);
-            e.target.value = null;
+            e.target.value = null; // Reset input
         }
     };
 

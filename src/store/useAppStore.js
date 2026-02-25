@@ -14,7 +14,9 @@ export const useAppStore = create((set) => ({
     isModalOpen: false,
     modalTab: 'details',
 
+    // Misc UI Data
     copyNotification: null,
+    logs: [],
 
     // Setters
     setIsDarkMode: (val) => {
@@ -30,4 +32,5 @@ export const useAppStore = create((set) => ({
     setIsModalOpen: (val) => set({ isModalOpen: val }),
     setModalTab: (val) => set({ modalTab: val }),
     setCopyNotification: (val) => set({ copyNotification: val }),
+    setLogs: (logs) => set({ logs }),
 }));

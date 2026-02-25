@@ -10,7 +10,11 @@ import {
     deleteSlidesByGuideId
 } from '../controllers/pustakaController.js';
 
+import { checkAuth } from '../middleware/auth.js';
+
 const router = express.Router();
+
+router.use(checkAuth);
 
 router.get('/guides', getGuides);
 router.get('/categories', getCategories);

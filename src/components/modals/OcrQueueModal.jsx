@@ -62,7 +62,16 @@ export default function OcrQueueModal({ ocrStats, API_BASE, toast }) {
         <button
           onClick={async () => {
             if (window.confirm("Yakin ingin mereset antrian?")) {
-              try { await fetch(`${API_BASE}/ocr/reset`, { method: 'POST' }); toast.success('Antrian direset.'); } catch (e) { toast.error(e.message); }
+              try {
+                const token = localStorage.getItem('archive_token');
+                await fetch(`${API_BASE}/ocr/reset`, {
+                  method: 'POST',
+                  headers: {
+                    'Authorization': token ? `Bearer ${token}` : ''
+                  }
+                });
+                toast.success('Antrian direset.');
+              } catch (e) { toast.error(e.message); }
             }
           }}
           className="flex items-center gap-2 px-6 py-3 bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-red-100 transition-colors"

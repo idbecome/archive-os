@@ -15,7 +15,11 @@ import {
     streamDocument
 } from '../controllers/documentController.js';
 
+import { checkAuth } from '../middleware/auth.js';
+
 const router = express.Router();
+
+router.use(checkAuth);
 
 // List documents (refined query)
 router.get('/', getDocuments);

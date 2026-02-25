@@ -39,9 +39,11 @@ export const up = async (knex) => {
 };
 
 export const down = async (knex) => {
-    await knex.schema.table('inventory', (table) => {
-        table.dropColumn('rack');
-        table.dropColumn('shelf');
-        table.dropColumn('position');
-    });
+    if (await knex.schema.hasTable('inventory')) {
+        await knex.schema.table('inventory', (table) => {
+            table.dropColumn('rack');
+            table.dropColumn('shelf');
+            table.dropColumn('position');
+        });
+    }
 };

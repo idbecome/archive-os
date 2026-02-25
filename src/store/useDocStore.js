@@ -1,6 +1,5 @@
 import { create } from 'zustand';
-import { documentService as api } from '../services/documentService';
-import { handleApiError } from '../utils/errorHelper';
+import { db as api } from '../services/database';
 
 export const useDocStore = create((set, get) => ({
     docList: [],
@@ -68,89 +67,31 @@ export const useDocStore = create((set, get) => ({
 
     // Mutation Actions
     createDocument: async (doc) => {
-        const tempId = `temp-${Date.now()}`;
-        const newDoc = { ...doc, id: tempId, status: 'uploading' };
-        const prev = get().docList;
-        set({ docList: [newDoc, ...prev] });
-        try {
-            const res = await api.createDocument(doc);
-            if (res) {
-                await get().fetchDocs();
-            }
-            return res;
-        } catch (error) {
-            set({ docList: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to create document:", msg);
-            throw msg;
+        const res = await api.createDocument(doc);
+        if (res) {
+            await get().fetchDocs();
         }
+        return res;
     },
     updateDocument: async (id, doc) => {
-        const prev = get().docList;
-        set({ docList: prev.map(d => d.id === id ? { ...d, ...doc } : d) });
-        try {
-            await api.updateDocument(id, doc);
-            await get().fetchDocs();
-        } catch (error) {
-            set({ docList: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to update document:", msg);
-            throw msg;
-        }
+        await api.updateDocument(id, doc);
+        await get().fetchDocs();
     },
     deleteDocument: async (id) => {
-        const prev = get().docList;
-        set({ docList: prev.filter(d => d.id !== id) });
-        try {
-            await api.deleteDocument(id);
-            await get().fetchDocs();
-        } catch (error) {
-            set({ docList: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to delete document:", msg);
-            throw msg;
-        }
+        await api.deleteDocument(id);
+        await get().fetchDocs();
     },
     createFolder: async (folder) => {
-        const tempId = `temp-${Date.now()}`;
-        const newFolder = { ...folder, id: tempId, owner: folder.owner || 'System' };
-        const prev = get().folders;
-        set({ folders: [...prev, newFolder] });
-        try {
-            await api.createFolder(folder);
-            await get().fetchFolders();
-        } catch (error) {
-            set({ folders: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to create folder:", msg);
-            throw msg;
-        }
+        await api.createFolder(folder);
+        await get().fetchFolders();
     },
     updateFolder: async (id, data) => {
-        const prev = get().folders;
-        set({ folders: prev.map(f => f.id === id ? { ...f, ...data } : f) });
-        try {
-            await api.updateFolder(id, data);
-            await get().fetchFolders();
-        } catch (error) {
-            set({ folders: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to update folder:", msg);
-            throw msg;
-        }
+        await api.updateFolder(id, data);
+        await get().fetchFolders();
     },
     deleteFolder: async (id) => {
-        const prev = get().folders;
-        set({ folders: prev.filter(f => f.id !== id) });
-        try {
-            await api.deleteFolder(id);
-            await get().fetchFolders();
-        } catch (error) {
-            set({ folders: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to delete folder:", msg);
-            throw msg;
-        }
+        await api.deleteFolder(id);
+        await get().fetchFolders();
     },
     copyDocument: async (id, targetFolderId, owner) => {
         const res = await api.copyDocument(id, targetFolderId, owner);
@@ -158,20 +99,9 @@ export const useDocStore = create((set, get) => ({
         return res;
     },
     moveDocument: async (id, targetFolderId, owner) => {
-        const prev = get().docList;
-        set({
-            docList: prev.map(d => d.id === id ? { ...d, folderId: targetFolderId } : d)
-        });
-        try {
-            const res = await api.moveDocument(id, targetFolderId, owner);
-            await get().fetchDocs();
-            return res;
-        } catch (error) {
-            set({ docList: prev });
-            const msg = await handleApiError(error);
-            console.error("Failed to move document:", msg);
-            throw msg;
-        }
+        const res = await api.moveDocument(id, targetFolderId, owner);
+        await get().fetchDocs();
+        return res;
     },
     restoreDocumentVersion: async (id, versionTimestamp) => {
         const res = await api.restoreDocumentVersion(id, versionTimestamp);
@@ -184,21 +114,9 @@ export const useDocStore = create((set, get) => ({
         return res;
     },
     addComment: async (docId, formData) => {
-        // Since formData is often real FormData for file uploads, 
-        // optimistic update for attachments is tricky.
-        // But we can at least handle text comments.
-        const prevDocs = get().docList;
-        // If we had a separate comment store, we'd update that.
-        // Assuming comments are fetched on demand, we just refresh docs.
-        try {
-            const res = await api.addComment(docId, formData);
-            // Refresh list to show new comment count if applicable
-            await get().fetchDocs();
-            return res;
-        } catch (error) {
-            const msg = await handleApiError(error);
-            console.error("Failed to add comment:", msg);
-            throw msg;
-        }
+        const res = await api.addComment(docId, formData);
+        // Comments are usually fetched separately, but we can refresh docs if needed
+        // For now, let's just return the result
+        return res;
     }
 }));

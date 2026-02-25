@@ -1,5 +1,4 @@
 import { knex } from './db.js';
-import logger from './utils/logger.js';
 
 // Simple MySQL-based Queue Replacement for BullMQ
 class DbQueue {
@@ -8,20 +7,19 @@ class DbQueue {
     }
 
     async add(name, data, opts) {
+        const jobData = {
+            name,
+            data: JSON.stringify(data),
+            status: 'waiting',
+            created_at: knex.fn.now()
+        };
         try {
-            const [id] = await knex('job_queue').insert({
-                name,
-                data: JSON.stringify(data),
-                status: 'waiting',
-                created_at: knex.fn.now()
-            });
+            console.log("Attempting to add job to queue with data:", jobData);
+            const [id] = await knex('job_queue').insert(jobData);
             return { id, name, data };
         } catch (err) {
-            logger.error({
-                action: 'QUEUE_ERROR',
-                message: `Failed to add job ${name} to queue`,
-                error: err.message
-            });
+            console.error("Queue Add Error:", err.message);
+            console.error("Job data that failed:", jobData);
             throw err;
         }
     }
@@ -67,32 +65,6 @@ class DbQueue {
             return [];
         }
     }
-    async cleanupStaleJobs(ttlMinutes = 10) {
-        try {
-            const staleTime = new Date(Date.now() - ttlMinutes * 60 * 1000);
-            const count = await knex('job_queue')
-                .where('status', 'active')
-                .where('processed_at', '<', staleTime)
-                .update({
-                    status: 'failed',
-                    error: `Stale Job (Active for > ${ttlMinutes}m)`
-                });
-            if (count > 0) {
-                logger.warn({
-                    action: 'QUEUE_CLEANUP',
-                    message: `Cleaned up ${count} stale jobs from queue.`
-                });
-            }
-            return count;
-        } catch (err) {
-            logger.error({
-                action: 'QUEUE_ERROR',
-                message: 'Cleanup Stale Jobs Failed',
-                error: err.message
-            });
-            return 0;
-        }
-    }
 }
 
 export const ocrQueue = new DbQueue('OCR_QUEUE');
@@ -108,11 +80,7 @@ export const addOCRJob = async (docId, filePath, fileType, originalName, context
             .first();
 
         if (existing) {
-            logger.info({
-                action: 'QUEUE_DEDUP',
-                message: `DEDUP: Job for DocID ${docId} already in queue`,
-                jobId: existing.id
-            });
+            console.log(`[Queue] DEDUP: Job for DocID ${docId} with same file path already in queue (Job #${existing.id}). Skipping.`);
             return {
                 id: existing.id,
                 name: 'process-ocr',
@@ -121,11 +89,7 @@ export const addOCRJob = async (docId, filePath, fileType, originalName, context
             };
         }
 
-        logger.info({
-            action: 'QUEUE_ADD',
-            message: `Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}`,
-            originalName
-        });
+        console.log(`[Queue] Adding Job for DocID: ${docId}, Type: ${context.type || 'document'}, File: ${originalName}`);
 
         return await ocrQueue.add('process-ocr', {
             docId,

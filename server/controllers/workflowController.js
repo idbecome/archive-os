@@ -17,20 +17,22 @@ export const getApprovalFlows = async (req, res) => {
 export const createApprovalFlow = async (req, res) => {
     try {
         const { name, description, steps, visual_config } = req.body;
+        // steps is array of { username, name, nodeId } from frontend
 
         const [flowId] = await knex('approval_flows').insert({
             name,
             description,
             steps: JSON.stringify(steps || []),
-            visual_config: visual_config ? JSON.stringify(visual_config) : null
+            visual_config: JSON.stringify(visual_config || { nodes: [], edges: [] })
         });
 
         if (steps && steps.length > 0) {
             const inserts = steps.map((s, idx) => ({
                 flow_id: flowId,
-                step_name: s.step_name || s.name || s.username || `Step ${idx + 1}`,
-                approver_role: s.approver_role || s.username || '',
-                order_index: s.order_index ?? idx
+                step_name: s.name,
+                approver_role: s.username, // Using username as the unique identifier for now
+                node_id: s.nodeId,
+                order_index: idx
             }));
             await knex('approval_steps').insert(inserts);
         }
@@ -46,7 +48,7 @@ export const createApprovalFlow = async (req, res) => {
 export const getDocumentApprovals = async (req, res) => {
     try {
         const { documentId } = req.params;
-        const approvals = await knex('document_approvals')
+        const approvals = await knex('approvals')
             .where('document_id', documentId)
             .orderBy('created_at', 'desc');
         res.json(approvals);
@@ -71,7 +73,7 @@ export const initiateApproval = async (req, res) => {
         }
 
         // Insert into document_approvals
-        const [approvalId] = await knex('document_approvals').insert({
+        const [approvalId] = await knex('approvals').insert({
             title,
             description,
             division,
@@ -120,7 +122,7 @@ export const approveStep = async (req, res) => {
         const { approvalId } = req.params;
         const { username, action, note, file } = req.body; // action: 'Approve' | 'Reject'
 
-        const approval = await knex('document_approvals').where('id', approvalId).first();
+        const approval = await knex('approvals').where('id', approvalId).first();
         if (!approval) return res.status(404).json({ error: "Approval not found" });
 
         const currentIdx = approval.current_step_index;
@@ -154,7 +156,7 @@ export const approveStep = async (req, res) => {
             });
 
             // Update approval status
-            await knex('document_approvals').where('id', approvalId).update({
+            await knex('approvals').where('id', approvalId).update({
                 status: 'Rejected',
                 current_step_index: currentIdx // Stays at this step or resets? Usually ends here.
             });
@@ -184,14 +186,14 @@ export const approveStep = async (req, res) => {
         const nextIdx = currentIdx + 1;
         if (nextIdx < steps.length) {
             // Move to next step
-            await knex('document_approvals').where('id', approvalId).update({
+            await knex('approvals').where('id', approvalId).update({
                 current_step_index: nextIdx,
                 status: 'Pending' // Still pending overall
             });
             res.json({ status: 'Pending', next_step: nextIdx });
         } else {
             // All steps done -> Final Approval
-            await knex('document_approvals').where('id', approvalId).update({
+            await knex('approvals').where('id', approvalId).update({
                 status: 'Approved',
                 current_step_index: nextIdx // Indicates completion
             });
@@ -221,7 +223,7 @@ export const updateApproval = async (req, res) => {
         }
 
         // Update document_approvals
-        await knex('document_approvals').where('id', id).update({
+        await knex('approvals').where('id', id).update({
             title,
             description,
             division,
@@ -257,7 +259,7 @@ export const updateApproval = async (req, res) => {
 
 export const getAllApprovals = async (req, res) => {
     try {
-        const approvals = await knex('document_approvals')
+        const approvals = await knex('approvals')
             .select('*')
             .orderBy('created_at', 'desc');
 
@@ -294,7 +296,7 @@ export const deleteApproval = async (req, res) => {
         // Deleting approval steps first
         await knex('approval_steps').where('approval_id', approvalId).del();
 
-        const deleted = await knex('document_approvals').where('id', approvalId).del();
+        const deleted = await knex('approvals').where('id', approvalId).del();
 
         if (!deleted) {
             return res.status(404).json({ error: "Approval not found" });
@@ -334,25 +336,23 @@ export const updateApprovalFlow = async (req, res) => {
         const { id } = req.params;
         const { name, description, steps, visual_config } = req.body;
 
-        const updateData = {
+        await knex('approval_flows').where('id', id).update({
             name,
             description,
-            steps: JSON.stringify(steps || [])
-        };
-        if (visual_config !== undefined) {
-            updateData.visual_config = visual_config ? JSON.stringify(visual_config) : null;
-        }
-
-        await knex('approval_flows').where('id', id).update(updateData);
+            steps: JSON.stringify(steps || []),
+            visual_config: JSON.stringify(visual_config || { nodes: [], edges: [] })
+        });
 
         if (steps) {
+            // Simple approach: delete old steps and insert new ones
             await knex('approval_steps').where('flow_id', id).del();
             if (steps.length > 0) {
                 const inserts = steps.map((s, idx) => ({
                     flow_id: id,
-                    step_name: s.step_name || s.name || s.username || `Step ${idx + 1}`,
-                    approver_role: s.approver_role || s.username || '',
-                    order_index: s.order_index ?? idx
+                    step_name: s.name,
+                    approver_role: s.username,
+                    node_id: s.nodeId,
+                    order_index: idx
                 }));
                 await knex('approval_steps').insert(inserts);
             }
@@ -371,7 +371,7 @@ export const resetApprovalStep = async (req, res) => {
         const { id } = req.params;
         const { stepIndex } = req.body;
 
-        const approval = await knex('document_approvals').where('id', id).first();
+        const approval = await knex('approvals').where('id', id).first();
         if (!approval) return res.status(404).json({ error: "Approval not found" });
 
         // Reset the target step and all subsequent steps back to 'Pending'
@@ -385,7 +385,7 @@ export const resetApprovalStep = async (req, res) => {
             });
 
         // Reset the approval's current step index and overall status
-        await knex('document_approvals')
+        await knex('approvals')
             .where('id', id)
             .update({
                 current_step_index: stepIndex,

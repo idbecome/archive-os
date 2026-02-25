@@ -1,25 +1,30 @@
-import React, { useState, useMemo } from 'react';
-import { Plus, Edit3, Trash2, Building2, GitCommit, ShieldCheck, ChevronRight, Users, User, Shield, Search, History } from 'lucide-react';
+import React, { useState, useMemo, useEffect } from 'react';
+import { Plus, Edit3, Trash2, Building2, GitCommit, ShieldCheck, ChevronRight, ChevronLeft, Users, User, Shield, History, Search, Clock, ChevronDown, ChevronUp } from 'lucide-react';
 import { Card } from '../components/ui/Card';
-import { useUserStore } from '../store/useUserStore';
-import { useDocStore } from '../store/useDocStore';
 
 export default function MasterData({
+    users, roles, departments, flows = [], logs = [],
+    handleDeleteUser, handleEditRole, handleDeleteRole,
+    handleSaveDept, handleDeleteDept,
     handleCreateUser, handleEditUser,
     handleCreateDept, handleEditDept,
     handleCreateRole,
     handleCreateFlow, handleEditFlow, handleDeleteFlow,
+    setRoles, setDepartments,
     setIsModalOpen, setModalTab,
     hasPermission
 }) {
-    const {
-        users, roles, departments, logs, logPagination, fetchLogs,
-        deleteUser, deleteRole, deleteDepartment
-    } = useUserStore();
-    const { flows } = useDocStore();
     const [masterTab, setMasterTab] = useState('users');
     const [userSearchQuery, setUserSearchQuery] = useState('');
+    const [logSearchQuery, setLogSearchQuery] = useState('');
     const [expandedDepts, setExpandedDepts] = useState({});
+    const [expandedLogId, setExpandedLogId] = useState(null);
+    const [logCurrentPage, setLogCurrentPage] = useState(1);
+    const logsPerPage = 15;
+
+    useEffect(() => {
+        setLogCurrentPage(1);
+    }, [logSearchQuery]);
 
     const toggleDept = (deptName) => {
         setExpandedDepts(prev => ({
@@ -29,7 +34,7 @@ export default function MasterData({
     };
 
     const groupedUsers = useMemo(() => {
-        const filtered = users.filter(u =>
+        const filtered = users.filter(u => 
             u.name.toLowerCase().includes(userSearchQuery.toLowerCase()) ||
             (u.department || '').toLowerCase().includes(userSearchQuery.toLowerCase())
         );
@@ -41,19 +46,30 @@ export default function MasterData({
         }, {});
     }, [users, userSearchQuery]);
 
+    const filteredLogs = useMemo(() => {
+        return logs.filter(l => 
+            l.action.toLowerCase().includes(logSearchQuery.toLowerCase()) ||
+            (l.user || '').toLowerCase().includes(logSearchQuery.toLowerCase()) ||
+            (l.details || '').toLowerCase().includes(logSearchQuery.toLowerCase())
+        );
+    }, [logs, logSearchQuery]);
+
+    const totalLogPages = Math.ceil(filteredLogs.length / logsPerPage);
+    const paginatedLogs = useMemo(() => {
+        const startIndex = (logCurrentPage - 1) * logsPerPage;
+        return filteredLogs.slice(startIndex, startIndex + logsPerPage);
+    }, [filteredLogs, logCurrentPage]);
+
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
-            <div className="flex gap-4 mb-4">
+            <div className="flex bg-gray-100 dark:bg-slate-800 p-1 rounded-xl w-fit mb-4">
                 {['users', 'roles', 'departments', 'flows', 'logs'].map(tab => (
                     <button
                         key={tab}
-                        onClick={() => {
-                            setMasterTab(tab);
-                            if (tab === 'logs') fetchLogs(1, 15);
-                        }}
-                        className={`px-4 py-2 rounded-lg capitalize transition-colors ${masterTab === tab ? 'bg-indigo-600 text-white shadow-md' : 'bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-400 hover:bg-gray-50 dark:hover:bg-slate-700'}`}
+                        onClick={() => setMasterTab(tab)}
+                        className={`px-4 py-2 rounded-lg capitalize text-sm font-bold transition-all ${masterTab === tab ? 'bg-white dark:bg-slate-700 text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700 dark:hover:text-slate-300'}`}
                     >
-                        {tab === 'logs' ? 'System Logs' : tab}
+                        {tab}
                     </button>
                 ))}
             </div>
@@ -83,7 +99,7 @@ export default function MasterData({
                         ) : (
                             Object.entries(groupedUsers).map(([deptName, deptUsers]) => (
                                 <div key={deptName} className="space-y-2">
-                                    <button
+                                    <button 
                                         onClick={() => toggleDept(deptName)}
                                         className="w-full flex items-center justify-between p-4 bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 rounded-2xl hover:shadow-md transition-all group"
                                     >
@@ -127,7 +143,7 @@ export default function MasterData({
                                                             <button onClick={() => handleEditUser(u)} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20 rounded-xl transition-colors"><Edit3 size={16} /></button>
                                                         )}
                                                         {hasPermission('master', 'delete') && (
-                                                            <button onClick={() => deleteUser(u.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"><Trash2 size={16} /></button>
+                                                            <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-colors"><Trash2 size={16} /></button>
                                                         )}
                                                     </div>
                                                 </div>
@@ -161,32 +177,31 @@ export default function MasterData({
                                 try { perms = JSON.parse(perms); } catch { perms = {}; }
                             }
                             return (
-                                <div key={r.id} className="p-4 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
-                                    <div className="flex justify-between items-start mb-4">
-                                        <div>
-                                            <div className="font-bold text-lg dark:text-white">{r.label || r.name}</div>
-                                            <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Hak Akses Modul</div>
-                                        </div>
-                                        <div className="flex gap-1">
-                                            {hasPermission('master', 'edit') && (
-                                                <button onClick={() => handleEditRole(r)} className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"><Edit3 size={16} /></button>
-                                            )}
-                                            {hasPermission('master', 'delete') && (
-                                                <button onClick={() => deleteRole(r.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 size={16} /></button>
-                                            )}
-                                        </div>
+                            <div key={r.id} className="p-4 bg-gray-50 dark:bg-slate-800 rounded-xl border border-gray-200 dark:border-slate-700">
+                                <div className="flex justify-between items-start mb-4">
+                                    <div>
+                                        <div className="font-bold text-lg dark:text-white">{r.label || r.name}</div>
+                                        <div className="text-xs text-gray-500 mt-1 uppercase tracking-wider">Hak Akses Modul</div>
                                     </div>
-                                    <div className="flex flex-wrap gap-2">
-                                        {Object.entries(perms).map(([mod, actions]) => (
-                                            <div key={mod} className="px-2 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded text-[10px] flex flex-col">
-                                                <span className="font-bold text-indigo-500 uppercase">{mod}</span>
-                                                <span className="text-gray-400">{Array.isArray(actions) ? actions.join(', ') : ''}</span>
-                                            </div>
-                                        ))}
+                                    <div className="flex gap-1">
+                                        {hasPermission('master', 'edit') && (
+                                            <button onClick={() => handleEditRole(r)} className="p-2 text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 rounded-lg"><Edit3 size={16} /></button>
+                                        )}
+                                        {hasPermission('master', 'delete') && (
+                                            <button onClick={() => handleDeleteRole(r.id)} className="p-2 text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg"><Trash2 size={16} /></button>
+                                        )}
                                     </div>
                                 </div>
-                            )
-                        })}
+                                <div className="flex flex-wrap gap-2">
+                                    {Object.entries(perms).map(([mod, actions]) => (
+                                        <div key={mod} className="px-2 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded text-[10px] flex flex-col">
+                                            <span className="font-bold text-indigo-500 uppercase">{mod}</span>
+                                            <span className="text-gray-400">{Array.isArray(actions) ? actions.join(', ') : ''}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )})}
                     </div>
                 </Card>
             )}
@@ -234,131 +249,130 @@ export default function MasterData({
 
             {masterTab === 'logs' && (
                 <Card>
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
-                        <div className="flex items-center gap-2">
-                            <History className="text-indigo-600" size={20} />
-                            <h3 className="font-bold text-lg dark:text-white">Monitoring Activity Logs</h3>
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6 gap-4">
+                        <div>
+                            <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
+                                <History size={20} className="text-indigo-500" /> Audit Trail System
+                            </h3>
+                            <p className="text-xs text-slate-500 mt-1">Riwayat lengkap aktivitas pengguna dan perubahan data.</p>
                         </div>
-
-                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full md:w-auto">
-                            <div className="relative flex-1 sm:w-64">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                <input
-                                    type="text"
-                                    placeholder="Search logs..."
-                                    className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 transition-all outline-none"
-                                    defaultValue={logPagination.search}
-                                    onChange={(e) => {
-                                        const val = e.target.value;
-                                        // Simple manual debounce to avoid store spam if needed, 
-                                        // but fetchLogs is usually fast enough.
-                                        clearTimeout(window.logSearchTimer);
-                                        window.logSearchTimer = setTimeout(() => {
-                                            fetchLogs(1, 15, val);
-                                        }, 400);
-                                    }}
-                                />
-                            </div>
-
-                            <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-900 p-1 rounded-lg">
-                                <button
-                                    disabled={logPagination.currentPage <= 1}
-                                    onClick={() => fetchLogs(logPagination.currentPage - 1, 15, logPagination.search)}
-                                    className="p-1 px-2 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-800 disabled:opacity-30 transition-all"
-                                >
-                                    Prev
-                                </button>
-
-                                {(() => {
-                                    const curr = logPagination.currentPage;
-                                    const total = logPagination.totalPages;
-                                    const pages = [];
-
-                                    if (total <= 7) {
-                                        for (let i = 1; i <= total; i++) pages.push(i);
-                                    } else {
-                                        pages.push(1);
-                                        if (curr > 4) pages.push('...');
-
-                                        const start = Math.max(2, curr - 1);
-                                        const end = Math.min(total - 1, curr + 1);
-
-                                        for (let i = start; i <= end; i++) pages.push(i);
-
-                                        if (curr < total - 3) pages.push('...');
-                                        pages.push(total);
-                                    }
-
-                                    return pages.map((p, idx) => (
-                                        <button
-                                            key={idx}
-                                            disabled={p === '...'}
-                                            onClick={() => typeof p === 'number' && fetchLogs(p, 15, logPagination.search)}
-                                            className={`w-7 h-7 flex items-center justify-center text-xs rounded transition-all ${p === curr
-                                                ? 'bg-indigo-600 text-white shadow-sm'
-                                                : p === '...'
-                                                    ? 'cursor-default text-slate-400'
-                                                    : 'hover:bg-white dark:hover:bg-slate-800 dark:text-slate-400'
-                                                }`}
-                                        >
-                                            {p}
-                                        </button>
-                                    ));
-                                })()}
-
-                                <button
-                                    disabled={logPagination.currentPage >= logPagination.totalPages}
-                                    onClick={() => fetchLogs(logPagination.currentPage + 1, 15, logPagination.search)}
-                                    className="p-1 px-2 text-xs font-medium rounded hover:bg-white dark:hover:bg-slate-800 disabled:opacity-30 transition-all"
-                                >
-                                    Next
-                                </button>
-                            </div>
+                        <div className="relative w-full md:w-72">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                            <input
+                                type="text"
+                                placeholder="Cari aksi, user, atau detail..."
+                                className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500 dark:text-white"
+                                value={logSearchQuery}
+                                onChange={(e) => setLogSearchQuery(e.target.value)}
+                            />
                         </div>
                     </div>
 
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left">
-                            <thead className="bg-slate-50 dark:bg-slate-900/50 text-[10px] uppercase tracking-wider text-slate-500 font-bold border-b dark:border-slate-800">
+                    <div className="overflow-x-auto rounded-2xl border border-slate-100 dark:border-slate-800">
+                        <table className="w-full text-sm text-left">
+                            <thead className="bg-slate-50 dark:bg-slate-800/50 text-slate-500 dark:text-slate-400 font-black uppercase tracking-widest text-[10px]">
                                 <tr>
-                                    <th className="px-4 py-3">Timestamp</th>
-                                    <th className="px-4 py-3">User</th>
-                                    <th className="px-4 py-3">Action</th>
-                                    <th className="px-4 py-3">Details</th>
+                                    <th className="px-6 py-4">Waktu</th>
+                                    <th className="px-6 py-4">Pengguna</th>
+                                    <th className="px-6 py-4">Aksi</th>
+                                    <th className="px-6 py-4">Detail</th>
+                                    <th className="px-6 py-4 text-right">Data</th>
                                 </tr>
                             </thead>
-                            <tbody className="divide-y dark:divide-slate-800">
-                                {logs.map(log => (
-                                    <tr key={log.id} className="text-xs hover:bg-slate-50/50 dark:hover:bg-slate-800/50 transition-colors">
-                                        <td className="px-4 py-3 whitespace-nowrap text-slate-500">
-                                            {log.timestamp ? new Date(log.timestamp).toLocaleString() : '-'}
-                                        </td>
-                                        <td className="px-4 py-3 font-medium dark:text-slate-300">
-                                            {log.user}
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <span className={`px-2 py-0.5 rounded-full font-bold uppercase text-[9px] ${log.action?.includes('FAILED') || log.action === 'ERROR'
-                                                ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400'
-                                                : log.action?.includes('START')
-                                                    ? 'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                                                    : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
-                                                }`}>
-                                                {log.action}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <div className="max-w-md truncate text-slate-600 dark:text-slate-400" title={log.details}>
-                                                {log.details}
-                                            </div>
-                                        </td>
+                            <tbody className="divide-y divide-slate-50 dark:divide-slate-800">
+                                {paginatedLogs.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="5" className="px-6 py-10 text-center text-slate-400 italic">Tidak ada catatan aktivitas ditemukan.</td>
                                     </tr>
-                                ))}
+                                ) : (
+                                    paginatedLogs.map((log) => (
+                                        <React.Fragment key={log.id}>
+                                            <tr className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors group">
+                                                <td className="px-6 py-4 whitespace-nowrap text-slate-500 dark:text-slate-400 font-medium">
+                                                    <div className="flex items-center gap-2">
+                                                        <Clock size={12} />
+                                                        {new Date(log.timestamp).toLocaleString('id-ID', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 font-bold text-slate-700 dark:text-slate-200">{log.user || 'System'}</td>
+                                                <td className="px-6 py-4">
+                                                    <span className="px-2 py-1 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-lg text-[10px] font-black uppercase tracking-wider border border-indigo-100 dark:border-indigo-800">
+                                                        {log.action}
+                                                    </span>
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-600 dark:text-slate-400 max-w-xs truncate" title={log.details}>{log.details}</td>
+                                                <td className="px-6 py-4 text-right">
+                                                    {(log.oldValue || log.newValue) && (
+                                                        <button 
+                                                            onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)}
+                                                            className="p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 rounded-xl text-indigo-500 transition-all"
+                                                        >
+                                                            {expandedLogId === log.id ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                                                        </button>
+                                                    )}
+                                                </td>
+                                            </tr>
+                                            {expandedLogId === log.id && (
+                                                <tr>
+                                                    <td colSpan="5" className="px-6 pb-4 pt-0">
+                                                        <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-4 border border-slate-100 dark:border-slate-800 grid grid-cols-1 md:grid-cols-2 gap-4 animate-in slide-in-from-top-2">
+                                                            {log.oldValue && <div className="space-y-1"><p className="text-[9px] font-black text-red-500 uppercase ml-1">Sebelum (Old)</p><pre className="text-[10px] font-mono p-3 bg-red-50/50 dark:bg-red-900/10 border border-red-100 dark:border-red-900/20 rounded-xl text-red-700 dark:text-red-400 overflow-x-auto">{log.oldValue.startsWith('{') ? JSON.stringify(JSON.parse(log.oldValue), null, 2) : log.oldValue}</pre></div>}
+                                                            {log.newValue && <div className="space-y-1"><p className="text-[9px] font-black text-emerald-500 uppercase ml-1">Sesudah (New)</p><pre className="text-[10px] font-mono p-3 bg-emerald-50/50 dark:bg-emerald-900/10 border border-emerald-100 dark:border-emerald-900/20 rounded-xl text-emerald-700 dark:text-emerald-400 overflow-x-auto">{log.newValue.startsWith('{') ? JSON.stringify(JSON.parse(log.newValue), null, 2) : log.newValue}</pre></div>}
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </React.Fragment>
+                                    ))
+                                )}
                             </tbody>
                         </table>
-                        {logs.length === 0 && (
-                            <div className="text-center py-10 text-slate-400 italic">Belum ada log tersedia.</div>
-                        )}
                     </div>
+
+                    {/* Pagination Controls */}
+                    {totalLogPages > 1 && (
+                        <div className="px-6 py-4 flex items-center justify-between border-t border-slate-50 dark:border-slate-800 bg-slate-50/30 dark:bg-slate-900/30 rounded-b-2xl">
+                            <div className="text-xs text-slate-500 dark:text-slate-400">
+                                Menampilkan <span className="font-bold text-indigo-600">{(logCurrentPage - 1) * logsPerPage + 1}</span> - <span className="font-bold text-indigo-600">{Math.min(logCurrentPage * logsPerPage, filteredLogs.length)}</span> dari <span className="font-bold text-indigo-600">{filteredLogs.length}</span> log
+                            </div>
+                            <div className="flex items-center gap-1">
+                                <button
+                                    onClick={() => setLogCurrentPage(prev => Math.max(prev - 1, 1))}
+                                    disabled={logCurrentPage === 1}
+                                    className="p-2 rounded-lg text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-30 transition-colors"
+                                >
+                                    <ChevronLeft size={18} />
+                                </button>
+                                
+                                <div className="flex items-center gap-1">
+                                    {[...Array(totalLogPages)].map((_, i) => {
+                                        const page = i + 1;
+                                        if (totalLogPages > 5 && page !== 1 && page !== totalLogPages && (page < logCurrentPage - 1 || page > logCurrentPage + 1)) {
+                                            if (page === logCurrentPage - 2 || page === logCurrentPage + 2) return <span key={page} className="text-slate-400 px-1">...</span>;
+                                            return null;
+                                        }
+                                        return (
+                                            <button
+                                                key={page}
+                                                onClick={() => setLogCurrentPage(page)}
+                                                className={`w-8 h-8 rounded-lg text-xs font-bold transition-all ${logCurrentPage === page ? 'bg-indigo-600 text-white shadow-md shadow-indigo-500/20' : 'text-slate-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20'}`}
+                                            >
+                                                {page}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+
+                                <button
+                                    onClick={() => setLogCurrentPage(prev => Math.min(prev + 1, totalLogPages))}
+                                    disabled={logCurrentPage === totalLogPages}
+                                    className="p-2 rounded-lg text-slate-400 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 disabled:opacity-30 transition-colors"
+                                >
+                                    <ChevronRight size={18} />
+                                </button>
+                            </div>
+                        </div>
+                    )}
                 </Card>
             )}
 
@@ -384,7 +398,7 @@ export default function MasterData({
                                 <div className="font-bold dark:text-white text-sm">{d.name}</div>
                                 <div className="text-[10px] text-gray-400 mt-1 uppercase">ID: {d.id}</div>
                                 {hasPermission('master', 'delete') && (
-                                    <button onClick={() => deleteDepartment(d.id)} className="mt-2 text-red-500 hover:text-red-700 text-xs"><Trash2 size={14} /></button>
+                                    <button onClick={() => handleDeleteDept(d.id)} className="mt-2 text-red-500 hover:text-red-700 text-xs"><Trash2 size={14} /></button>
                                 )}
                             </div>
                         ))}

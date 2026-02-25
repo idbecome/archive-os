@@ -8,7 +8,7 @@ const WarehouseMap = ({ inventory, onSelectInfo }) => {
 
     useEffect(() => {
         // Fetch predictive analytics
-        fetch('http://localhost:5000/api/inventory/analytics')
+        fetch('http://localhost:5005/api/inventory/analytics')
             .then(res => res.json())
             .then(data => {
                 // data is array of { location: "Box A-1", frequency: 5, ... }

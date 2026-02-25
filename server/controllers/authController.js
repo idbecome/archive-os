@@ -26,7 +26,13 @@ export const login = async (req, res) => {
         }
 
         if (match) {
+            // Generate or refresh token
+            const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
+            await knex('users').where('id', user.id).update({ token });
+
             const { password: _, ...userWithoutPass } = user;
+            userWithoutPass.token = token; // Ensure token is in response
+
             await systemLog(user.username, "Login", "User logged in");
             res.json(userWithoutPass);
         } else {

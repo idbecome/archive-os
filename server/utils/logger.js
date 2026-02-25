@@ -1,74 +1,78 @@
 import winston from 'winston';
-import Transport from 'winston-transport';
+import path from 'path';
 import { knex } from '../db.js';
+import { fileURLToPath } from 'url';
 
-// Custom Transport for Knex
-class KnexTransport extends Transport {
-    constructor(opts) {
-        super(opts);
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const LOGS_PATH = path.join(__dirname, '..', 'logs');
+
+const { combine, timestamp, printf, colorize, json } = winston.format;
+
+// Format kustom untuk tampilan konsol
+const consoleFormat = printf(({ level, message, timestamp, ...metadata }) => {
+    let msg = `${timestamp} [${level}] : ${message}`;
+    if (Object.keys(metadata).length > 0 && metadata.docId) {
+        msg += ` (DocID: ${metadata.docId}, File: ${metadata.filename})`;
     }
+    return msg;
+});
 
-    async log(info, callback) {
-        setImmediate(() => {
-            this.emit('logged', info);
-        });
-
-        try {
-            const { level, message, user, action, oldValue, newValue, ...rest } = info;
-
-            // Map Winston levels to actionable strings if needed, or just use level
-            const logLevel = level.toUpperCase();
-            const logAction = action || logLevel;
-
-            // If message is an object (common with Winston), stringify it with rest of metadata
-            let details = message;
-            if (typeof message !== 'string') {
-                details = JSON.stringify({ ...message, ...rest });
-            } else if (Object.keys(rest).length > 0) {
-                details = `${message} ${JSON.stringify(rest)}`;
-            }
-
-            await knex('logs').insert({
-                user: user || 'System',
-                action: logAction,
-                details: details,
-                oldValue: oldValue ? (typeof oldValue === 'object' ? JSON.stringify(oldValue) : String(oldValue)) : null,
-                newValue: newValue ? (typeof newValue === 'object' ? JSON.stringify(newValue) : String(newValue)) : null,
-                timestamp: knex.fn.now()
-            });
-        } catch (err) {
-            console.error('Failed to save log to DB:', err);
-        }
-
-        callback();
-    }
-}
-
-const logger = winston.createLogger({
+export const logger = winston.createLogger({
     level: 'info',
-    format: winston.format.combine(
-        winston.format.timestamp(),
-        winston.format.json()
+    format: combine(
+        timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
+        json()
     ),
     transports: [
-        new winston.transports.Console({
-            format: winston.format.combine(
-                winston.format.timestamp(),
-                winston.format.colorize(),
-                winston.format.printf(({ timestamp, level, message, ...meta }) => {
-                    return `${timestamp} [${level}]: ${message} ${Object.keys(meta).length ? JSON.stringify(meta) : ''}`;
-                })
-            )
+        // 1. Simpan semua error ke file khusus
+        new winston.transports.File({ 
+            filename: path.join(LOGS_PATH, 'error.log'), 
+            level: 'error' 
         }),
-        new KnexTransport()
+        // 2. Simpan log spesifik kegagalan OCR agar admin mudah melacak
+        new winston.transports.File({ 
+            filename: path.join(LOGS_PATH, 'ocr-failures.log'),
+            level: 'warn',
+            handleExceptions: true
+        }),
+        // 3. Tampilkan di konsol dengan warna untuk development
+        new winston.transports.Console({
+            format: combine(
+                colorize(),
+                timestamp({ format: 'HH:mm:ss' }),
+                consoleFormat
+            )
+        })
     ]
 });
 
-/**
- * Backward compatibility helper for existing system logs
- */
+// Fungsi Helper untuk mencatat Audit Trail ke Database & Winston secara bersamaan
 export const systemLog = async (user, action, details, oldValue = null, newValue = null) => {
-    logger.info({ user, action, message: details, oldValue, newValue });
+    // 1. Log ke Winston (File & Konsol)
+    const logMsg = `${action}: ${details}`;
+    if (action.toLowerCase().includes('fail') || action.toLowerCase().includes('error')) {
+        logger.error(logMsg, { user, details });
+    } else {
+        logger.info(logMsg, { user, details });
+    }
+
+    // 2. Log ke Database (Agar muncul di Tab Log UI)
+    const logData = {
+        user: user || 'System',
+        action: action,
+        details: details,
+        oldValue: oldValue || null, // Knex handles object to JSONB
+        newValue: newValue || null,
+        timestamp: new Date()
+    };
+    try {
+        console.log("Attempting to write to system log with data:", logData);
+        await knex('logs').insert(logData);
+    } catch (err) {
+        logger.error('Gagal menulis audit log ke database', { error: err.message });
+        console.error("System log data that failed:", logData);
+    }
 };
 
 export default logger;

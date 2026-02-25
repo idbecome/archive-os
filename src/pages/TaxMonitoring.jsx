@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp, FileDigit, Image as ImageIcon, Edit3, Eye } from 'lucide-react';
-import { taxService as api } from '../services/taxService';
+import { taxService } from '../services/taxService';
 import { documentService } from '../services/documentService';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
@@ -8,7 +8,6 @@ import Modal from '../components/common/Modal';
 import AuditStepTracker from '../components/tax/AuditStepTracker';
 import TaxFileDetailModal from '../components/modals/TaxFileDetailModal';
 import TaxUploadModal from '../components/modals/TaxUploadModal';
-import { useTaxStore } from '../store/useTaxStore';
 import { useToast, ToastContainer } from '../components/ui/Toast';
 
 // ... (code)
@@ -24,8 +23,7 @@ const AUDIT_STEPS = [
     { id: 7, title: 'LHP & SKP', description: 'Laporan Hasil Pemeriksaan dan Penerbitan Surat Ketetapan Pajak.' }
 ];
 
-export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, syncAuditFolder }) {
-    const { taxAudits, createTaxAudit, updateTaxAudit, deleteTaxAudit, updateAuditStep, saveAuditNote } = useTaxStore();
+export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, onRefresh, syncAuditFolder }) {
     const { toasts, toast, removeToast, updateToast } = useToast();
     const [selectedAudit, setSelectedAudit] = useState(null);
     const [activeStep, setActiveStep] = useState(1);
@@ -87,7 +85,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
     useEffect(() => {
         const loadGeneralAttachments = async () => {
             try {
-                const docs = await documentService.getDocs({ stepIndex: 0 });
+                const docs = await documentService.getDocuments({ stepIndex: 0 });
                 if (Array.isArray(docs)) {
                     const map = {};
                     docs.forEach(d => { if (d.auditId) map[d.auditId] = d; });
@@ -132,7 +130,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
             const params = { stepIndex: activeStep, auditId: audit.id };
             if (folderId) params.folderId = folderId;
 
-            const files = await documentService.getDocs(params);
+            const files = await documentService.getDocuments(params);
             // Normalisasi data file agar terbaca dari berbagai format key
             const normalizedFiles = (Array.isArray(files) ? files : []).map(f => ({
                 ...f,
@@ -149,7 +147,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
 
     const loadStepNotes = async () => {
         if (!selectedAudit) return;
-        const notes = await api.getAuditNotes(selectedAudit.id, activeStep);
+        const notes = await taxService.getAuditNotes(selectedAudit.id, activeStep);
         setStepNotes(notes);
     };
 
@@ -157,18 +155,32 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
         if (!newNoteText.trim() && !noteAttachment) return;
         setIsPostingNote(true);
 
+        const previousNotes = [...stepNotes];
+        const tempNote = {
+            id: Date.now().toString(),
+            user: currentUser?.name || 'Me',
+            text: newNoteText,
+            timestamp: new Date().toISOString()
+        };
+
+        // Optimistic Update
+        setStepNotes([...stepNotes, tempNote]);
+
         const formData = new FormData();
         formData.append('user', currentUser?.name || 'Anonymous');
         formData.append('text', newNoteText);
         if (noteAttachment) formData.append('attachment', noteAttachment);
 
-        const res = await api.addAuditNote(selectedAudit.id, activeStep, formData);
-        if (res.success) {
-            setNewNoteText('');
-            setNoteAttachment(null);
-            loadStepNotes();
-        } else {
-            toast.error("Gagal mengirim catatan.");
+        try {
+            const res = await taxService.addAuditNote(selectedAudit.id, activeStep, formData);
+            if (res && !res.error) {
+                setNewNoteText('');
+                setNoteAttachment(null);
+                loadStepNotes(); // Refresh untuk mendapatkan data asli (URL lampiran, dll)
+            }
+        } catch (e) {
+            setStepNotes(previousNotes);
+            toast.error("Gagal mengirim pesan: " + e.message);
         }
         setIsPostingNote(false);
     };
@@ -223,16 +235,23 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
         if (url.startsWith('data:') || url.startsWith('blob:')) return url;
 
         const { hostname, port, protocol } = window.location;
+        const backendPort = '5005';
         const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
 
         let cleanUrl = url;
-        if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+        if (cleanUrl.includes(':' + backendPort + '/uploads/')) {
+            cleanUrl = '/uploads/' + cleanUrl.split('/uploads/')[1];
+        } else if (url.startsWith('uploads/')) {
+            cleanUrl = '/' + url;
+        }
+
+        const token = localStorage.getItem('archive_token');
 
         if (cleanUrl.startsWith('/uploads/')) {
-            return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
-        }
-        if (cleanUrl.includes('localhost:5000')) {
-            return cleanUrl.replace('localhost', hostname);
+            const baseUrl = isDev ? `${protocol}//${hostname}:${backendPort}` : `${protocol}//${hostname}:${port}`;
+            const separator = cleanUrl.includes('?') ? '&' : '?';
+            const authQuery = token ? `${separator}token=${token}` : '';
+            return `${baseUrl}${cleanUrl}${authQuery}`;
         }
         return cleanUrl;
     };
@@ -307,7 +326,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
             }
 
             if (!downloadUrl) {
-                toast.warning("File asli tidak ditemukan di database (Mungkin file terlalu besar saat upload atau data corrupt). Mengunduh hasil OCR/Teks saja.");
+                alert("File asli tidak ditemukan di database (Mungkin file terlalu besar saat upload atau data corrupt). Mengunduh hasil OCR/Teks saja.");
                 const blob = new Blob([file.ocrContent || file.description || 'File tidak tersedia'], { type: 'text/plain' });
                 downloadUrl = URL.createObjectURL(blob);
                 fileName += '.txt';
@@ -324,7 +343,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
             }
         } catch (e) {
             console.error("Download error", e);
-            toast.error("Gagal download: " + e.message);
+            alert("Gagal download: " + e.message);
         }
     };
 
@@ -349,7 +368,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
     };
 
     const handleSaveAudit = async () => {
-        if (!newAuditTitle.trim()) { toast.warning("Judul Pemeriksaan wajib diisi!"); return; }
+        if (!newAuditTitle.trim()) { alert("Judul Pemeriksaan wajib diisi!"); return; }
         setIsSaving(true);
 
         try {
@@ -359,6 +378,8 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
             const payload_letterNumber = String(newAuditLetter || '').trim();
             const payload_startDate = String(newAuditDate || '').trim() || null;
 
+            const previousAudits = [...taxAudits];
+
             if (editingAudit) {
                 const updatedAudit = {
                     ...editingAudit,
@@ -367,10 +388,16 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
                     auditor: newAuditAuditor,
                     startDate: payload_startDate
                 };
-                await updateTaxAudit(updatedAudit.id, updatedAudit);
+
+                if (onRefresh) onRefresh(taxAudits.map(a => a.id === updatedAudit.id ? updatedAudit : a));
+
                 if (selectedAudit && selectedAudit.id === editingAudit.id) {
                     setSelectedAudit({ ...selectedAudit, ...updatedAudit });
                 }
+                currentAuditId = updatedAudit.id;
+
+                // FIX: Simpan perubahan ke database
+                await taxService.updateTaxAudit(currentAuditId, updatedAudit);
             } else {
                 const auditId = String(Date.now());
                 const newAudit = {
@@ -384,7 +411,13 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
                     steps: Array(7).fill({ notes: [], status: 'Pending', startDate: null, endDate: null }).map((s, i) => i === 0 ? { ...s, status: 'On Progress', startDate: payload_startDate } : s)
                 };
 
-                await createTaxAudit(newAudit);
+                if (onRefresh) onRefresh([...taxAudits, newAudit]);
+
+                currentAuditId = auditId;
+
+                // FIX: Simpan data baru ke database
+                const created = await taxService.createTaxAudit(newAudit);
+                if (created && created.id) currentAuditId = created.id;
 
                 if (newAuditFile) {
                     const folderId = await syncAuditFolder(newAuditTitle, 'ACTIVE');
@@ -395,7 +428,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
                         type: newAuditFile.type,
                         size: (newAuditFile.size / 1024 / 1024).toFixed(2) + ' MB',
                         uploadDate: new Date().toISOString(),
-                        auditId: newAudit.id,
+                        auditId: currentAuditId,
                         stepIndex: 0,
                         folderId: folderId,
                         department: 'Tax',
@@ -415,7 +448,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
             setNewAuditFile(null);
             if (onRefresh) onRefresh();
         } catch (e) {
-            toast.error('Gagal menyimpan: ' + e.message);
+            alert('Gagal menyimpan: ' + e.message);
             console.error("Failed to save audit or upload initial file:", e);
         } finally {
             setIsSaving(false);
@@ -425,15 +458,22 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
     const handleDeleteAudit = async (id, e) => {
         e.stopPropagation();
         if (!confirm("Hapus pemeriksaan ini beserta seluruh datanya?")) return;
+
+        const previousAudits = [...taxAudits];
+        // Optimistic Update
+        if (onRefresh) onRefresh(taxAudits.filter(a => a.id !== id));
+
         try {
             const audit = taxAudits.find(a => a.id === id);
             if (audit) {
                 await syncAuditFolder(audit.title, 'REMOVED');
             }
-            await deleteTaxAudit(id);
+            await taxService.deleteTaxAudit(id);
             if (onRefresh) onRefresh();
         } catch (e) {
-            toast.error('Gagal menghapus: ' + e.message);
+            if (onRefresh) onRefresh(previousAudits);
+            const msg = await parseApiError(e);
+            alert('Gagal menghapus: ' + msg);
         }
     };
 
@@ -442,41 +482,72 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
         const updatedSteps = [...selectedAudit.steps];
         const stepData = updatedSteps[activeStep - 1];
         if (stepData.status === 'Done') return;
-        setIsSaving(true);
 
-        stepData.status = 'Done';
-        stepData.endDate = new Date().toISOString();
+        const previousAudit = { ...selectedAudit };
+        updatedSteps[activeStep - 1] = {
+            ...stepData,
+            status: 'Done',
+            endDate: new Date().toISOString()
+        };
+
+        let updatedAudit = { ...selectedAudit, steps: updatedSteps };
 
         if (activeStep < 7) {
-            await updateAuditStep(selectedAudit.id, activeStep - 1, { status: 'Done', endDate: new Date().toISOString() });
-            await updateAuditStep(selectedAudit.id, activeStep, { status: 'On Progress', startDate: new Date().toISOString() });
-
-            // If it's the 6th step (index 5) moving to 7th (index 6)
-            if (activeStep === 6) {
-                // Potential overall status update logic... 
-                // Using updateTaxAudit for the full object if needed, or refine updateAuditStep
-            }
-        } else {
-            await updateAuditStep(selectedAudit.id, 6, { status: 'Done', endDate: new Date().toISOString() });
-            await updateTaxAudit(selectedAudit.id, { ...selectedAudit, status: 'Done' });
+            updatedSteps[activeStep] = {
+                ...updatedSteps[activeStep],
+                status: 'On Progress',
+                startDate: new Date().toISOString()
+            };
+            updatedAudit.currentStep = activeStep + 1;
         }
-        setIsSaving(false);
-        if (onRefresh) onRefresh();
+
+        setSelectedAudit(updatedAudit);
+
+        try {
+            await taxService.updateTaxAudit(selectedAudit.id, updatedAudit);
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            setSelectedAudit(previousAudit);
+            toast.error("Gagal menyelesaikan tahap: " + e.message);
+        }
     };
 
     const handleSendbackStep = async () => {
         if (!selectedAudit) return;
         if (!confirm("Batalkan status selesai untuk tahap ini? Tahap berikutnya akan kembali ke status Pending.")) return;
 
-        await updateAuditStep(selectedAudit.id, activeStep - 1, { status: 'On Progress', endDate: null });
+        const previousAudit = { ...selectedAudit };
 
-        // Reset subsequent steps
         const updatedSteps = [...selectedAudit.steps];
+        const currentData = updatedSteps[activeStep - 1];
+
+        // Revert current step to On Progress
+        currentData.status = 'On Progress';
+        currentData.endDate = null;
+
+        // Reset all subsequent steps to Pending
         for (let i = activeStep; i < updatedSteps.length; i++) {
-            updatedSteps[i] = { ...updatedSteps[i], status: 'Pending', startDate: null, endDate: null };
+            updatedSteps[i].status = 'Pending';
+            updatedSteps[i].startDate = null;
+            updatedSteps[i].endDate = null;
         }
-        await updateTaxAudit(selectedAudit.id, { ...selectedAudit, steps: updatedSteps, currentStep: activeStep, status: 'On Progress' });
-        if (onRefresh) onRefresh();
+
+        const updatedAudit = {
+            ...selectedAudit,
+            steps: updatedSteps,
+            currentStep: activeStep,
+            status: 'On Progress' // If it was Done, revert to On Progress
+        };
+
+        setSelectedAudit(updatedAudit);
+
+        try {
+            await taxService.updateTaxAudit(selectedAudit.id, updatedAudit);
+            if (onRefresh) onRefresh();
+        } catch (e) {
+            setSelectedAudit(previousAudit);
+            toast.error("Gagal membatalkan tahap: " + e.message);
+        }
     };
 
     // --- NEW UPLOAD HANDLERS ---
@@ -485,7 +556,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
         if (!file) return;
 
         if (file.size > 30 * 1024 * 1024) {
-            toast.error("File terlalu besar! Maksimal ukuran file adalah 30MB.");
+            alert("File terlalu besar! Maksimal ukuran file adalah 30MB.");
             e.target.value = null;
             return;
         }
@@ -505,29 +576,30 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
     };
 
     const handleConfirmUpload = async () => {
-        if (!selectedAudit || !uploadForm.file) return;
+        if (!selectedAudit || !uploadForm.file || isUploadingFile) return;
 
         // TUTUP MODAL SEGERA: Agar user bisa lanjut memantau audit lainnya
         setUploadModalOpen(false);
+        setIsUploadingFile(true);
+
+        const tempDoc = {
+            id: String(Date.now()),
+            title: uploadForm.title || uploadForm.fileName,
+            type: uploadForm.fileType,
+            size: uploadForm.fileSize,
+            uploadDate: new Date().toISOString(),
+            status: 'processing',
+            owner: currentUser?.name || 'Tax Team'
+        };
+
+        const previousFiles = [...auditFiles];
+        // Update UI Seketika
+        setAuditFiles([...auditFiles, tempDoc]);
 
         const toastId = toast.loading(`Mengupload "${uploadForm.title || uploadForm.fileName}"...`);
 
         try {
             const folderId = await syncAuditFolder(selectedAudit.title, 'ACTIVE');
-
-            // --- CLIENT-SIDE OCR INTEGRATION ---
-            let ocrResult = '';
-            // Try OCR if it's a File object (from handleFileSelect)
-            if (uploadForm.file instanceof window.File) {
-                try {
-                    updateToast(toastId, { message: `Menjalankan OCR: ${uploadForm.title}...`, type: 'loading' });
-                    ocrResult = await performAdvancedOCR(uploadForm.file, (msg) => {
-                        updateToast(toastId, { message: msg, type: 'loading' });
-                    });
-                } catch (ocrErr) {
-                    console.warn("TaxMonitoring OCR failed:", ocrErr);
-                }
-            }
 
             // Backend will handle OCR via Queue if client fails
             const docPayload = {
@@ -541,7 +613,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
                 folderId: folderId,
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team',
-                ocrContent: ocrResult,
+                ocrContent: '', // Biarkan server yang memproses
                 file: uploadForm.file // File object
             };
 
@@ -552,61 +624,111 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
             if (onRefresh) onRefresh();
         } catch (err) {
             console.error("Background upload failed:", err);
+            setAuditFiles(previousFiles); // Rollback
             updateToast(toastId, { message: `Gagal upload: ${err.message}`, type: 'error' });
+        } finally {
+            setIsUploadingFile(false);
         }
     };
 
     const handleDeleteFile = async (docId) => {
         if (!confirm("Hapus dokumen ini?")) return;
+
+        const previousFiles = [...auditFiles];
+        setAuditFiles(auditFiles.filter(f => f.id !== docId));
+
         try {
             await documentService.deleteDocument(docId);
-            loadFiles(selectedAudit);
             if (onRefresh) onRefresh();
         } catch (e) {
-            toast.error("Gagal menghapus file: " + e.message);
+            setAuditFiles(previousFiles);
+            const msg = await parseApiError(e);
+            alert("Gagal menghapus file: " + msg);
         }
     };
 
     const handleToggleCheck = async (noteId) => {
+        if (!selectedAudit) return;
+
+        // 1. Snapshot state lama
+        const previousAudit = { ...selectedAudit };
+
+        // 2. Update state lokal secara optimis
         const updatedSteps = [...selectedAudit.steps];
         const currentData = updatedSteps[activeStep - 1];
         currentData.notes = currentData.notes.map(n => n.id === noteId ? { ...n, isChecked: !n.isChecked } : n);
         const updatedAudit = { ...selectedAudit, steps: updatedSteps };
+
         setSelectedAudit(updatedAudit);
-        await api.updateTaxAudit(selectedAudit.id, updatedAudit);
+
+        try {
+            // 3. Kirim ke API
+            await taxService.updateTaxAudit(selectedAudit.id, updatedAudit);
+        } catch (error) {
+            // 4. Rollback jika gagal
+            setSelectedAudit(previousAudit);
+            toast.error("Gagal memperbarui status: " + error.message);
+        }
     };
 
     const handleAddNote = async (text, pic) => {
         if (!text) return;
+        const previousAudit = { ...selectedAudit };
+
         const updatedSteps = [...selectedAudit.steps];
         if (!updatedSteps[activeStep - 1]) updatedSteps[activeStep - 1] = { notes: [] };
-        updatedSteps[activeStep - 1].notes.push({ id: Date.now().toString(), text, pic: pic || 'Unassigned', isChecked: false });
+
+        const newNote = { id: Date.now().toString(), text, pic: pic || 'Unassigned', isChecked: false };
+        updatedSteps[activeStep - 1].notes.push(newNote);
+
         const updatedAudit = { ...selectedAudit, steps: updatedSteps };
         setSelectedAudit(updatedAudit);
-        await api.updateTaxAudit(selectedAudit.id, updatedAudit);
+
+        try {
+            await taxService.updateTaxAudit(selectedAudit.id, updatedAudit);
+        } catch (error) {
+            setSelectedAudit(previousAudit);
+            toast.error("Gagal menambah catatan: " + error.message);
+        }
     };
 
     const handleDeleteNote = async (noteId) => {
+        const previousAudit = { ...selectedAudit };
         const updatedSteps = [...selectedAudit.steps];
         updatedSteps[activeStep - 1].notes = updatedSteps[activeStep - 1].notes.filter(n => n.id !== noteId);
         const updatedAudit = { ...selectedAudit, steps: updatedSteps };
         setSelectedAudit(updatedAudit);
-        await api.updateTaxAudit(selectedAudit.id, updatedAudit);
+
+        try {
+            await taxService.updateTaxAudit(selectedAudit.id, updatedAudit);
+        } catch (error) {
+            setSelectedAudit(previousAudit);
+            toast.error("Gagal menghapus catatan: " + error.message);
+        }
     };
 
     const handleUpdateNote = async (noteId) => {
         if (!editingNoteText.trim()) return;
+        const previousAudit = { ...selectedAudit };
+
         const updatedSteps = [...selectedAudit.steps];
         const currentData = updatedSteps[activeStep - 1];
         currentData.notes = currentData.notes.map(n =>
             n.id === noteId ? { ...n, text: editingNoteText, pic: editingNotePic } : n
         );
         const updatedAudit = { ...selectedAudit, steps: updatedSteps };
+
         setSelectedAudit(updatedAudit);
-        await api.updateTaxAudit(selectedAudit.id, updatedAudit);
-        setEditingNoteId(null);
-        setEditingNoteText('');
-        setEditingNotePic('');
+
+        try {
+            await taxService.updateTaxAudit(selectedAudit.id, updatedAudit);
+            setEditingNoteId(null);
+            setEditingNoteText('');
+            setEditingNotePic('');
+        } catch (error) {
+            setSelectedAudit(previousAudit);
+            toast.error("Gagal memperbarui catatan: " + error.message);
+        }
     };
 
     const getDuration = (start, end) => {
@@ -1304,7 +1426,7 @@ export default function TaxMonitoring({ hasPermission, currentUser, onRefresh, s
                 setSelectedFileDetail={setSelectedFileDetail}
                 getFullUrl={getFullUrl}
                 handleSecureDownload={handleSecureDownload}
-                api={api} // Pass api for getDocumentById
+                documentService={documentService} // Pass documentService instead of api
             />
 
             <TaxUploadModal

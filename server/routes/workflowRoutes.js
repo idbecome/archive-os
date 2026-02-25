@@ -11,7 +11,11 @@ import {
     resetApprovalStep
 } from '../controllers/workflowController.js';
 
+import { checkAuth } from '../middleware/auth.js';
+
 const router = express.Router();
+
+router.use(checkAuth);
 
 // Flow Definitions
 router.get('/flows', getApprovalFlows);

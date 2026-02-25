@@ -9,7 +9,7 @@ import {
 const getApiUrl = () => {
     const { hostname, port, protocol } = window.location;
     if (port === '5173' || port === '3000' || hostname === 'localhost') {
-        return `${protocol}//${hostname}:5000/api`;
+        return `${protocol}//${hostname}:5005/api`;
     }
     return '/api';
 };
@@ -213,7 +213,7 @@ export default function AiChatAssistant({
     const [messages, setMessages] = useState([
         {
             role: 'assistant',
-            text: 'Halo! 👋 Saya asisten AI Archive-OS. Tanyakan apa saja tentang dokumen, invoice, atau arsip Anda.',
+            text: 'Halo! 👋 Saya asisten AI Pustaka Sistem. Tanyakan apa saja tentang dokumen, invoice, atau arsip Anda.',
             results: []
         }
     ]);

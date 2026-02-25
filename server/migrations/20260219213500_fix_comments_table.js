@@ -18,5 +18,13 @@ export const up = async (knex) => {
 };
 
 export const down = async (knex) => {
-    await knex.schema.renameTable('document_comments', 'comments');
+    const hasComments = await knex.schema.hasTable('comments');
+    const hasDocComments = await knex.schema.hasTable('document_comments');
+
+    if (hasDocComments && !hasComments) {
+        await knex.schema.renameTable('document_comments', 'comments');
+    } else if (hasDocComments && hasComments) {
+        // If both exist, just drop the one we created in 'up'
+        await knex.schema.dropTable('document_comments');
+    }
 };

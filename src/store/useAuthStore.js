@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { authService as api } from '../services/authService';
 
 export const useAuthStore = create((set) => ({
     currentUser: (() => {
@@ -8,6 +7,10 @@ export const useAuthStore = create((set) => ({
             return saved ? JSON.parse(saved) : null;
         } catch { return null; }
     })(),
+    users: [],
+    roles: [],
+    departments: [],
+
     setCurrentUser: (user) => {
         if (user) {
             localStorage.setItem('archive_user', JSON.stringify(user));
@@ -15,5 +18,8 @@ export const useAuthStore = create((set) => ({
             localStorage.removeItem('archive_user');
         }
         set({ currentUser: user });
-    }
+    },
+    setUsers: (users) => set({ users }),
+    setRoles: (roles) => set({ roles }),
+    setDepartments: (departments) => set({ departments }),
 }));

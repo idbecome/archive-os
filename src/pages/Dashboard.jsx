@@ -4,7 +4,8 @@ import { Card, SummaryCard } from '../components/ui/Card';
 import QueueStatus from '../components/ui/QueueStatus';
 import WarehouseMap from '../components/WarehouseMap';
 import TaxAnalytics from '../components/TaxAnalytics';
-import { API_URL } from '../services/apiClient';
+import { API_URL } from '../services/database';
+import { parseApiError } from '../utils/errorHandler';
 
 export default function Dashboard({
     stats: propStats,
@@ -49,10 +50,14 @@ export default function Dashboard({
         setIsSearching(true);
         setCurrentPage(1);
         try {
+            const token = localStorage.getItem('archive_token');
             // Use the new AI Search Endpoint
             const res = await fetch(`${API_URL}/search/ai`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
                 body: JSON.stringify({ query: semanticQuery })
             });
 
@@ -75,7 +80,8 @@ export default function Dashboard({
                 setSearchResults([]);
             }
         } catch (err) {
-            console.error("Search failed:", err);
+            const msg = await parseApiError(err);
+            console.error("Search failed:", msg);
         } finally {
             setIsSearching(false);
         }

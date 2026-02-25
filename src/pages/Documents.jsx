@@ -8,12 +8,12 @@ import {
     LayoutGrid, List
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
-import { documentService as api } from '../services/documentService';
-import { API_URL } from '../services/apiClient';
+import { db as api, API_URL } from '../services/database';
+import { parseApiError } from '../utils/errorHandler';
+import { getFullUrl } from '../utils/urlHelper';
 import Modal from '../components/common/Modal';
 import PdfViewer from '../components/ui/PdfViewer';
 import { useDocStore } from '../store/useDocStore';
-import { useToast } from '../components/ui/Toast';
 
 export default function Documents({
     docList, folders, currentFolderId, setCurrentFolderId,
@@ -30,7 +30,6 @@ export default function Documents({
         deleteDocument, copyDocument, moveDocument, restoreDocumentVersion,
         promoteCommentAttachment, addComment
     } = useDocStore();
-    const { toast } = useToast();
 
     const [showHistory, setShowHistory] = useState(false);
     const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
@@ -52,7 +51,6 @@ export default function Documents({
     const [previewHtml, setPreviewHtml] = useState('');
     const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
     const [pdfBlobUrl, setPdfBlobUrl] = useState(null);
-    const [largeFileWarning, setLargeFileWarning] = useState(null); // { buffer, type, size }
 
     // --- BULK SELECTION STATE ---
     const [selectedDocIds, setSelectedDocIds] = useState(new Set());
@@ -90,19 +88,26 @@ export default function Documents({
 
     const getFullUrl = (url) => {
         if (!url || typeof url !== 'string') return null;
-        if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('http')) return url;
+        if (url.startsWith('data:') || url.startsWith('blob:')) return url;
 
         const { hostname, port, protocol } = window.location;
         const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+        const backendPort = '5005';
 
         let cleanUrl = url;
-        if (url.startsWith('uploads/')) cleanUrl = '/' + url;
+        if (cleanUrl.includes(':' + backendPort + '/uploads/')) {
+            cleanUrl = '/uploads/' + cleanUrl.split('/uploads/')[1];
+        } else if (url.startsWith('uploads/')) {
+            cleanUrl = '/' + url;
+        }
+
+        const token = localStorage.getItem('archive_token');
+        const authQuery = token ? `token=${token}` : '';
 
         if (cleanUrl.startsWith('/uploads/')) {
-            return isDev ? `${protocol}//${hostname}:5000${cleanUrl}` : cleanUrl;
-        }
-        if (cleanUrl.includes('localhost:5000')) {
-            return cleanUrl.replace('localhost', hostname);
+            const baseUrl = isDev ? `${protocol}//${hostname}:${backendPort}` : '';
+            const separator = cleanUrl.includes('?') ? '&' : '?';
+            return `${baseUrl}${cleanUrl}${authQuery ? separator + authQuery : ''}`;
         }
         return cleanUrl;
     };
@@ -110,7 +115,6 @@ export default function Documents({
     const handlePreview = async (doc, isAttachment = false) => {
         setIsGeneratingPreview(true);
         setPreviewHtml('');
-        setLargeFileWarning(null);
         // Clear previous PDF data
         if (pdfBlobUrl) setPdfBlobUrl(null);
 
@@ -181,30 +185,17 @@ export default function Documents({
                 if (buffer && isPdf) {
                     setPdfBlobUrl(buffer);
                 } else if (buffer && (type?.includes('word') || name?.endsWith('.docx'))) {
-                    const sizeMB = buffer.byteLength / (1024 * 1024);
-                    if (sizeMB > 15) {
-                        setLargeFileWarning({ size: sizeMB, type: 'word', downloadUrl: content });
-                    } else if (sizeMB > 5) {
-                        setLargeFileWarning({ buffer, size: sizeMB, type: 'word', downloadUrl: content });
-                    } else {
-                        const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-                        setPreviewHtml(result.value);
-                    }
+                    const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
+                    setPreviewHtml(result.value);
                 } else if (buffer && (type?.includes('sheet') || type?.includes('excel') || name?.endsWith('.xlsx') || name?.endsWith('.xls'))) {
-                    const sizeMB = buffer.byteLength / (1024 * 1024);
-                    if (sizeMB > 15) {
-                        setLargeFileWarning({ size: sizeMB, type: 'excel', downloadUrl: content });
-                    } else if (sizeMB > 5) {
-                        setLargeFileWarning({ buffer, size: sizeMB, type: 'excel', downloadUrl: content });
-                    } else {
-                        const wb = XLSX.read(buffer, { type: 'array' });
-                        const firstSheet = wb.Sheets[wb.SheetNames[0]];
-                        setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
-                    }
+                    const wb = XLSX.read(buffer, { type: 'array' });
+                    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+                    setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
                 }
             } catch (e) {
                 console.error("Preview error:", e);
-                toast.error(`Gagal memuat preview dokumen: ${e.message}`);
+                const msg = await parseApiError(e);
+                alert(`Gagal memuat preview: ${msg}`);
             }
         }
         setIsGeneratingPreview(false);
@@ -224,18 +215,36 @@ export default function Documents({
     const handlePostComment = async () => {
         if (!newComment.trim() && !commentAttachment) return;
         setIsPostingComment(true);
+
+        const previousComments = [...comments];
+        const tempComment = {
+            id: Date.now(),
+            user: currentUser?.name || 'Anonymous',
+            text: newComment,
+            timestamp: new Date().toISOString(),
+            attachmentName: commentAttachment?.name,
+            isOptimistic: true
+        };
+
+        // Update UI Seketika
+        setComments([...comments, tempComment]);
+
         const formData = new FormData();
         formData.append('user', currentUser?.name || 'Anonymous');
         formData.append('text', newComment);
         if (commentAttachment) formData.append('attachment', commentAttachment);
 
-        const res = await addComment(selectedDocPreview.id, formData);
-        if (res.success) {
-            setNewComment('');
-            setCommentAttachment(null);
-            fetchComments(selectedDocPreview.id);
-        } else {
-            toast.error("Gagal mengirim komentar. Pastikan koneksi server stabil.");
+        try {
+            const res = await addComment(selectedDocPreview.id, formData);
+            if (res.success) {
+                setNewComment('');
+                setCommentAttachment(null);
+                fetchComments(selectedDocPreview.id);
+            }
+        } catch (e) {
+            setComments(previousComments);
+            const msg = await parseApiError(e);
+            alert("Gagal mengirim komentar: " + msg);
         }
         setIsPostingComment(false);
     };
@@ -244,7 +253,7 @@ export default function Documents({
         if (!window.confirm("Jadikan file lampiran ini sebagai revisi terbaru dokumen? Proses OCR akan dijalankan.")) return;
         const res = await promoteCommentAttachment(selectedDocPreview.id, commentId);
         if (res.success) {
-            toast.success("Berhasil menjadikan revisi. Dokumen sedang diproses OCR.");
+            alert("Berhasil menjadikan revisi. Dokumen sedang diproses OCR.");
             setSelectedDocPreview(null);
             // onRefresh() is now handled by store
         }
@@ -259,7 +268,7 @@ export default function Documents({
         if (!mgmtOp) return;
 
         // Proteksi folder DataBox agar tidak bisa dipindah/disalin
-        if (mgmtOp.itemType === 'folder' && (mgmtOp.item.name === 'DataBox' || mgmtOp.item.name === 'TaxAudit')) {
+        if (mgmtOp.itemType === 'folder' && (['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc', 'SOP'].includes(mgmtOp.item.name))) {
             alert("Folder sistem 'DataBox' tidak dapat dipindahkan atau disalin.");
             setIsMgmtModalOpen(false);
             setMgmtOp(null);
@@ -295,7 +304,8 @@ export default function Documents({
                 if (onRefresh) onRefresh();
             }, 500);
         } catch (e) {
-            toast.error("Operasi gagal: " + e);
+            const msg = await parseApiError(e);
+            alert("Operasi gagal: " + msg);
             setIsExecutingOp(false);
             setOpProgress(0);
         }
@@ -310,7 +320,8 @@ export default function Documents({
             setIsRevisionModalOpen(false);
             // onRefresh() is now handled by store
         } catch (e) {
-            toast.error("Gagal mengembalikan versi: " + e);
+            const msg = await parseApiError(e);
+            alert("Gagal mengembalikan versi: " + msg);
         } finally {
             setIsRestoring(false);
         }
@@ -339,7 +350,8 @@ export default function Documents({
             setSelectedDocIds(new Set());
             // onRefresh() is now handled by store
         } catch (e) {
-            toast.error("Gagal menghapus beberapa file: " + e);
+            const msg = await parseApiError(e);
+            alert("Gagal menghapus beberapa file: " + msg);
         } finally {
             setIsBulkDeleting(false);
         }
@@ -488,11 +500,13 @@ export default function Documents({
                                     className="bg-transparent py-2 text-xs font-bold text-gray-600 dark:text-slate-300 focus:outline-none cursor-pointer"
                                 >
                                     <option value="all">Semua Status</option>
-                                    <option value="active">Aktif (Gudang)</option>
-                                    <option value="removed">Dihapus</option>
-                                    <option value="external">Indoarsip</option>
-                                    <option value="moved">Pindah Slot</option>
-                                    <option value="renamed">Ganti Nama</option>
+                                    <option value="active">Normal (Gudang)</option>
+                                    <option value="removed">Dihapus (RM_)</option>
+                                    <option value="external">Indoarsip (TR_)</option>
+                                    <option value="moved">Pindah Slot (MV_)</option>
+                                    <option value="renamed">Diedit (ED_)</option>
+                                    <option value="borrowed">Dipinjam</option>
+                                    <option value="audit">Audit</option>
                                 </select>
                             </div>
                         )}
@@ -618,11 +632,13 @@ export default function Documents({
                             // DataBox Status Filter Logic
                             if (isViewingDataBox && statusFilter !== 'all') {
                                 const name = f.name || '';
-                                if (statusFilter === 'active') return !name.startsWith('[INV]');
-                                if (statusFilter === 'removed') return name.includes(' - REMOVED');
-                                if (statusFilter === 'external') return name.includes(' - EXTERNAL');
-                                if (statusFilter === 'moved') return name.includes(' - MOVED');
-                                if (statusFilter === 'renamed') return name.includes('(Renamed from');
+                                if (statusFilter === 'active') return !name.startsWith('RM_') && !name.startsWith('TR_') && !name.startsWith('MV_') && !name.startsWith('ED_');
+                                if (statusFilter === 'removed') return name.startsWith('RM_');
+                                if (statusFilter === 'external') return name.startsWith('TR_');
+                                if (statusFilter === 'moved') return name.startsWith('MV_');
+                                if (statusFilter === 'renamed') return name.startsWith('ED_');
+                                if (statusFilter === 'borrowed') return name.includes(' - BORROWED');
+                                if (statusFilter === 'audit') return name.includes(' - AUDIT');
                             }
 
                             return true;
@@ -630,10 +646,11 @@ export default function Documents({
                             if (isViewingDataBox) {
                                 const isAInv = a.name.startsWith('[INV]');
                                 const isBInv = b.name.startsWith('[INV]');
+                                const isASpecial = a.name.startsWith('RM_') || a.name.startsWith('TR_') || a.name.startsWith('MV_') || a.name.startsWith('ED_');
+                                const isBSpecial = b.name.startsWith('RM_') || b.name.startsWith('TR_') || b.name.startsWith('MV_') || b.name.startsWith('ED_');
 
-                                // Folder Aktif (tanpa prefix) selalu di atas
-                                if (!isAInv && isBInv) return -1;
-                                if (isAInv && !isBInv) return 1;
+                                if (!isASpecial && isBSpecial) return -1;
+                                if (isASpecial && !isBSpecial) return 1;
 
                                 // Jika keduanya aktif, urutkan berdasarkan No Slot (angka terakhir di BOX-YYYY-SLOT)
                                 if (!isAInv && !isBInv) {
@@ -644,7 +661,7 @@ export default function Documents({
                             }
                             return (a.name || '').localeCompare(b.name || '');
                         }).map((folder, idx) => {
-                            const isInvSync = folder.name.startsWith('[INV]');
+                            const isInvSync = folder.name.startsWith('[INV]') || folder.name.startsWith('RM_') || folder.name.startsWith('TR_') || folder.name.startsWith('MV_') || folder.name.startsWith('ED_');
                             const isTaxSync = folder.name.startsWith('[TAX]');
                             const isSyncFolder = isInvSync || isTaxSync;
 
@@ -655,13 +672,13 @@ export default function Documents({
                             let badgeTitle = "Synced/History Folder";
 
                             if (isSyncFolder) {
-                                if (folder.name.includes(' - REMOVED')) {
+                                if (folder.name.startsWith('RM_')) {
                                     SyncIcon = Trash2; BadgeIcon = Trash2; badgeColor = 'bg-red-500'; badgeTitle = "Folder Box Dihapus";
-                                } else if (folder.name.includes(' - EXTERNAL')) {
+                                } else if (folder.name.startsWith('TR_')) {
                                     SyncIcon = Truck; BadgeIcon = Truck; badgeColor = 'bg-orange-500'; badgeTitle = "Pindah ke Indoarsip";
-                                } else if (folder.name.includes(' - MOVED')) {
+                                } else if (folder.name.startsWith('MV_')) {
                                     SyncIcon = ArrowLeftRight; BadgeIcon = ArrowLeftRight; badgeColor = 'bg-blue-600'; badgeTitle = "Pindah Slot Rak";
-                                } else if (folder.name.includes('(Renamed from')) {
+                                } else if (folder.name.startsWith('ED_')) {
                                     SyncIcon = Edit3; BadgeIcon = Edit3; badgeColor = 'bg-indigo-500'; badgeTitle = "Box Diganti Nama";
                                 } else if (folder.name.includes(' - BORROWED')) {
                                     SyncIcon = Clock; BadgeIcon = Clock; badgeColor = 'bg-amber-500'; badgeTitle = "Box Sedang Dipinjam";
@@ -698,7 +715,7 @@ export default function Documents({
                                             </div>
                                         )}
                                         {/* System Lock Badge */}
-                                        {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && (
+                                        {(['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc'].includes(folder.name)) && (
                                             <div className="absolute -top-1 -left-1 w-6 h-6 bg-amber-500 rounded-full flex items-center justify-center border-2 border-white dark:border-slate-800 shadow-sm" title="System Folder">
                                                 <Lock size={10} className="text-white" />
                                             </div>
@@ -747,16 +764,16 @@ export default function Documents({
                                                             }}
                                                             className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2"
                                                         >
-                                                            {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') ? (
+                                                            {(['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc'].includes(folder.name)) ? (
                                                                 <Shield size={14} className="text-amber-500 group-hover:scale-110 transition-transform" />
                                                             ) : (
                                                                 <PenLine size={14} className="group-hover:rotate-12 transition-transform" />
                                                             )}
-                                                            {(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') ? 'Akses Kontrol' : 'Edit'}
+                                                            {(['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc'].includes(folder.name)) ? 'Akses Kontrol' : 'Edit'}
                                                         </button>
                                                     )}
 
-                                                    {!(folder.name === 'DataBox' || folder.name === 'TaxAudit' || folder.name === 'ApprovalDoc') && (
+                                                    {!(['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc'].includes(folder.name)) && (
                                                         <>
                                                             {hasPermission('documents', 'create') && (
                                                                 <button onClick={(e) => { e.stopPropagation(); startMgmtOp('copy', 'folder', folder); setActiveFolderMenuId(null); }} className="group w-full text-left px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-slate-800 flex items-center gap-2">
@@ -954,7 +971,7 @@ export default function Documents({
 
                                             <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-slate-500 mt-auto">
                                                 <span className="font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{doc.size}</span>
-                                                {doc.status === 'processing' ? (
+                                                {doc.status === 'processing' && !doc.ocrContent ? (
                                                     <span className="text-amber-500 font-bold animate-pulse">PROSES OCR...</span>
                                                 ) : (
                                                     <div className="flex flex-col items-end">
@@ -1241,7 +1258,7 @@ export default function Documents({
                         <input
                             value={folderForm.name}
                             onChange={(e) => setFolderForm({ ...folderForm, name: e.target.value })}
-                            disabled={folderForm.name === 'DataBox' || folderForm.name === 'TaxAudit' || folderForm.name === 'ApprovalDoc'}
+                            disabled={['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc'].includes(folderForm.name)}
                             className={`w-full px-6 py-4 bg-slate-50 dark:bg-slate-800/50 border-2 border-slate-100 dark:border-slate-800 rounded-2xl focus:border-indigo-500 transition-all outline-none dark:text-white font-black ${folderForm.name === 'DataBox' || folderForm.name === 'TaxAudit' || folderForm.name === 'ApprovalDoc' ? 'opacity-50 cursor-not-allowed' : ''}`}
                             placeholder="Contoh: Laporan Keuangan"
                             autoFocus
@@ -1487,49 +1504,6 @@ export default function Documents({
                                     <button onClick={() => handleDownload(selectedDocPreview)} className="px-6 py-2 bg-indigo-600 text-white rounded-xl text-xs font-black shadow-lg hover:scale-105 transition-all">DOWNLOAD PDF</button>
                                 </div>
                             )
-                        ) : largeFileWarning ? (
-                            <div className="flex flex-col items-center gap-4 p-10 text-center">
-                                <AlertCircle size={56} className="text-amber-500" />
-                                <p className="font-bold text-slate-700 dark:text-slate-200">
-                                    File Terlalu Besar untuk Preview ({largeFileWarning.size.toFixed(1)} MB)
-                                </p>
-                                <p className="text-xs text-slate-500 max-w-md">
-                                    {largeFileWarning.size > 15
-                                        ? 'File ini melebihi batas aman (15 MB) untuk di-render di browser. Silakan unduh file untuk melihatnya.'
-                                        : 'File ini cukup besar dan mungkin membuat browser lambat. Anda bisa mencoba preview atau langsung mengunduh.'}
-                                </p>
-                                <div className="flex gap-3 mt-2">
-                                    {largeFileWarning.buffer && (
-                                        <button
-                                            onClick={async () => {
-                                                const { buffer, type } = largeFileWarning;
-                                                setLargeFileWarning(null);
-                                                try {
-                                                    if (type === 'word') {
-                                                        const result = await mammoth.convertToHtml({ arrayBuffer: buffer });
-                                                        setPreviewHtml(result.value);
-                                                    } else {
-                                                        const wb = XLSX.read(buffer, { type: 'array' });
-                                                        const firstSheet = wb.Sheets[wb.SheetNames[0]];
-                                                        setPreviewHtml(XLSX.utils.sheet_to_html(firstSheet));
-                                                    }
-                                                } catch (e) {
-                                                    toast.error(`Preview gagal: ${e.message}`);
-                                                }
-                                            }}
-                                            className="px-5 py-2 bg-amber-500 text-white rounded-xl text-xs font-bold hover:bg-amber-600 transition-all"
-                                        >
-                                            Preview Anyway
-                                        </button>
-                                    )}
-                                    <button
-                                        onClick={() => handleDownload(selectedDocPreview)}
-                                        className="px-5 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700 transition-all"
-                                    >
-                                        Download File
-                                    </button>
-                                </div>
-                            </div>
                         ) : previewHtml ? (
                             <div className="w-full h-full p-8 bg-white dark:bg-slate-900 overflow-auto prose dark:prose-invert max-w-none shadow-inner" dangerouslySetInnerHTML={{ __html: previewHtml }} />
                         ) : (

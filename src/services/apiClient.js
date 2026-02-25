@@ -1,7 +1,7 @@
 const getApiUrl = () => {
     const { hostname, port, protocol } = window.location;
     if (port === '5173' || port === '3000' || hostname === 'localhost') {
-        return `${protocol}//${hostname}:5000/api`;
+        return `${protocol}//${hostname}:5005/api`;
     }
     return '/api';
 };
@@ -14,6 +14,7 @@ export const apiClient = {
             ...options,
             headers: {
                 'Content-Type': 'application/json',
+                'Authorization': localStorage.getItem('archive_token') ? `Bearer ${localStorage.getItem('archive_token')}` : '',
                 ...options.headers,
             },
         });

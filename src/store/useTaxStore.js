@@ -24,8 +24,13 @@ export const useTaxStore = create((set, get) => ({
     },
     fetchTaxWp: async () => {
         try {
-            const url = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/tax/wp` : 'http://localhost:5000/api/tax/wp';
-            const res = await fetch(url);
+            const token = localStorage.getItem('archive_token');
+            const url = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/tax/wp` : 'http://localhost:5005/api/tax/wp';
+            const res = await fetch(url, {
+                headers: {
+                    'Authorization': token ? `Bearer ${token}` : ''
+                }
+            });
             if (res.ok) {
                 const data = await res.json();
                 set({ taxWp: data });
@@ -158,11 +163,15 @@ export const useTaxStore = create((set, get) => ({
         }
 
         try {
-            const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+            const token = localStorage.getItem('archive_token');
+            const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5005/api';
             const url = isUpdate ? `${baseUrl}/tax/wp/${id}` : `${baseUrl}/tax/wp`;
             const res = await fetch(url, {
                 method: isUpdate ? 'PUT' : 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
                 body: JSON.stringify(data)
             });
             if (!res.ok) throw res;
@@ -179,8 +188,14 @@ export const useTaxStore = create((set, get) => ({
         const prev = get().taxWp;
         set({ taxWp: prev.filter(w => w.id !== id) });
         try {
-            const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
-            const res = await fetch(`${baseUrl}/tax/wp/${id}`, { method: 'DELETE' });
+            const token = localStorage.getItem('archive_token');
+            const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5005/api';
+            const res = await fetch(`${baseUrl}/tax/wp/${id}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': token ? `Bearer ${token}` : ''
+                }
+            });
             if (!res.ok) throw res;
             await get().fetchTaxWp();
         } catch (error) {

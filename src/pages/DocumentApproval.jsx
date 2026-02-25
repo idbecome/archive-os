@@ -8,17 +8,11 @@ import {
 import WorkflowViewer from '../components/workflow/WorkflowViewer';
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
-import { documentService as api } from '../services/documentService';
-import { useToast } from '../components/ui/Toast';
+import { parseApiError } from '../utils/errorHandler';
+import { getFullUrl } from '../utils/urlHelper';
+import { db as api } from '../services/database';
 
 export default function DocumentApproval({ approvals = [], users = [], departments = [], currentUser, onRefresh, hasPermission, flows = [], syncApprovalFolder }) {
-    const { toast } = useToast();
-    const getFullUrl = (url) => {
-        if (typeof url !== 'string' || !url.startsWith('/uploads/')) return url;
-        const isDev = window.location.port === '3000' || window.location.port === '5173' || window.location.hostname === 'localhost';
-        return isDev ? `http://${window.location.hostname}:5000${url}` : url;
-    };
-
     const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
     const [selectedApproval, setSelectedApproval] = useState(null);
     const [editingApproval, setEditingApproval] = useState(null);
@@ -127,7 +121,7 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
     };
 
     const handleSubmit = async () => {
-        if (!form.title || form.steps.length === 0) return toast.warning("Judul dan minimal 1 Approver wajib diisi!");
+        if (!form.title || form.steps.length === 0) return alert("Judul dan minimal 1 Approver wajib diisi!");
         setIsSubmitting(true);
 
         // Sync folder ApprovalDoc
@@ -167,7 +161,8 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             setNoteAttachment(null);
             onRefresh();
         } catch (e) {
-            toast.error(e.message);
+            const msg = await parseApiError(e);
+            alert(msg);
         } finally {
             setIsSubmitting(false);
         }
@@ -189,7 +184,10 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             setActionAttachment(null);
             setSelectedApproval(null);
             onRefresh();
-        } catch (e) { toast.error(e.message); }
+        } catch (e) { 
+            const msg = await parseApiError(e);
+            alert(msg); 
+        }
     };
 
     const handleResetStep = async (stepIndex) => {
@@ -199,7 +197,10 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             await api.resetApprovalStep(selectedApproval.id, stepIndex);
             onRefresh();
             setSelectedApproval(null);
-        } catch (e) { toast.error(e.message); }
+        } catch (e) { 
+            const msg = await parseApiError(e);
+            alert(msg); 
+        }
     };
 
     const handleDelete = async (id, e) => {
@@ -208,7 +209,10 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
         try {
             await api.deleteApproval(id);
             onRefresh();
-        } catch (e) { toast.error(e.message); }
+        } catch (e) { 
+            const msg = await parseApiError(e);
+            alert(msg); 
+        }
     };
 
     const visibleApprovals = (approvals || []).filter(a => {
@@ -473,9 +477,9 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
                                         </div>
                                     </div>
                                     <div onClick={() => setPreviewFile({ url: selectedApproval.attachment_url, name: selectedApproval.attachment_name })} className="rounded-[2rem] border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900 h-64 shadow-inner cursor-zoom-in group relative">
-                                        {selectedApproval.attachment_url.match(/\.(jpg|jpeg|png|webp)$/i) ? (
+                                        {String(selectedApproval.attachment_url).toLowerCase().match(/\.(jpg|jpeg|png|webp)/) ? (
                                             <img src={getFullUrl(selectedApproval.attachment_url)} alt="Preview" className="w-full h-full object-contain" />
-                                        ) : selectedApproval.attachment_url.endsWith('.pdf') ? (
+                                        ) : String(selectedApproval.attachment_url).toLowerCase().includes('.pdf') ? (
                                             <iframe src={getFullUrl(selectedApproval.attachment_url)} className="w-full h-full" title="Attachment Preview" />
                                         ) : (
                                             <div className="flex flex-col items-center justify-center h-full text-slate-300">
@@ -638,9 +642,9 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
             <Modal isOpen={!!previewFile} onClose={() => setPreviewFile(null)} title={`Preview: ${previewFile?.name}`} size="max-w-7xl">
                 <div className="pt-24 h-[85vh] flex flex-col">
                     <div className="flex-1 bg-slate-100 dark:bg-slate-950 rounded-[2.5rem] overflow-hidden border border-slate-200 dark:border-slate-800 shadow-inner">
-                        {previewFile?.url && previewFile.url.match(/\.(jpg|jpeg|png|webp)$/i) ? (
+                        {previewFile?.url && String(previewFile.url).toLowerCase().match(/\.(jpg|jpeg|png|webp)/) ? (
                             <img src={getFullUrl(previewFile.url)} alt="Preview" className="w-full h-full object-contain" />
-                        ) : previewFile?.url?.endsWith('.pdf') ? (
+                        ) : String(previewFile?.url).toLowerCase().includes('.pdf') ? (
                             <iframe src={getFullUrl(previewFile.url)} className="w-full h-full" title="PDF Preview" />
                         ) : (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400"><FileText size={48} className="mb-4 opacity-20" /><p className="font-black uppercase tracking-widest">Format tidak didukung untuk preview</p></div>

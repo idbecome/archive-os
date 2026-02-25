@@ -11,7 +11,11 @@ import {
     moveInventoryItem
 } from '../controllers/inventoryController.js';
 
+import { checkAuth } from '../middleware/auth.js';
+
 const router = express.Router();
+
+router.use(checkAuth);
 
 // Internal Inventory
 router.get('/analytics', getAnalytics); // Place before generic /:id to avoid collision

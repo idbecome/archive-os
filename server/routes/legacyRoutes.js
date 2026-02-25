@@ -23,9 +23,12 @@ import {
     updateApprovalFlow,
     resetApprovalStep
 } from '../controllers/workflowController.js';
+import { checkAuth } from '../middleware/auth.js';
 import { upload } from '../config/upload.js';
 
 const router = express.Router();
+
+router.use(checkAuth);
 
 // Tax Aliases
 router.get('/tax-audits', getTaxAudits);

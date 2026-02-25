@@ -16,11 +16,17 @@ import {
     updateTaxAudit,
     getAuditNotes,
     addAuditNote,
-    deleteTaxSummary
+    deleteTaxSummary,
+    importTaxObjects,
+    importTaxWp
 } from '../controllers/taxController.js';
 import { upload } from '../config/upload.js';
 
+import { checkAuth } from '../middleware/auth.js';
+
 const router = express.Router();
+
+router.use(checkAuth);
 
 // Master Data
 router.get('/objects', getTaxObjects);
@@ -49,5 +55,7 @@ router.post('/wp', createTaxWp);
 router.put('/wp/:id', updateTaxWp);
 router.delete('/wp/:id', deleteTaxWp);
 router.delete('/wp-all', deleteAllTaxWp);
+router.post('/objects/import', upload.single('file'), importTaxObjects);
+router.post('/wp/import', upload.single('file'), importTaxWp);
 
 export default router;

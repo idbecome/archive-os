@@ -3,40 +3,8 @@ import { knex } from '../db.js';
 // --- LOGS ---
 export const getLogs = async (req, res) => {
     try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 15;
-        const search = req.query.search || '';
-        const offset = (page - 1) * limit;
-
-        const query = knex('logs');
-        if (search) {
-            query.where((builder) => {
-                builder.where('user', 'like', `%${search}%`)
-                    .orWhere('action', 'like', `%${search}%`)
-                    .orWhere('details', 'like', `%${search}%`);
-            });
-        }
-
-        const [logs, countResult] = await Promise.all([
-            query.clone()
-                .orderBy('timestamp', 'desc')
-                .limit(limit)
-                .offset(offset),
-            query.clone().count('id as total').first()
-        ]);
-
-        const totalItems = countResult.total;
-        const totalPages = Math.ceil(totalItems / limit);
-
-        res.json({
-            data: logs,
-            pagination: {
-                totalItems,
-                totalPages,
-                currentPage: page,
-                limit
-            }
-        });
+        const logs = await knex('logs').orderBy('timestamp', 'desc').limit(100);
+        res.json(logs);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

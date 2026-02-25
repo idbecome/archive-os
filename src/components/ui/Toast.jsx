@@ -19,12 +19,7 @@ export function useToast() {
 
     const addToast = useCallback((message, type = 'success', duration = 4000) => {
         const id = ++toastIdCounter;
-        // Sanitize: ensure message is always a renderable string
-        let safeMessage = message;
-        if (message instanceof Error) safeMessage = message.message;
-        else if (typeof message === 'object' && message !== null) safeMessage = message.message || JSON.stringify(message);
-        else if (typeof message !== 'string') safeMessage = String(message);
-        const toast = { id, message: safeMessage, type, createdAt: Date.now() };
+        const toast = { id, message, type, createdAt: Date.now() };
         setToasts(prev => [...prev.slice(-4), toast]); // Max 5 visible
 
         if (duration > 0) {

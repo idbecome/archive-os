@@ -18,7 +18,8 @@ import {
     CheckCircle2,
     X,
     FileCheck,
-    BookOpen
+    BookOpen,
+    GitBranch
 } from 'lucide-react';
 
 const Sidebar = ({
@@ -111,6 +112,7 @@ const Sidebar = ({
                         items: [
                             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
                             { id: 'pustaka', icon: BookOpen, label: 'Pustaka' },
+                            { id: 'flow', icon: GitBranch, label: 'Flow' },
                         ]
                     },
                     {
@@ -240,7 +242,7 @@ const Sidebar = ({
                                                     e.stopPropagation();
                                                     if (window.confirm("Yakin ingin mereset antrian yang macet?")) {
                                                         try {
-                                                            await fetch(`http://${window.location.hostname}:5000/api/ocr/reset`, { method: 'POST' });
+                                                            await fetch(`http://${window.location.hostname}:5005/api/ocr/reset`, { method: 'POST' });
                                                             window.location.reload();
                                                         } catch (err) {
                                                             alert("Gagal reset: " + err.message);
