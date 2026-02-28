@@ -20,75 +20,11 @@ const db = {
 };
 
 const initDb = async () => {
-    // --- SELF-HEALING FOR APPROVALS (Relational Schema) ---
-    try {
-        const hasDocApprovals = await knex.schema.hasTable('document_approvals');
-        if (!hasDocApprovals) {
-            console.log('Self-healing: Creating document_approvals table...');
-            await knex.schema.createTable('document_approvals', table => {
-                table.increments('id').primary();
-                table.string('title').notNullable();
-                table.text('description').nullable();
-                table.string('division').nullable();
-                table.string('requester_name').nullable();
-                table.string('requester_username').nullable();
-                table.string('status').defaultTo('Pending');
-                table.integer('current_step_index').defaultTo(0);
-                table.string('attachment_url').nullable();
-                table.string('attachment_name').nullable();
-                table.text('ocr_content').nullable();
-                table.integer('flow_id').unsigned().nullable();
-                table.timestamps(true, true);
-            });
-        } else {
-            // Patch existing document_approvals table if columns are missing
-            const hasUpdatedAt = await knex.schema.hasColumn('document_approvals', 'updated_at');
-            const hasCreatedAt = await knex.schema.hasColumn('document_approvals', 'created_at');
-            if (!hasUpdatedAt || !hasCreatedAt) {
-                await knex.schema.alterTable('document_approvals', table => {
-                    if (!hasUpdatedAt) table.timestamp('updated_at').defaultTo(knex.fn.now());
-                    if (!hasCreatedAt) table.timestamp('created_at').defaultTo(knex.fn.now());
-                });
-            }
-        }
-
-        const hasStepsTable = await knex.schema.hasTable('approval_steps');
-        if (!hasStepsTable) {
-            console.log('Self-healing: Creating approval_steps table...');
-            await knex.schema.createTable('approval_steps', table => {
-                table.increments('id').primary();
-                table.integer('approval_id').unsigned().references('id').inTable('document_approvals').onDelete('CASCADE');
-                table.string('approver_name').nullable();
-                table.string('approver_username').nullable();
-                table.string('status').defaultTo('Pending');
-                table.text('note').nullable();
-                table.timestamp('action_date').nullable();
-                table.string('attachment_url').nullable();
-                table.string('attachment_name').nullable();
-                table.integer('step_index').defaultTo(0);
-                table.string('node_id').nullable();
-            });
-        }
-    } catch (e) { console.warn('Approval self-healing error:', e.message); }
-
-    // --- STEP 0: CRITICAL SELF-HEALING (Run BEFORE migrations) ---
-    try {
-        const hasApprovalSteps = await knex.schema.hasTable('approval_steps');
-        if (hasApprovalSteps) {
-            const hasFlowId = await knex.schema.hasColumn('approval_steps', 'flow_id');
-            if (!hasFlowId) {
-                console.log('Self-healing: Patching approval_steps schema to unblock migrations...');
-                await knex.schema.alterTable('approval_steps', table => {
-                    table.integer('flow_id').unsigned().after('id');
-                    table.integer('order_index').defaultTo(0);
-                    table.string('step_name');
-                    table.string('approver_role');
-                });
-            }
-        }
-    } catch (e) {
-        console.warn('Pre-migration patch skipped or already applied:', e.message);
-    }
+    // --- ARCHITECTURAL FIX ---
+    // The massive "SELF-HEALING FOR APPROVALS" block (lines 23-92) has been fully removed.
+    // Table schemas for `document_approvals`, `approval_steps`, and `tax_wp` are now 
+    // strictly, safely, and idempotently generated via 20260228140000_remove_db_self_healing.js
+    // This resolves duplicate index errors and prevents multi-server MigrationLocked collisions.
 
     console.log('Checking database migrations...');
     try {
@@ -249,38 +185,8 @@ const initDb = async () => {
                 table.decimal('total_payable', 15, 2).defaultTo(0);
             });
         } else {
-            // Patch existing tax_objects table if columns are missing
-            console.log('Self-healing: Checking tax_objects columns...');
-            const columnsToPatch = [
-                { name: 'is_pph21_bukan_pegawai', type: 'boolean', default: false },
-                { name: 'name', type: 'string' },
-                { name: 'id_type', type: 'string' },
-                { name: 'identity_number', type: 'string' },
-                { name: 'email', type: 'string' },
-                { name: 'markup_mode', type: 'string', default: 'none' },
-                { name: 'use_ppn', type: 'boolean', default: true },
-                { name: 'dpp', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'discount', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'dpp_net', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'pph', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'ppn', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'total_payable', type: 'decimal', precision: [15, 2], default: 0 }
-            ];
-
-            for (const col of columnsToPatch) {
-                const exists = await knex.schema.hasColumn('tax_objects', col.name);
-                if (!exists) {
-                    await knex.schema.alterTable('tax_objects', table => {
-                        let colBuilder;
-                        if (col.type === 'boolean') colBuilder = table.boolean(col.name);
-                        else if (col.type === 'string') colBuilder = table.string(col.name);
-                        else if (col.type === 'decimal') colBuilder = table.decimal(col.name, ...col.precision);
-
-                        if (col.default !== undefined) colBuilder.defaultTo(col.default);
-                        else colBuilder.nullable();
-                    });
-                }
-            }
+            // Patch logic has been permanently moved to server/migrations/20260228130000_fix_tax_objects_columns.js
+            console.log('Self-healing: tax_objects columns integrity delegated to Knex migrations.');
         }
 
         const hasTaxWp = await knex.schema.hasTable('tax_wp');
@@ -308,48 +214,8 @@ const initDb = async () => {
                 table.decimal('total_payable', 15, 2).defaultTo(0);
             });
         } else {
-            // Patch existing tax_wp table
-            console.log('Self-healing: Checking tax_wp columns...');
-            const wpColumns = [
-                { name: 'tax_type', type: 'string' },
-                { name: 'tax_object_code', type: 'string' },
-                { name: 'tax_object_name', type: 'string' },
-                { name: 'markup_mode', type: 'string', default: 'none' },
-                { name: 'use_ppn', type: 'boolean', default: true },
-                { name: 'is_pph21_bukan_pegawai', type: 'boolean', default: false },
-                { name: 'dpp', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'discount', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'dpp_net', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'pph', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'ppn', type: 'decimal', precision: [15, 2], default: 0 },
-                { name: 'total_payable', type: 'decimal', precision: [15, 2], default: 0 }
-            ];
-
-            for (const col of wpColumns) {
-                const exists = await knex.schema.hasColumn('tax_wp', col.name);
-                if (!exists) {
-                    await knex.schema.alterTable('tax_wp', table => {
-                        let colBuilder;
-                        if (col.type === 'boolean') colBuilder = table.boolean(col.name);
-                        else if (col.type === 'decimal') colBuilder = table.decimal(col.name, ...col.precision);
-                        else colBuilder = table.string(col.name);
-
-                        colBuilder.defaultTo(col.default);
-                    });
-                }
-            }
-            // Pastikan identity_number unik untuk mencegah duplikasi saat import
-            try {
-                const [indexes] = await knex.raw("SHOW INDEX FROM tax_wp WHERE Column_name = 'identity_number'");
-                const isUnique = indexes.some(idx => idx.Non_unique === 0);
-
-                if (!isUnique) {
-                    console.log('Self-healing: Adding unique constraint to tax_wp.identity_number...');
-                    await knex.schema.alterTable('tax_wp', table => {
-                        table.unique('identity_number');
-                    });
-                }
-            } catch (e) { /* Ignore if already unique */ }
+            // Patch logic has been permanently moved to server/migrations/20260228130000_fix_tax_objects_columns.js
+            console.log('Self-healing: tax_wp columns integrity delegated to Knex migrations.');
         }
     } catch (err) {
         console.error('Migration/Seeding failed:', err);

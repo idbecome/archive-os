@@ -283,7 +283,8 @@ async function processOCRJob(job) {
                                     images = pageImages;
                                 }
                             } catch (rasterErr) {
-                                console.warn('[Worker] Full page rasterization failed. Please run: npm install pdf-img-convert');
+                                console.error(`[Worker] Full page rasterization failed for ${filePath}.`, rasterErr);
+                                throw new Error('PDF rasterization failed. Dependency pdf-img-convert might be missing or broken. ' + rasterErr.message);
                             }
                         }
 
@@ -572,15 +573,31 @@ async function startPolling() {
                         });
                     setTimeout(poll, 100); // Process next immediately
                 } catch (e) {
-                    // 4. Mark Failed
-                    console.error(`[Worker] Job ${row.id} Failed or Timed Out:`, e.message);
-                    await knex('job_queue')
-                        .where('id', row.id)
-                        .update({
-                            status: JOB_STATUS.FAILED,
-                            finished_at: knex.fn.now(),
-                            error: e.message
-                        });
+                    // 4. Mark Failed or Retry
+                    console.error(`[Worker] Job ${row.id} Failed:`, e.message);
+
+                    const currentRetries = row.retries || 0;
+                    const maxAttempts = row.max_attempts || 3;
+
+                    if (currentRetries + 1 < maxAttempts) {
+                        console.log(`[Worker] Retrying Job ${row.id} (Attempt ${currentRetries + 2}/${maxAttempts})`);
+                        await knex('job_queue')
+                            .where('id', row.id)
+                            .update({
+                                status: JOB_STATUS.WAITING,
+                                retries: currentRetries + 1,
+                                error: e.message
+                            });
+                    } else {
+                        console.log(`[Worker] Job ${row.id} reached max retries. Marking FAILED permanently.`);
+                        await knex('job_queue')
+                            .where('id', row.id)
+                            .update({
+                                status: JOB_STATUS.FAILED,
+                                finished_at: knex.fn.now(),
+                                error: e.message
+                            });
+                    }
                     setTimeout(poll, 1000);
                 }
             } else {

@@ -7,12 +7,14 @@ class DbQueue {
         this.name = name;
     }
 
-    async add(name, data, opts) {
+    async add(name, data, opts = {}) {
         const jobData = {
             name,
             data: JSON.stringify(data),
             status: JOB_STATUS.WAITING,
-            created_at: knex.fn.now()
+            created_at: knex.fn.now(),
+            max_attempts: opts.max_attempts !== undefined ? opts.max_attempts : 3,
+            retries: 0
         };
         try {
             console.log("Attempting to add job to queue with data:", jobData);
