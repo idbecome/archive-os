@@ -8,6 +8,7 @@ import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { knex } from './db.js';
+import { JOB_STATUS, DOC_STATUS } from './constants/status.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { generateEmbedding } from './ai_search.js';
 
@@ -264,7 +265,7 @@ async function processOCRJob(job) {
                     console.log('[Worker] PDF appears to be scanned or low text. Attempting OCR...');
                     try {
                         let images = await extractImagesFromPDF(dataBuffer, Infinity, job);
-                        
+
                         // [FALLBACK] Jika ekstraksi objek gambar gagal (0 gambar), ini biasanya PDF vector tanpa text layer.
                         // Kita perlu melakukan rasterisasi halaman penuh.
                         if (images.length === 0) {
@@ -411,7 +412,7 @@ async function processOCRJob(job) {
                             ord.invoices.forEach(inv => {
                                 if (inv.id == invoiceId) {
                                     inv.ocrContent = extractedText;
-                            inv.status = 'done'; // Update status di JSON agar UI berhenti loading
+                                    inv.status = DOC_STATUS.DONE; // Update status di JSON agar UI berhenti loading
                                     updated = true;
                                 }
                             });
@@ -434,7 +435,7 @@ async function processOCRJob(job) {
 
         if (context && context.type === 'approval') {
             const approvalId = context.approvalId;
-            await knex('approvals')
+            await knex('document_approvals')
                 .where('id', approvalId)
                 .update({ ocr_content: extractedText });
             console.log(`[Worker] Approval OCR Completed: ${approvalId}`);
@@ -446,7 +447,7 @@ async function processOCRJob(job) {
                 .where('id', docId)
                 .update({
                     ocrContent: extractedText,
-                    status: 'done'
+                    status: DOC_STATUS.DONE
                 });
             console.log(`[Worker] Document OCR Status Updated to Done: ${docId}`);
         }
@@ -487,26 +488,26 @@ async function processOCRJob(job) {
 async function startPolling() {
     console.log("[Worker] Starting MySQL Polling (No Redis)...");
 
-    // FIX: Reset stuck jobs on startup (Active/Processing -> Waiting)
+    // FIX: Reset stuck jobs on startup (Active -> Waiting)
     await knex('job_queue')
-        .whereIn('status', ['active', 'processing'])
-        .update({ status: 'waiting' });
+        .where('status', JOB_STATUS.ACTIVE)
+        .update({ status: JOB_STATUS.WAITING });
     console.log("[Worker] Startup: Reset stuck jobs to 'waiting'.");
 
     const poll = async () => {
         try {
             // 1. Fetch one waiting job
             const row = await knex('job_queue')
-                .whereIn('status', ['waiting', 'pending']) // Mendukung status 'pending' dari controller
+                .where('status', JOB_STATUS.WAITING)
                 .orderBy('created_at', 'asc')
                 .first();
 
             if (row) {
-                // 2. Mark as Processing (sesuai dengan getOCRQueue)
+                // 2. Mark as Active
                 await knex('job_queue')
                     .where('id', row.id)
                     .update({
-                        status: 'processing',
+                        status: JOB_STATUS.ACTIVE,
                         processed_at: knex.fn.now()
                     });
 
@@ -518,7 +519,7 @@ async function startPolling() {
                     console.error(`[Worker] Job ${row.id} has corrupt JSON data. Marking failed.`);
                     await knex('job_queue')
                         .where('id', row.id)
-                        .update({ status: 'failed', error: 'Corrupt JSON Data' });
+                        .update({ status: JOB_STATUS.FAILED, error: 'Corrupt JSON Data' });
                     return setTimeout(poll, 100);
                 }
 
@@ -543,7 +544,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({
-                            status: 'completed',
+                            status: JOB_STATUS.COMPLETED,
                             finished_at: knex.fn.now(),
                             progress: 100
                         });
@@ -554,7 +555,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({
-                            status: 'failed',
+                            status: JOB_STATUS.FAILED,
                             finished_at: knex.fn.now(),
                             error: e.message
                         });

@@ -152,6 +152,7 @@ export const up = async (knex) => {
         table.specificType('ocr_content', 'LONGTEXT');
         table.index('invoice_no');
         table.index('vendor');
+        table.specificType('vector', 'LONGTEXT');
         table.foreign('ordner_ref_id').references('id').inTable('ordners').onDelete('CASCADE');
     });
 

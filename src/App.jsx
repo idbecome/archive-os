@@ -1,4 +1,4 @@
-﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
@@ -183,10 +183,10 @@ export default function App() {
         ...ord,
         invoices: (ord.invoices || []).map(inv => {
           const realDoc = docList.find(d => d.id === inv.id);
-          return realDoc ? { 
-            ...inv, 
+          return realDoc ? {
+            ...inv,
             status: realDoc.status || inv.status,
-            ocrContent: realDoc.ocrContent || inv.ocrContent 
+            ocrContent: realDoc.ocrContent || inv.ocrContent
           } : inv;
         })
       }));
@@ -230,7 +230,7 @@ export default function App() {
     const token = localStorage.getItem('archive_token');
     let cleanUrl = url;
     if (url.startsWith('uploads/')) cleanUrl = '/' + url;
-    
+
     if (cleanUrl.startsWith('/uploads/')) {
       const baseUrl = isDev ? `${protocol}//${hostname}:5005` : '';
       const cleanPath = cleanUrl.split('?')[0]; // Bersihkan query lama jika ada
@@ -310,9 +310,9 @@ export default function App() {
         const hasLocalProcessing = docList.some(d => d.status === 'processing' || d.status === 'waiting');
 
         // Hanya refresh jika ada progres nyata atau antrean baru saja tuntas
-        if (newCompleted > lastOcrCompletedRef.current || 
-            newFailed > lastOcrFailedRef.current || 
-            (isQueueEmpty && wasQueueBusy && hasLocalProcessing)) {
+        if (newCompleted > lastOcrCompletedRef.current ||
+          newFailed > lastOcrFailedRef.current ||
+          (isQueueEmpty && wasQueueBusy && hasLocalProcessing)) {
           console.log("OCR Status Change detected. Refreshing data...");
           fetchInventory(); // Refresh Inventory
           fetchDocs();      // Refresh Documents
@@ -950,6 +950,7 @@ export default function App() {
   const handleLogout = () => {
     setCurrentUser(null);
     localStorage.removeItem('archive_user');
+    localStorage.removeItem('archive_token');
     addLog(currentUser?.name, 'Logout', 'User logged out');
   };
 
@@ -1009,10 +1010,10 @@ export default function App() {
             // Cari dokumen asli di docList untuk mendapatkan status & ocrContent terbaru
             const realDoc = docList.find(d => d.id === inv.id);
             if (realDoc) {
-              return { 
-                ...inv, 
+              return {
+                ...inv,
                 status: realDoc.status || inv.status,
-                ocrContent: realDoc.ocrContent || inv.ocrContent 
+                ocrContent: realDoc.ocrContent || inv.ocrContent
               };
             }
             return inv;
@@ -1108,7 +1109,7 @@ export default function App() {
           try { currentData = JSON.parse(currentData); } catch (e) { currentData = null; }
         }
         const oldBoxId = currentData?.id || currentSlot.box_id;
-        
+
         const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
         const boxFolderId = await syncBoxFolder(boxId, isNew ? 'STORED' : 'UPDATED', oldBoxId);
         // --- END SYNC FOLDER ---
@@ -1128,7 +1129,7 @@ export default function App() {
               if (inv.rawFile) {
                 const fileType = inv.rawFile.type;
                 const fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
-                
+
                 // Generate unique ID untuk menghubungkan invoice di box_data dengan tabel documents
                 const docId = `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
@@ -1137,7 +1138,7 @@ export default function App() {
                 const docPayload = {
                   id: docId,
                   title: inv.fileName || `Invoice ${inv.invoiceNo}`,
-                    forceOcr: true, // Aktifkan mode scan untuk PDF image-only
+                  forceOcr: true, // Aktifkan mode scan untuk PDF image-only
                   type: fileType,
                   size: fileSize,
                   uploadDate: new Date().toISOString(),
@@ -1150,7 +1151,7 @@ export default function App() {
 
                 try {
                   const createdDoc = await createDocument(docPayload);
-                  
+
                   if (createdDoc) {
                     // Update invoice dengan URL asli dari dokumen yang baru dibuat
                     updatedInvoices[iIdx] = {

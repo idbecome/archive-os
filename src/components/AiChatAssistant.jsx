@@ -8,7 +8,13 @@ import {
 
 const getApiUrl = () => {
     const { hostname, port, protocol } = window.location;
-    if (port === '5173' || port === '3000' || hostname === 'localhost' || hostname.startsWith('192.168.')) {
+    if (port === '5173' || port === '3000') {
+        return `${protocol}//${hostname}:5005/api`;
+    }
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return `${protocol}//${hostname}:5005/api`;
+    }
+    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
         return `${protocol}//${hostname}:5005/api`;
     }
     return '/api';
@@ -247,13 +253,13 @@ export default function AiChatAssistant({
             const token = localStorage.getItem('archive_token');
             const res = await fetch(`${API_URL}/search/chat`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': token ? `Bearer ${token}` : ''
                 },
                 body: JSON.stringify({ message: msg })
             });
-            
+
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Gagal menghubungi asisten AI');
 

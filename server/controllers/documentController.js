@@ -1,6 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import { knex } from '../db.js';
+import { DOC_STATUS } from '../constants/status.js';
 import { systemLog } from '../utils/logger.js';
 import { addOCRJob } from '../queue.js';
 import { UPLOADS_DIR } from '../config/upload.js';
@@ -99,7 +100,7 @@ export const uploadDocument = async (req, res) => {
             const finalType = req.file ? req.file.mimetype : (req.body.type || existingDoc.type);
             const finalSize = req.file ? (req.file.size / 1024 / 1024).toFixed(2) + ' MB' : (req.body.size || existingDoc.size);
             const initialOcr = req.body.ocrContent || '';
-            const status = initialOcr ? 'done' : 'processing';
+            const status = initialOcr ? DOC_STATUS.DONE : DOC_STATUS.PROCESSING;
 
             const updateData = {
                 title: title,
@@ -147,7 +148,7 @@ export const uploadDocument = async (req, res) => {
         const finalType = req.file ? req.file.mimetype : (req.body.type || 'application/octet-stream');
         const finalSize = req.file ? (req.file.size / 1024 / 1024).toFixed(2) + ' MB' : (req.body.size || '0 MB');
         const initialOcr = req.body.ocrContent || '';
-        const status = initialOcr ? 'done' : 'processing';
+        const status = initialOcr ? DOC_STATUS.DONE : DOC_STATUS.PROCESSING;
 
         const newDocId = req.body.id || `doc-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
         const newDocData = {
@@ -224,7 +225,7 @@ export const deleteDocument = async (req, res) => {
 
         // Manual Cascade Delete
         await knex('comments').where('documentId', subId).del();
-        await knex('approvals').where('title', doc.title).del(); // Approx match or needs better link? 
+        await knex('document_approvals').where('title', doc.title).del(); // Approx match or needs better link? 
         // Note: document_approvals doesn't seem to have documentId FK in schema, just title? 
         // Based on schema: document_approvals has 'id', 'title', 'attachment_url' etc.
         // It seems approvals are separate entities.
@@ -361,7 +362,7 @@ export const restoreVersion = async (req, res) => {
             uploadDate: new Date().toISOString(),
             version: knex.raw('version + 1'),
             versionsHistory: JSON.stringify(history),
-            status: shouldRunOCR ? 'processing' : 'done'
+            status: shouldRunOCR ? DOC_STATUS.PROCESSING : DOC_STATUS.DONE
         });
 
         // Trigger OCR AFTER the DB update so the worker sees cleared ocrContent
@@ -441,7 +442,7 @@ export const updateDocument = async (req, res) => {
             // Gunakan hasil OCR dari client jika tersedia agar status langsung 'done'
             const initialOcr = ocrContent || '';
             updateData.ocrContent = initialOcr;
-            updateData.status = initialOcr ? 'done' : 'processing';
+            updateData.status = initialOcr ? DOC_STATUS.DONE : DOC_STATUS.PROCESSING;
 
             // 3. Trigger OCR (after DB update to avoid race condition)
             // Store info needed to trigger OCR after the update
@@ -602,7 +603,7 @@ export const promoteCommentAttachment = async (req, res) => {
                 file_data: null,
                 versionsHistory: JSON.stringify(versionsHistory),
                 version: knex.raw('COALESCE(version, 1) + 1'),
-                status: 'processing'
+                status: DOC_STATUS.PROCESSING
             });
 
         // Trigger OCR
