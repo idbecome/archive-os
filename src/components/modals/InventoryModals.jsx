@@ -139,23 +139,29 @@ export default function InventoryModals({
                                     expandedOrdnerIds.includes(ord.id) && (
                                         <div className="px-4 pb-4 space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
                                             {hasPermission('inventory', 'edit') && (
-                                                <div className="flex gap-3 items-center bg-white/50 dark:bg-slate-900/50 p-3 rounded-2xl border border-white/50 dark:border-white/5">
-                                                    <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
-                                                    <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" />
-                                                    <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-0 bg-transparent dark:text-white font-black focus:ring-0" />
+                                                <div className="flex flex-col gap-3 bg-white/50 dark:bg-slate-900/50 p-4 rounded-2xl border border-white/50 dark:border-white/5 w-full">
+                                                    <div className="flex gap-3 items-center">
+                                                        <input placeholder="NO INVOICE" value={newInvoice.invoiceNo} onChange={e => setNewInvoice({ ...newInvoice, invoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-b border-slate-200 dark:border-slate-800 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" title="Nomor Invoice" />
+                                                        <input placeholder="VENDOR" value={newInvoice.vendor} onChange={e => setNewInvoice({ ...newInvoice, vendor: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-b border-slate-200 dark:border-slate-800 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" title="Nama Vendor" />
+                                                        <input placeholder="NO FAKTUR" value={newInvoice.taxInvoiceNo} onChange={e => setNewInvoice({ ...newInvoice, taxInvoiceNo: e.target.value })} className="flex-1 min-w-[100px] px-3 py-2 text-[10px] border-b border-indigo-500/20 bg-transparent dark:text-white font-black uppercase tracking-wider focus:ring-0" title="Nomor Faktur Pajak" />
+                                                        <input type="date" value={newInvoice.paymentDate} onChange={e => setNewInvoice({ ...newInvoice, paymentDate: e.target.value })} className="w-28 px-3 py-2 text-[10px] border-b border-slate-200 dark:border-slate-800 bg-transparent dark:text-white font-black focus:ring-0" title="Tanggal Pembayaran" />
+                                                    </div>
+                                                    <div className="flex gap-3 items-center">
+                                                        <input placeholder="KETERANGAN KUSUS (OPSIONAL)..." value={newInvoice.specialNote} onChange={e => setNewInvoice({ ...newInvoice, specialNote: e.target.value })} className="flex-1 px-3 py-2 text-[10px] border-b border-amber-500/20 bg-transparent dark:text-white font-bold uppercase tracking-wider focus:ring-0" title="Keterangan Kusus" />
 
-                                                    {/* Attachment Button */}
-                                                    <div className="relative">
-                                                        <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
-                                                        <button onClick={() => invoiceFileInputRef.current.click()} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${newInvoice.file ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}`} title={newInvoice.fileName || "Lampirkan File (OCR Auto)"}>
-                                                            {newInvoice.isProcessing ? <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip size={14} />}
+                                                        {/* Attachment Button */}
+                                                        <div className="relative">
+                                                            <input type="file" ref={invoiceFileInputRef} className="hidden" onChange={handleInvoiceFileSelect} accept="image/*,.pdf,.docx,.doc,.xlsx,.xls,.pptx" />
+                                                            <button onClick={() => invoiceFileInputRef.current.click()} className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${newInvoice.file ? 'bg-emerald-100 text-emerald-600' : 'bg-slate-100 dark:bg-slate-800 text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'}`} title={newInvoice.fileName || "Lampirkan File (OCR Auto)"}>
+                                                                {newInvoice.isProcessing ? <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" /> : <Paperclip size={14} />}
+                                                            </button>
+                                                        </div>
+
+                                                        <button onClick={() => addInvoice(ord.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
+                                                            {editingItem?.type === 'invoice' ? <Save size={14} /> : <Plus size={14} />}
                                                         </button>
                                                     </div>
-
-                                                    <button onClick={() => addInvoice(ord.id)} className={`w-8 h-8 rounded-lg flex items-center justify-center text-white transition-all hover:scale-105 active:scale-95 ${editingItem?.type === 'invoice' ? 'bg-amber-500' : 'bg-indigo-600'}`}>
-                                                        {editingItem?.type === 'invoice' ? <Save size={14} /> : <Plus size={14} />}
-                                                    </button>
-                                                </div >
+                                                </div>
                                             )
                                             }
 
@@ -448,8 +454,21 @@ export default function InventoryModals({
 
                             <div className="grid grid-cols-2 gap-6 mb-6">
                                 <div>
+                                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">No Faktur Pajak</span>
+                                    <p className="text-lg font-bold text-indigo-600 dark:text-indigo-400">{selectedInvoice.taxInvoiceNo || '-'}</p>
+                                </div>
+                                <div>
                                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Lampiran File</span>
                                     {selectedInvoice.fileName ? <div className="flex items-center gap-2 text-indigo-600 dark:text-indigo-400 font-bold text-sm"><Paperclip size={16} /> {String(selectedInvoice.fileName)}</div> : <span className="text-sm text-slate-400 italic">Tidak ada file</span>}
+                                </div>
+                            </div>
+
+                            <div className="mb-6">
+                                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 block">Keterangan Kusus</span>
+                                <div className="p-4 bg-amber-50 dark:bg-amber-900/10 border border-amber-100 dark:border-amber-900/30 rounded-2xl">
+                                    <p className="text-sm font-medium text-amber-900 dark:text-amber-200 leading-relaxed italic">
+                                        "{selectedInvoice.specialNote || 'Tidak ada keterangan kusus.'}"
+                                    </p>
                                 </div>
                             </div>
 

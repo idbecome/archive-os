@@ -46,6 +46,8 @@ export default function Inventory({
                 return ord.invoices?.some(inv =>
                     String(inv.invoiceNo || '').toLowerCase().includes(q) ||
                     String(inv.vendor || '').toLowerCase().includes(q) ||
+                    String(inv.taxInvoiceNo || '').toLowerCase().includes(q) ||
+                    String(inv.specialNote || '').toLowerCase().includes(q) ||
                     String(inv.ocrContent || inv.ocr_content || '').toLowerCase().includes(q) ||
                     ((inv.status === 'processing' || inv.status === 'waiting') && 'proses ocr'.includes(q))
                 );
@@ -95,7 +97,7 @@ export default function Inventory({
             if (typeof data === 'string') {
                 try { data = JSON.parse(data); } catch (e) { return false; }
             }
-            
+
             if (!data?.ordners) return false;
             return data.ordners.some(o => {
                 const periodYear = parseInt(o.period);
@@ -128,7 +130,7 @@ export default function Inventory({
             if (typeof data === 'string') {
                 try { data = JSON.parse(data); } catch (e) { return acc; }
             }
-            
+
             if (!data?.ordners) return acc;
             return acc + data.ordners.reduce((sum, o) => sum + (o.invoices?.length || 0), 0);
         }, 0);
@@ -330,26 +332,26 @@ export default function Inventory({
 
                 {/* GRID */}
                 {activeInvTab === 'internal' && (
-                    <InventoryGrid 
-                        TOTAL_SLOTS={TOTAL_SLOTS} 
-                        inventory={inventory} 
-                        handleSlotClick={handleSlotClick} 
-                        getStatusStyle={getStatusStyle} 
-                        isMatch={isMatch} 
-                        inventorySearchQuery={inventorySearchQuery} 
+                    <InventoryGrid
+                        TOTAL_SLOTS={TOTAL_SLOTS}
+                        inventory={inventory}
+                        handleSlotClick={handleSlotClick}
+                        getStatusStyle={getStatusStyle}
+                        isMatch={isMatch}
+                        inventorySearchQuery={inventorySearchQuery}
                         ocrStats={ocrStats}
                     />
                 )}
 
                 {/* EXTERNAL / INDOARSIP TAB CONTENT */}
                 {activeInvTab === 'external' && (
-                    <ExternalInventoryTable 
-                        externalItems={externalItems} 
-                        isMatch={isMatch} 
-                        onViewExternal={onViewExternal} 
-                        onRestoreExternal={onRestoreExternal} 
+                    <ExternalInventoryTable
+                        externalItems={externalItems}
+                        isMatch={isMatch}
+                        onViewExternal={onViewExternal}
+                        onRestoreExternal={onRestoreExternal}
                         ocrStats={ocrStats}
-                        hasPermission={hasPermission} 
+                        hasPermission={hasPermission}
                     />
                 )}
             </div>

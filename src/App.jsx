@@ -469,7 +469,17 @@ export default function App() {
 
   // Temp State
   const [newOrdner, setNewOrdner] = useState({ noOrdner: '', period: '' });
-  const [newInvoice, setNewInvoice] = useState({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
+  const [newInvoice, setNewInvoice] = useState({
+    invoiceNo: '',
+    vendor: '',
+    paymentDate: '',
+    taxInvoiceNo: '',
+    specialNote: '',
+    file: null,
+    fileName: '',
+    ocrContent: '',
+    isProcessing: false
+  });
   const [expandedOrdnerIds, setExpandedOrdnerIds] = useState([]);
 
   // --- INITIALIZATION ---
@@ -981,7 +991,17 @@ export default function App() {
       setBoxForm({ boxId: data.id || slot.box_id || '', ordners: data.ordners || [] });
     }
     setNewOrdner({ noOrdner: '', period: '' });
-    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
+    setNewInvoice({
+      invoiceNo: '',
+      vendor: '',
+      paymentDate: '',
+      taxInvoiceNo: '',
+      specialNote: '',
+      file: null,
+      fileName: '',
+      ocrContent: '',
+      isProcessing: false
+    });
     setExpandedOrdnerIds(slot.status !== 'EMPTY' && slot.boxData?.ordners ? slot.boxData.ordners.map(o => o.id) : []);
     setEditingItem(null);
     setShowMoveInput(false);
@@ -1051,6 +1071,8 @@ export default function App() {
       invoiceNo: newInvoice.invoiceNo,
       vendor: newInvoice.vendor,
       paymentDate: newInvoice.paymentDate,
+      taxInvoiceNo: newInvoice.taxInvoiceNo,
+      specialNote: newInvoice.specialNote,
       file: newInvoice.file,
       fileName: newInvoice.fileName,
       ocrContent: newInvoice.ocrContent,
@@ -1063,10 +1085,35 @@ export default function App() {
     } else {
       setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: [...o.invoices, { ...invoicePayload, id: Date.now() }] } : o) }));
     }
-    setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false, rawFile: null });
+    setNewInvoice({
+      invoiceNo: '',
+      vendor: '',
+      paymentDate: '',
+      taxInvoiceNo: '',
+      specialNote: '',
+      file: null,
+      fileName: '',
+      ocrContent: '',
+      isProcessing: false,
+      rawFile: null
+    });
   };
 
-  const editInvoice = (inv, ordId) => { setNewInvoice({ invoiceNo: inv.invoiceNo, vendor: inv.vendor, paymentDate: inv.paymentDate || '', file: inv.file || null, fileName: inv.fileName || '', ocrContent: inv.ocrContent || '', isProcessing: false, rawFile: null }); setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId }); };
+  const editInvoice = (inv, ordId) => {
+    setNewInvoice({
+      invoiceNo: inv.invoiceNo,
+      vendor: inv.vendor,
+      paymentDate: inv.paymentDate || '',
+      taxInvoiceNo: inv.taxInvoiceNo || '',
+      specialNote: inv.specialNote || '',
+      file: inv.file || null,
+      fileName: inv.fileName || '',
+      ocrContent: inv.ocrContent || '',
+      isProcessing: false,
+      rawFile: null
+    });
+    setEditingItem({ type: 'invoice', id: inv.id, parentId: ordId });
+  };
   const removeInvoice = (ordnerId, invoiceId) => { if (window.confirm("Hapus invoice?")) setBoxForm(prev => ({ ...prev, ordners: prev.ordners.map(o => o.id === ordnerId ? { ...o, invoices: o.invoices.filter(i => i.id !== invoiceId) } : o) })); };
 
   const handleSaveBox = async () => {
@@ -1518,7 +1565,9 @@ export default function App() {
               id: Date.now() + Math.random(),
               invoiceNo: invNo,
               vendor: findVal(['Vendor', 'Supplier', 'Nama Vendor']) || '-',
-              paymentDate: findVal(['Tgl Pembayaran', 'Tanggal', 'Date']) || ''
+              paymentDate: findVal(['Tgl Pembayaran', 'Tanggal', 'Date']) || '',
+              taxInvoiceNo: findVal(['No Faktur Pajak', 'No Faktur', 'Faktur', 'Tax Invoice No']) || '',
+              specialNote: findVal(['Keterangan Kusus', 'Keterangan', 'Note', 'Special Note']) || ''
             });
           }
         });
@@ -1783,8 +1832,30 @@ export default function App() {
 
   const downloadTemplate = () => {
     const templateData = [
-      { "No Slot": 1, "No Kardus": "BOX-2024-001", "Status": "TERISI", "No Ordner": "ORD-001", "Periode": "Jan 2024", "No Invoice": "INV/001", "Vendor": "Vendor A", "Tgl Pembayaran": "2024-01-31" },
-      { "No Slot": 2, "No Kardus": "BOX-2024-002", "Status": "TERISI", "No Ordner": "", "Periode": "", "No Invoice": "", "Vendor": "", "Tgl Pembayaran": "" }
+      {
+        "No Slot": 1,
+        "No Kardus": "BOX-2024-001",
+        "Status": "TERISI",
+        "No Ordner": "ORD-001",
+        "Periode": "Jan 2024",
+        "No Invoice": "INV/001",
+        "Vendor": "Vendor A",
+        "Tgl Pembayaran": "2024-01-31",
+        "No Faktur Pajak": "010.000-24.00000001",
+        "Keterangan Kusus": "Contoh keterangan kusus"
+      },
+      {
+        "No Slot": 2,
+        "No Kardus": "BOX-2024-002",
+        "Status": "TERISI",
+        "No Ordner": "",
+        "Periode": "",
+        "No Invoice": "",
+        "Vendor": "",
+        "Tgl Pembayaran": "",
+        "No Faktur Pajak": "",
+        "Keterangan Kusus": ""
+      }
     ];
     const ws = XLSX.utils.json_to_sheet(templateData);
     const wb = XLSX.utils.book_new();
