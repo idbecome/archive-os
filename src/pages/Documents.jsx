@@ -5,7 +5,7 @@ import {
     HardDrive, ChevronRight, ChevronLeft, Search, Plus, UploadCloud, FolderOpen,
     Trash2, Edit3, FileDigit, FileText, Highlighter, History, PenLine, User, Clock, Paperclip,
     Copy, Move, RefreshCw, X, Lock, Users, Building, Shield, Download, Eye, File, Image, MoreVertical, Sparkles, AlertCircle, TrendingUp, ShieldCheck, Truck, ArrowLeftRight,
-    LayoutGrid, List
+    LayoutGrid, List, Check
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
 import { db as api, API_URL } from '../services/database';
@@ -54,6 +54,7 @@ export default function Documents({
 
     // --- BULK SELECTION STATE ---
     const [selectedDocIds, setSelectedDocIds] = useState(new Set());
+    const [selectedFolderIds, setSelectedFolderIds] = useState(new Set());
     const [isBulkDeleting, setIsBulkDeleting] = useState(false);
 
     // --- FOLDER MODAL STATE ---
@@ -167,7 +168,7 @@ export default function Documents({
                             'Authorization': token ? `Bearer ${token}` : ''
                         }
                     });
-                    
+
                     if (!response.ok) {
                         const errorText = await response.text();
                         const isHtml = errorText.includes('<!DOCTYPE');
@@ -344,20 +345,114 @@ export default function Documents({
         setSelectedDocIds(newSet);
     };
 
+    const toggleFolderSelection = (id, folderName) => {
+        // Protect system folders
+        if (['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc', 'SOP'].includes(folderName)) return;
+
+        const newSet = new Set(selectedFolderIds);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setSelectedFolderIds(newSet);
+    };
+
+    const getVisibleItems = () => {
+        const visibleFolders = (folders || []).filter(f => {
+            const isCurrentRoot = !currentFolderId || currentFolderId === 'null' || currentFolderId === 'undefined' || currentFolderId === 0 || currentFolderId === '0';
+            const isFolderRoot = !f.parentId || f.parentId === 'null' || f.parentId === 'undefined' || f.parentId === 0 || f.parentId === '0';
+            const structureMatch = isCurrentRoot ? isFolderRoot : (String(f.parentId) === String(currentFolderId));
+            const searchMatch = (f.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+            return structureMatch && searchMatch;
+        });
+
+        const visibleDocs = (docList || []).filter(d => {
+            const matchesSearch = ((d.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || (d.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()));
+            if (searchQuery) return matchesSearch;
+            return (String(d.folderId) === String(currentFolderId) || ((!d.folderId || d.folderId === 'null') && (currentFolderId === null || currentFolderId === 'null')));
+        });
+
+        return { visibleFolders, visibleDocs };
+    };
+
+    const handleSelectAll = () => {
+        const { visibleFolders, visibleDocs } = getSmartVisibleItems();
+
+        const newDocSet = new Set(selectedDocIds);
+        const newFolderSet = new Set(selectedFolderIds);
+
+        // System folder list for protection
+        const systemFolders = ['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc', 'SOP'];
+
+        visibleDocs.forEach(d => newDocSet.add(d.id));
+        visibleFolders.forEach(f => {
+            if (!systemFolders.includes(f.name)) {
+                newFolderSet.add(f.id);
+            }
+        });
+
+        setSelectedDocIds(newDocSet);
+        setSelectedFolderIds(newFolderSet);
+    };
+
+    const handleDeselectAll = () => {
+        setSelectedDocIds(new Set());
+        setSelectedFolderIds(new Set());
+    };
+
+    const getSmartVisibleItems = () => {
+        const { visibleFolders, visibleDocs } = getVisibleItems();
+        // apply any additional filters if viewing DataBox
+        let filteredFolders = visibleFolders;
+        if (isViewingDataBox && statusFilter !== 'all') {
+            filteredFolders = visibleFolders.filter(f => {
+                const name = f.name || '';
+                if (statusFilter === 'active') return !name.startsWith('RM_') && !name.startsWith('TR_') && !name.startsWith('MV_') && !name.startsWith('ED_');
+                if (statusFilter === 'removed') return name.startsWith('RM_');
+                if (statusFilter === 'external') return name.startsWith('TR_');
+                if (statusFilter === 'moved') return name.startsWith('MV_');
+                if (statusFilter === 'renamed') return name.startsWith('ED_');
+                if (statusFilter === 'borrowed') return name.includes(' - BORROWED');
+                if (statusFilter === 'audit') return name.includes(' - AUDIT');
+                return true;
+            });
+        }
+        return { visibleFolders: filteredFolders, visibleDocs };
+    };
+
     const handleBulkDelete = async () => {
-        if (selectedDocIds.size === 0) return;
-        if (!window.confirm(`Yakin ingin menghapus ${selectedDocIds.size} dokumen terpilih?`)) return;
+        const totalItems = selectedDocIds.size + selectedFolderIds.size;
+        if (totalItems === 0) return;
+
+        let confirmMsg = `Yakin ingin menghapus ${totalItems} item terpilih?`;
+        if (selectedFolderIds.size > 0) {
+            confirmMsg += `\nPERINGATAN: ${selectedFolderIds.size} folder akan dihapus beserta seluruh contributes isinya secara permanen.`;
+        }
+
+        if (!window.confirm(confirmMsg)) return;
 
         setIsBulkDeleting(true);
         try {
-            const validIds = Array.from(selectedDocIds).filter(id => id);
-            const promises = validIds.map(id => deleteDocument(id));
-            await Promise.all(promises);
+            // Delete Folders
+            if (selectedFolderIds.size > 0) {
+                const folderPromises = Array.from(selectedFolderIds).map(id => api.deleteFolder(id));
+                await Promise.all(folderPromises);
+                if (onRefresh) onRefresh(); // Refresh folders
+            }
+
+            // Delete Documents
+            if (selectedDocIds.size > 0) {
+                const docPromises = Array.from(selectedDocIds).map(id => deleteDocument(id));
+                await Promise.all(docPromises);
+            }
+
             setSelectedDocIds(new Set());
-            // onRefresh() is now handled by store
+            setSelectedFolderIds(new Set());
+            alert(`Berhasil menghapus ${totalItems} item.`);
         } catch (e) {
             const msg = await parseApiError(e);
-            alert("Gagal menghapus beberapa file: " + msg);
+            alert("Gagal menghapus beberapa item: " + msg);
         } finally {
             setIsBulkDeleting(false);
         }
@@ -519,6 +614,26 @@ export default function Documents({
                         <button onClick={onRefresh} className="group px-3 py-2 rounded-lg border bg-white text-gray-600 border-gray-200 hover:bg-gray-50 flex items-center gap-2" title="Refresh Data">
                             <RefreshCw size={18} className="group-hover:rotate-180 transition-transform duration-500" />
                         </button>
+                        <div className="flex bg-white rounded-lg border border-gray-200 p-1">
+                            <button
+                                onClick={() => {
+                                    const { visibleFolders, visibleDocs } = getSmartVisibleItems();
+                                    const allDocsSelected = visibleDocs.every(d => selectedDocIds.has(d.id));
+                                    const selectableFolders = visibleFolders.filter(f => !['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc', 'SOP'].includes(f.name));
+                                    const allFoldersSelected = selectableFolders.every(f => selectedFolderIds.has(f.id));
+
+                                    if (allDocsSelected && (selectableFolders.length === 0 || allFoldersSelected)) {
+                                        handleDeselectAll();
+                                    } else {
+                                        handleSelectAll();
+                                    }
+                                }}
+                                className={`group p-1.5 rounded-md transition-all ${(selectedDocIds.size > 0 || selectedFolderIds.size > 0) ? 'bg-indigo-100 text-indigo-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}
+                                title="Pilih Semua (Select All)"
+                            >
+                                <Check size={18} className="group-hover:scale-110 transition-transform" />
+                            </button>
+                        </div>
                         <div className="flex bg-white rounded-lg border border-gray-200 p-1">
                             <button
                                 onClick={() => setViewMode('grid')}
@@ -697,8 +812,19 @@ export default function Documents({
                                 <div key={folder.id}
                                     onClick={() => navigateFolder(folder.id)}
                                     style={{ animationDelay: `${idx * 20}ms` }}
-                                    className={`group relative flex flex-col items-center p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/10 hover:border-indigo-200 dark:hover:border-indigo-800 cursor-pointer transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both shadow-sm aspect-[1/1.1] hover:scale-110 hover:-rotate-1 ${activeFolderMenuId === folder.id ? 'z-[120] ring-2 ring-indigo-500 shadow-2xl scale-[1.02]' : 'z-10'} ${isSyncFolder ? 'opacity-80 grayscale-[0.3]' : ''}`}
+                                    className={`group relative flex flex-col items-center p-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-indigo-50 dark:hover:bg-indigo-900/10 hover:border-indigo-200 dark:hover:border-indigo-800 cursor-pointer transition-all duration-500 animate-in zoom-in-90 fade-in fill-mode-both shadow-sm aspect-[1/1.1] hover:scale-110 hover:-rotate-1 ${selectedFolderIds.has(folder.id) ? 'ring-2 ring-indigo-500 bg-indigo-50/50 dark:bg-indigo-900/20 shadow-md' : ''} ${activeFolderMenuId === folder.id ? 'z-[120] ring-2 ring-indigo-500 shadow-2xl scale-[1.02]' : 'z-10'} ${isSyncFolder ? 'opacity-80 grayscale-[0.3]' : ''}`}
                                 >
+                                    {/* Folder Selection Checkbox */}
+                                    {hasPermission('documents', 'delete') && !(['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc', 'SOP'].includes(folder.name)) && (
+                                        <div className={`absolute top-3 left-3 z-30 ${selectedFolderIds.has(folder.id) ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} transition-opacity`}>
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedFolderIds.has(folder.id)}
+                                                onChange={(e) => { e.stopPropagation(); toggleFolderSelection(folder.id, folder.name); }}
+                                                className="w-5 h-5 rounded-md border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer shadow-sm"
+                                            />
+                                        </div>
+                                    )}
                                     <div className="flex-1 flex items-center justify-center w-full relative">
                                         <div className={`w-16 h-16 rounded-2xl flex items-center justify-center group-hover:scale-110 transition-transform ${isInvSync ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-500' :
                                             isTaxSync ? 'bg-purple-50 dark:bg-purple-900/20 text-purple-500' :
@@ -1019,6 +1145,40 @@ export default function Documents({
                                 <div className="col-span-2 md:col-span-3 text-right">Aksi</div>
                             </div>
                             <div className="divide-y divide-gray-100 dark:divide-slate-800">
+                                {/* Folders in List View */}
+                                {(folders || []).filter(f => {
+                                    const isCurrentRoot = !currentFolderId || currentFolderId === 'null' || currentFolderId === 'undefined' || currentFolderId === 0 || currentFolderId === '0';
+                                    const isFolderRoot = !f.parentId || f.parentId === 'null' || f.parentId === 'undefined' || f.parentId === 0 || f.parentId === '0';
+                                    const structureMatch = isCurrentRoot ? isFolderRoot : (String(f.parentId) === String(currentFolderId));
+                                    const searchMatch = (f.name || '').toLowerCase().includes(searchQuery.toLowerCase());
+                                    return structureMatch && searchMatch;
+                                }).map((folder) => (
+                                    <div key={folder.id} className={`group grid grid-cols-12 gap-4 px-6 py-4 items-center hover:bg-indigo-50/30 dark:hover:bg-indigo-900/10 transition-colors cursor-pointer ${selectedFolderIds.has(folder.id) ? 'bg-indigo-50/40 dark:bg-indigo-900/10' : ''}`}
+                                        onClick={() => navigateFolder(folder.id)}
+                                    >
+                                        <div className="col-span-6 md:col-span-12 flex items-center gap-4 overflow-hidden">
+                                            {hasPermission('documents', 'delete') && !(['DataBox', 'TaxAudit', 'PUSTAKA', 'ApprovalDoc', 'SOP'].includes(folder.name)) && (
+                                                <div onClick={(e) => e.stopPropagation()}>
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedFolderIds.has(folder.id)}
+                                                        onChange={() => toggleFolderSelection(folder.id, folder.name)}
+                                                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 cursor-pointer"
+                                                    />
+                                                </div>
+                                            )}
+                                            <div className="flex-shrink-0 w-8 h-8 flex items-center justify-center bg-amber-50 dark:bg-amber-900/20 text-amber-500 rounded-lg">
+                                                <FolderOpen size={18} fill="currentColor" className="opacity-70" />
+                                            </div>
+                                            <div className="min-w-0">
+                                                <div className="font-bold text-gray-800 dark:text-gray-200 text-sm truncate" title={folder.name}>{folder.name}</div>
+                                                <div className="text-[10px] text-gray-400">Folder • {folder.owner || 'System'}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {/* Documents in List View */}
                                 {(docList || []).filter(d => {
                                     const matchesSearch = ((d.title || '').toLowerCase().includes(searchQuery.toLowerCase()) || (d.ocrContent || '').toLowerCase().includes(searchQuery.toLowerCase()));
                                     if (searchQuery) return matchesSearch; // Global search
@@ -1377,14 +1537,14 @@ export default function Documents({
             </Modal>
             {/* FLOATING BULK ACTIONS BAR */}
             {
-                selectedDocIds.size > 0 && (
+                (selectedDocIds.size > 0 || selectedFolderIds.size > 0) && (
                     <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/70 dark:bg-slate-900/80 backdrop-blur-3xl shadow-2xl rounded-full px-6 py-3 flex items-center gap-4 z-50 border border-white/40 dark:border-white/10 animate-in slide-in-from-bottom-4 duration-300 ring-1 ring-black/5">
                         <span className="text-sm font-bold text-slate-700 dark:text-gray-200 pl-2 border-r border-slate-200 dark:border-slate-700 pr-5">
-                            {selectedDocIds.size} file dipilih
+                            {selectedDocIds.size + selectedFolderIds.size} item dipilih
                         </span>
 
                         <button
-                            onClick={() => setSelectedDocIds(new Set())}
+                            onClick={handleDeselectAll}
                             className="text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white text-sm font-medium transition-colors"
                         >
                             Batal
@@ -1403,7 +1563,7 @@ export default function Documents({
                             ) : (
                                 <>
                                     <Trash2 size={16} />
-                                    Hapus ({selectedDocIds.size})
+                                    Hapus ({selectedDocIds.size + selectedFolderIds.size})
                                 </>
                             )}
                         </button>
