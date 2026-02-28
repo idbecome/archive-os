@@ -1,6 +1,7 @@
 import { knex } from '../db.js';
 import bcrypt from 'bcrypt';
 import { systemLog } from '../utils/logger.js';
+import { handleError } from '../utils/errorHandler.js';
 
 export const login = async (req, res) => {
     try {
@@ -39,7 +40,7 @@ export const login = async (req, res) => {
             res.status(401).json({ error: "Invalid credentials" });
         }
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "Login Error");
     }
 };
 
@@ -48,7 +49,7 @@ export const getUsers = async (req, res) => {
         const rows = await knex('users').select('id', 'username', 'name', 'role', 'department');
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "Get Users Error");
     }
 };
 
@@ -66,8 +67,7 @@ export const createUser = async (req, res) => {
         await systemLog('Admin', "Create User", `Created user: ${username}`);
         res.json({ id });
     } catch (e) {
-        console.error("CRITICAL: createUser failed:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "Create User Error");
     }
 };
 
@@ -85,8 +85,7 @@ export const updateUser = async (req, res) => {
         await systemLog('Admin', "Update User", `Updated user ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        console.error("CRITICAL: updateUser failed:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "Update User Error");
     }
 };
 
@@ -96,8 +95,7 @@ export const deleteUser = async (req, res) => {
         await systemLog('Admin', "Delete User", `Deleted user ID: ${req.params.id}`);
         res.json({ success: true });
     } catch (e) {
-        console.error("CRITICAL: deleteUser failed:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "Delete User Error");
     }
 };
 
@@ -110,7 +108,7 @@ export const getProfile = async (req, res) => {
         const { password, ...userWithoutPass } = user;
         res.json(userWithoutPass);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "Get Profile Error");
     }
 };
 
@@ -138,7 +136,6 @@ export const updateProfile = async (req, res) => {
         await systemLog(user.username, "Profile Update", "User updated their profile");
         res.json({ success: true });
     } catch (err) {
-        console.error("CRITICAL: updateProfile failed:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "Update Profile Error");
     }
 };

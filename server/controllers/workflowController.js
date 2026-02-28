@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
 import { addOCRJob } from '../queue.js';
@@ -10,7 +11,7 @@ export const getApprovalFlows = async (req, res) => {
         const flows = await knex('approval_flows').select('*');
         res.json(flows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "WORKFLOW Error");
     }
 };
 
@@ -40,7 +41,7 @@ export const createApprovalFlow = async (req, res) => {
         await systemLog('Admin', "Create Workflow", `Created workflow: ${name}`);
         res.json({ id: flowId });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -53,7 +54,7 @@ export const getDocumentApprovals = async (req, res) => {
             .orderBy('created_at', 'desc');
         res.json(approvals);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "WORKFLOW Error");
     }
 };
 
@@ -113,7 +114,7 @@ export const initiateApproval = async (req, res) => {
         res.json({ success: true, id: approvalId });
     } catch (e) {
         console.error("Initiate Approval Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -203,7 +204,7 @@ export const approveStep = async (req, res) => {
 
     } catch (e) {
         console.error("Approve Step Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -253,7 +254,7 @@ export const updateApproval = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Update Approval Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -285,7 +286,7 @@ export const getAllApprovals = async (req, res) => {
 
         res.json(result);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "WORKFLOW Error");
     }
 };
 
@@ -306,7 +307,7 @@ export const deleteApproval = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Delete Approval Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -327,7 +328,7 @@ export const deleteApprovalFlow = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Delete Approval Flow Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -362,7 +363,7 @@ export const updateApprovalFlow = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Update Approval Flow Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };
 
@@ -396,6 +397,6 @@ export const resetApprovalStep = async (req, res) => {
         res.json({ success: true });
     } catch (e) {
         console.error("Reset Approval Step Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "WORKFLOW Error");
     }
 };

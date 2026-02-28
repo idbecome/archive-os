@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
 import XLSX from 'xlsx';
@@ -9,7 +10,7 @@ export const getTaxObjects = async (req, res) => {
         const objects = await knex('master_tax_objects').select('*');
         res.json(objects);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "TAX Error");
     }
 };
 
@@ -27,7 +28,7 @@ export const createTaxObject = async (req, res) => {
         await systemLog('Admin', "Create Tax Object", `Created: ${name} (${code})`);
         res.json({ id });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -46,7 +47,7 @@ export const updateTaxObject = async (req, res) => {
         await systemLog('Admin', "Update Tax Object", `Updated: ${name} (ID: ${id})`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -58,7 +59,7 @@ export const deleteTaxObject = async (req, res) => {
         await systemLog('Admin', "Delete Tax Object", `Deleted: ${obj?.name || id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -73,7 +74,7 @@ export const getTaxAudits = async (req, res) => {
         }));
         res.json(parsedAudits);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "TAX Error");
     }
 };
 
@@ -90,7 +91,7 @@ export const createTaxAudit = async (req, res) => {
         await systemLog('Admin', "Create Audit", `Started audit for: ${data.title}`);
         res.json({ success: true, id: data.id });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -104,7 +105,7 @@ export const updateAuditStatus = async (req, res) => {
         });
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -122,7 +123,7 @@ export const updateTaxAudit = async (req, res) => {
         await systemLog('Admin', "Update Audit", `Updated audit ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -135,7 +136,7 @@ export const deleteTaxAudit = async (req, res) => {
         await systemLog('Admin', "Delete Audit", `Deleted audit ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -149,7 +150,7 @@ export const getTaxSummaries = async (req, res) => {
         }));
         res.json(parsedItems);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "TAX Error");
     }
 };
 
@@ -192,7 +193,7 @@ export const upsertTaxSummary = async (req, res) => {
         res.json({ success: true, id: recordId });
     } catch (e) {
         console.error("Upsert Tax Summary Error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -203,7 +204,7 @@ export const deleteTaxSummary = async (req, res) => {
         await systemLog('Admin', "Delete Tax Summary", `Deleted record ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -213,7 +214,7 @@ export const getTaxWp = async (req, res) => {
         const rows = await knex('tax_objects').select('*').orderBy('created_at', 'desc');
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "TAX Error");
     }
 };
 
@@ -223,7 +224,7 @@ export const createTaxWp = async (req, res) => {
         await systemLog('Admin', "Create Tax WP", `Created entry for: ${req.body.name}`);
         res.json({ id });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -234,7 +235,7 @@ export const updateTaxWp = async (req, res) => {
         await systemLog('Admin', "Update Tax WP", `Updated ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -243,7 +244,7 @@ export const deleteTaxWp = async (req, res) => {
         await knex('tax_objects').where('id', req.params.id).del();
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -253,7 +254,7 @@ export const deleteAllTaxWp = async (req, res) => {
         await systemLog('Admin', "Delete All Tax WP", "Cleared all WP data");
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -266,7 +267,7 @@ export const getAuditNotes = async (req, res) => {
             .orderBy('timestamp', 'asc');
         res.json(notes);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "TAX Error");
     }
 };
 
@@ -301,7 +302,7 @@ export const addAuditNote = async (req, res) => {
         await systemLog(user || 'System', "Add Audit Note", `Added note to audit ${id} step ${stepIndex}`);
         res.json({ success: true, id: noteId });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -370,7 +371,7 @@ export const importTaxObjects = async (req, res) => {
     } catch (e) {
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
         console.error("Import Master fatal error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };
 
@@ -431,6 +432,6 @@ export const importTaxWp = async (req, res) => {
         res.json({ message: `Berhasil mengimport ${formattedData.length} data wajib pajak` });
     } catch (e) {
         console.error("Import WP error:", e);
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "TAX Error");
     }
 };

@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import { knex } from '../db.js';
 import {
     generateEmbedding,
@@ -32,7 +33,7 @@ export const searchDocuments = async (req, res) => {
         res.json(docs);
 
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "SEARCH Error");
     }
 };
 
@@ -170,7 +171,7 @@ export const chatWithAI = async (req, res) => {
 
     } catch (err) {
         console.error("AI Error:", err);
-        res.status(500).json({ error: "AI Service Error" });
+        handleError(res, new Error("AI Service Error"), "SEARCH Error");
     }
 };
 
@@ -317,6 +318,6 @@ export const semanticSearch = async (req, res) => {
 
     } catch (err) {
         console.error("Hybrid Search Error:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "SEARCH Error");
     }
 };

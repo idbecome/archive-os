@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import { knex } from '../db.js';
 import { JOB_STATUS } from '../constants/status.js';
 
@@ -37,7 +38,7 @@ export const getOCRStatus = async (req, res) => {
         });
     } catch (err) {
         console.error("[getOCRStatus] Error:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "OCR Error");
     }
 };
 
@@ -63,7 +64,7 @@ export const getOCRQueue = async (req, res) => {
             total: jobs.length
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "OCR Error");
     }
 };
 
@@ -79,7 +80,7 @@ export const retryOCRJob = async (req, res) => {
         });
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "OCR Error");
     }
 };
 
@@ -88,6 +89,6 @@ export const clearCompletedJobs = async (req, res) => {
         await knex('job_queue').where('status', JOB_STATUS.COMPLETED).del();
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "OCR Error");
     }
 };

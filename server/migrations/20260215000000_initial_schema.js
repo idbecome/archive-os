@@ -15,10 +15,18 @@ async function safeCreateTable(knex, tableName, builder) {
 // Helper: Add unique index defensively
 async function safeAddUnique(knex, tableName, column) {
     try {
+        const [indexes] = await knex.raw('SHOW INDEX FROM ?? WHERE Column_name = ? AND Non_unique = 0', [tableName, column]);
+        if (indexes && indexes.length > 0) {
+            console.log(`  ⏭️  Unique index already exists on ${tableName}.${column}`);
+            return;
+        }
         await knex.schema.alterTable(tableName, (table) => {
             table.unique(column);
         });
-    } catch { /* Index already exists, skip */ }
+        console.log(`  ✅ Added unique index to ${tableName}.${column}`);
+    } catch (err) {
+        console.warn(`  ⚠️  Failed to add unique index to ${tableName}.${column}: ${err.message}`);
+    }
 }
 
 export const up = async (knex) => {
@@ -247,6 +255,8 @@ export const up = async (knex) => {
         table.text('note');
         table.text('attachment_url');
         table.text('attachment_name');
+        table.text('instruction');
+        table.specificType('vector', 'LONGTEXT');
         table.foreign('approval_id').references('id').inTable('document_approvals').onDelete('CASCADE');
     });
 

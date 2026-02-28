@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import path from 'path';
 import fs from 'fs';
 import { knex } from '../db.js';
@@ -22,7 +23,7 @@ export const getDocuments = async (req, res) => {
         const rows = await query;
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -33,7 +34,7 @@ export const getDocumentById = async (req, res) => {
         if (!doc) return res.status(404).json({ error: "Document not found" });
         return res.json(doc);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -218,7 +219,7 @@ export const uploadDocument = async (req, res) => {
         });
     } catch (err) {
         console.error("DB INSERT ERROR:", err.message);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -252,7 +253,7 @@ export const deleteDocument = async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error("[Delete Error] Failed to delete document:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -279,7 +280,7 @@ export const moveDocument = async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error("[Move] Error:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -318,7 +319,7 @@ export const copyDocument = async (req, res) => {
         res.json({ success: true, newId: newDocId });
     } catch (err) {
         console.error("[Copy] Error:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -392,7 +393,7 @@ export const restoreVersion = async (req, res) => {
 
     } catch (err) {
         console.error("[Restore Error]:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 export const updateDocument = async (req, res) => {
@@ -475,7 +476,7 @@ export const updateDocument = async (req, res) => {
         res.json({ success: true, id, ...updateData });
     } catch (err) {
         console.error("Update Error:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 // --- COMMENT LOGIC ---
@@ -508,7 +509,7 @@ export const getComments = async (req, res) => {
         res.json(processedComments);
     } catch (err) {
         console.error("[GetComments Error]:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -552,7 +553,7 @@ export const addComment = async (req, res) => {
         res.json({ success: true, comment: responseComment });
     } catch (err) {
         console.error("[AddComment Error]:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -631,7 +632,7 @@ export const promoteCommentAttachment = async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error("[PromoteComment Error]:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };
 
@@ -677,6 +678,6 @@ export const streamDocument = async (req, res) => {
 
     } catch (err) {
         console.error("[Stream Error]:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "DOCUMENT Error");
     }
 };

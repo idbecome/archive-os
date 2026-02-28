@@ -437,31 +437,7 @@ try {
     // initDb sudah menangani migrasi dan seeding awal secara terpadu
     await initDb();
 
-    // --- POST-MIGRATION SELF-HEALING (CRITICAL) ---
-    // Dijalankan SETELAH migrasi agar tabel yang baru dibuat (seperti 'invoices') bisa diproses
-    const tablesToFix = ['documents', 'invoices', 'approval_steps'];
-    for (const tableName of tablesToFix) {
-        try {
-            const hasTable = await knex.schema.hasTable(tableName);
-            if (hasTable) {
-                const hasVector = await knex.schema.hasColumn(tableName, 'vector');
-                if (!hasVector) {
-                    logger.info(`Self-Healing: Menambahkan kolom 'vector' ke tabel ${tableName}...`);
-                    await knex.schema.alterTable(tableName, table => table.text('vector'));
-                    logger.info(`✅ Kolom 'vector' berhasil ditambahkan ke ${tableName}.`);
-                }
-            }
-            if (tableName === 'approval_steps') {
-                const hasInstruction = await knex.schema.hasColumn(tableName, 'instruction');
-                if (!hasInstruction) {
-                    logger.info(`Self-Healing: Menambahkan kolom 'instruction' ke tabel ${tableName}...`);
-                    await knex.schema.alterTable(tableName, table => table.text('instruction'));
-                }
-            }
-        } catch (err) {
-            logger.error(`❌ Gagal menjalankan Self-Healing pada tabel ${tableName}:`, err.message);
-        }
-    }
+
 
     server.listen(PORT, '0.0.0.0', () => {
         logger.info(`Server started on http://0.0.0.0:${PORT}`);

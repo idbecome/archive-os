@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import { knex } from '../db.js';
 
 export const getGuides = async (req, res) => {
@@ -48,7 +49,7 @@ export const createGuide = async (req, res) => {
         });
         res.json({ id });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "PUSTAKA Error");
     }
 };
 
@@ -68,7 +69,7 @@ export const updatePustakaGuide = async (req, res) => {
         });
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "PUSTAKA Error");
     }
 };
 
@@ -83,7 +84,7 @@ export const deletePustakaGuide = async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error("Delete Guide Error:", err);
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "PUSTAKA Error");
     }
 };
 
@@ -112,7 +113,7 @@ export const createPustakaSlide = async (req, res) => {
         });
         res.json({ id });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "PUSTAKA Error");
     }
 };
 
@@ -122,6 +123,6 @@ export const deleteSlidesByGuideId = async (req, res) => {
         await knex('pustaka_slides').where('guide_id', guideId).del();
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "PUSTAKA Error");
     }
 };

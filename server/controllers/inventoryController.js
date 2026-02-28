@@ -1,3 +1,4 @@
+import { handleError } from '../utils/errorHandler.js';
 import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
 
@@ -18,7 +19,7 @@ export const getInventory = async (req, res) => {
         const rows = await query;
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "INVENTORY Error");
     }
 };
 
@@ -27,7 +28,7 @@ export const getBoxes = async (req, res) => {
         const boxes = await knex('boxes').select('*');
         res.json(boxes);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "INVENTORY Error");
     }
 };
 
@@ -42,7 +43,7 @@ export const createBox = async (req, res) => {
         await systemLog('Admin', "Create Box", `Created box: ${box_id}`);
         res.json({ id });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "INVENTORY Error");
     }
 };
 
@@ -68,7 +69,7 @@ export const updateInventoryItem = async (req, res) => {
         await systemLog('System', "Update Inventory", `Updated item ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "INVENTORY Error");
     }
 };
 
@@ -88,7 +89,7 @@ export const getAnalytics = async (req, res) => {
             recentActivity
         });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "INVENTORY Error");
     }
 };
 
@@ -97,7 +98,7 @@ export const getExternalInventory = async (req, res) => {
         const rows = await knex('external_items').select('*');
         res.json(rows);
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "INVENTORY Error");
     }
 };
 
@@ -115,7 +116,7 @@ export const createExternalItem = async (req, res) => {
         await systemLog('System', "External Inventory", `Added item: ${boxId} to ${destination}`);
         res.json({ id });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "INVENTORY Error");
     }
 };
 
@@ -126,7 +127,7 @@ export const deleteExternalItem = async (req, res) => {
         await systemLog('System', "External Inventory", `Deleted item ID: ${id}`);
         res.json({ success: true });
     } catch (e) {
-        res.status(500).json({ error: e.message });
+        handleError(res, e, "INVENTORY Error");
     }
 };
 
@@ -185,6 +186,6 @@ export const moveInventoryItem = async (req, res) => {
         await systemLog(user || 'System', "Move Inventory", `Moved box from #${sourceId} to #${targetId}`);
         res.json({ success: true });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        handleError(res, err, "INVENTORY Error");
     }
 };
