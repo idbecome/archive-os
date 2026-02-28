@@ -75,7 +75,7 @@ app.get('/api/approvals', checkAuth, async (req, res) => {
         logger.info(`Fetching approvals for user: ${req.user?.username}`);
         // Ambil data dari tabel document_approvals (sesuai migrasi)
         const approvals = await knex('document_approvals').select('*').orderBy('created_at', 'desc');
-        
+
         // Ambil steps secara relasional untuk setiap approval
         const results = await Promise.all(approvals.map(async (app) => {
             const steps = await knex('approval_steps')
@@ -83,7 +83,7 @@ app.get('/api/approvals', checkAuth, async (req, res) => {
                 .orderBy('step_index', 'asc');
             return { ...app, steps };
         }));
-        
+
         res.json(results);
     } catch (err) {
         console.error("Error fetching approvals:", err);
@@ -96,7 +96,7 @@ app.post('/api/approvals', checkAuth, async (req, res) => {
     try {
         logger.info(`User ${req.user?.username} is creating a new approval`);
         const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, flow_id, steps, ocr_content } = req.body;
-        
+
         // 1. Simpan ke tabel induk document_approvals
         const [id] = await trx('document_approvals').insert({
             title, description, division, requester_name, requester_username,
@@ -134,7 +134,7 @@ app.put('/api/approvals/:id', checkAuth, async (req, res) => {
     const trx = await knex.transaction();
     try {
         const { title, description, division, attachment_url, attachment_name, flow_id, steps } = req.body;
-        
+
         // Update tabel induk
         await trx('document_approvals').where({ id }).update({
             title, description, division, attachment_url, attachment_name, flow_id,
@@ -198,8 +198,8 @@ app.post('/api/approvals/:id/action', checkAuth, upload.single('file'), async (r
             if (approval.current_step_index === steps.length - 1) {
                 await trx('document_approvals').where({ id }).update({ status: 'Approved' });
             } else {
-                await trx('document_approvals').where({ id }).update({ 
-                    current_step_index: approval.current_step_index + 1 
+                await trx('document_approvals').where({ id }).update({
+                    current_step_index: approval.current_step_index + 1
                 });
             }
         }
@@ -259,7 +259,7 @@ app.delete('/api/approvals/:id', checkAuth, async (req, res) => {
 
 // Gunakan legacyRoutes hanya untuk fitur yang belum di-override.
 // Pastikan rute /approvals di dalam legacyRoutes.js sudah dinonaktifkan.
-app.use('/api', legacyRoutes); 
+app.use('/api', legacyRoutes);
 
 app.post('/api/upload', upload.single('file'), uploadDocument); // Legacy Alias
 
@@ -274,11 +274,33 @@ app.use('/api/pustaka', pustakaRoutes);
 // --- SOP FLOWS (STANDARDIZATION) ROUTES ---
 app.get('/api/sop-flows', checkAuth, async (req, res) => {
     try {
-        const flows = await knex('sop_flows').select('*').orderBy('created_at', 'desc');
+        const { username, role, department } = req.user;
+
+        let query = knex('sop_flows');
+
+        // Filtering logic:
+        if (role !== 'admin') {
+            query = query.where(function () {
+                this.where('privacy_type', 'public')
+                    .orWhere('owner', username)
+                    .orWhere(function () {
+                        this.where('privacy_type', 'department')
+                            .andWhere('allowed_departments', 'like', `%${department}%`);
+                    })
+                    .orWhere(function () {
+                        this.where('privacy_type', 'specific_users')
+                            .andWhere('allowed_users', 'like', `%${username}%`);
+                    });
+            });
+        }
+
+        const flows = await query.orderBy('created_at', 'desc');
         const parsed = flows.map(f => ({
             ...f,
             steps: typeof f.steps === 'string' ? JSON.parse(f.steps || '[]') : (f.steps || []),
-            visual_config: typeof f.visual_config === 'string' ? JSON.parse(f.visual_config || '{"nodes":[],"edges":[]}') : (f.visual_config || { nodes: [], edges: [] })
+            visual_config: typeof f.visual_config === 'string' ? JSON.parse(f.visual_config || '{"nodes":[],"edges":[]}') : (f.visual_config || { nodes: [], edges: [] }),
+            allowed_departments: typeof f.allowed_departments === 'string' ? JSON.parse(f.allowed_departments || '[]') : (f.allowed_departments || []),
+            allowed_users: typeof f.allowed_users === 'string' ? JSON.parse(f.allowed_users || '[]') : (f.allowed_users || [])
         }));
         res.json(parsed);
     } catch (err) {
@@ -288,7 +310,7 @@ app.get('/api/sop-flows', checkAuth, async (req, res) => {
 
 app.post('/api/sop-flows', checkAuth, async (req, res) => {
     try {
-        const { title, description, category, steps, visual_config, owner } = req.body;
+        const { title, description, category, steps, visual_config, owner, privacy_type, allowed_departments, allowed_users } = req.body;
         const [id] = await knex('sop_flows').insert({
             title,
             description,
@@ -296,6 +318,9 @@ app.post('/api/sop-flows', checkAuth, async (req, res) => {
             steps: JSON.stringify(steps || []),
             visual_config: JSON.stringify(visual_config || {}),
             owner,
+            privacy_type: privacy_type || 'public',
+            allowed_departments: JSON.stringify(allowed_departments || []),
+            allowed_users: JSON.stringify(allowed_users || []),
             created_at: new Date(),
             updated_at: new Date()
         });
@@ -308,13 +333,16 @@ app.post('/api/sop-flows', checkAuth, async (req, res) => {
 app.put('/api/sop-flows/:id', checkAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        const { title, description, category, steps, visual_config } = req.body;
+        const { title, description, category, steps, visual_config, privacy_type, allowed_departments, allowed_users } = req.body;
         const affected = await knex('sop_flows').where({ id }).update({
             title,
             description,
             category,
             steps: JSON.stringify(steps || []),
             visual_config: JSON.stringify(visual_config || {}),
+            privacy_type,
+            allowed_departments: JSON.stringify(allowed_departments || []),
+            allowed_users: JSON.stringify(allowed_users || []),
             updated_at: new Date()
         });
         if (!affected) return res.status(404).json({ error: "SOP Flow tidak ditemukan" });
@@ -407,7 +435,7 @@ app.use((err, req, res, next) => {
 // Ensure DB migration or init logic is handled if needed
 try {
     // initDb sudah menangani migrasi dan seeding awal secara terpadu
-    await initDb(); 
+    await initDb();
 
     // --- POST-MIGRATION SELF-HEALING (CRITICAL) ---
     // Dijalankan SETELAH migrasi agar tabel yang baru dibuat (seperti 'invoices') bisa diproses

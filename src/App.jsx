@@ -2991,7 +2991,8 @@ export default function App() {
                           activeTab === 'tax-calculation' ? 'Kalkulasi Pajak' :
                             activeTab === 'master' ? 'Master Data' :
                               activeTab === 'approvals' ? 'Document Approval' :
-                                activeTab === 'pustaka' ? 'Pustaka Pengetahuan' : 'Digital Vault'}
+                                activeTab === 'pustaka' ? 'Pustaka Pengetahuan' :
+                                  activeTab === 'flow' ? 'SOP List Menu' : 'Digital Vault'}
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
                 {activeTab === 'dashboard' ? 'Dashboard' :
@@ -3002,7 +3003,8 @@ export default function App() {
                           activeTab === 'tax-calculation' ? 'Kalkulasi & Pelaporan Pajak' :
                             activeTab === 'master' ? 'Pengaturan Sistem' :
                               activeTab === 'approvals' ? 'Sistem Persetujuan Dokumen Berjenjang' :
-                                activeTab === 'pustaka' ? 'Pusat Edukasi & Panduan Kerja' : 'Gudang Arsip Utama'}
+                                activeTab === 'pustaka' ? 'Pusat Edukasi & Panduan Kerja' :
+                                  activeTab === 'flow' ? 'Standar Operasional Prosedur' : 'Gudang Arsip Utama'}
               </p>
             </div>
 
@@ -3198,6 +3200,7 @@ export default function App() {
                 currentUser={currentUser}
                 hasPermission={hasPermission}
                 users={users}
+                departments={departments}
                 syncSopFolder={syncSopFolder}
               />
             )}

@@ -84,8 +84,31 @@ const initDb = async () => {
                 table.text('steps').nullable();
                 table.text('visual_config').nullable();
                 table.string('owner').nullable();
+                table.string('privacy_type', 50).defaultTo('public');
+                table.text('allowed_departments').nullable();
+                table.text('allowed_users', 50).nullable();
                 table.timestamps(true, true);
             });
+        } else {
+            // Patch existing sop_flows table
+            const columnsToAdd = [
+                { name: 'privacy_type', type: 'string', size: 50, default: 'public' },
+                { name: 'allowed_departments', type: 'text' },
+                { name: 'allowed_users', type: 'text' }
+            ];
+            for (const col of columnsToAdd) {
+                const exists = await knex.schema.hasColumn('sop_flows', col.name);
+                if (!exists) {
+                    await knex.schema.alterTable('sop_flows', table => {
+                        let builder;
+                        if (col.type === 'string') builder = table.string(col.name, col.size);
+                        else builder = table.text(col.name);
+
+                        if (col.default !== undefined) builder.defaultTo(col.default);
+                        else builder.nullable();
+                    });
+                }
+            }
         }
     } catch (e) { console.warn('SOP Flows self-healing error:', e.message); }
 
@@ -203,13 +226,13 @@ const initDb = async () => {
 
         // Seed Inventory Slots - Self Healing Logic
         // Memastikan slot 1 sampai 100 selalu tersedia di database
-        const targetSlots = 100; 
+        const targetSlots = 100;
         const existingSlots = await knex('inventory').select('id');
         const existingIds = new Set(existingSlots.map(s => s.id));
-        
+
         const missingSlots = [];
         const racks = ['A', 'B', 'C', 'D', 'E'];
-        
+
         for (let i = 1; i <= targetSlots; i++) {
             if (!existingIds.has(i)) {
                 const idx = i - 1;
@@ -218,7 +241,7 @@ const initDb = async () => {
                 const remainder = idx % 20;
                 const shelf = Math.floor(remainder / 4) + 1;
                 const position = (remainder % 4) + 1;
-                
+
                 missingSlots.push({
                     id: i,
                     status: 'EMPTY',
@@ -293,7 +316,7 @@ const initDb = async () => {
                         if (col.type === 'boolean') colBuilder = table.boolean(col.name);
                         else if (col.type === 'string') colBuilder = table.string(col.name);
                         else if (col.type === 'decimal') colBuilder = table.decimal(col.name, ...col.precision);
-                        
+
                         if (col.default !== undefined) colBuilder.defaultTo(col.default);
                         else colBuilder.nullable();
                     });
@@ -351,7 +374,7 @@ const initDb = async () => {
                         if (col.type === 'boolean') colBuilder = table.boolean(col.name);
                         else if (col.type === 'decimal') colBuilder = table.decimal(col.name, ...col.precision);
                         else colBuilder = table.string(col.name);
-                        
+
                         colBuilder.defaultTo(col.default);
                     });
                 }
@@ -360,7 +383,7 @@ const initDb = async () => {
             try {
                 const [indexes] = await knex.raw("SHOW INDEX FROM tax_wp WHERE Column_name = 'identity_number'");
                 const isUnique = indexes.some(idx => idx.Non_unique === 0);
-                
+
                 if (!isUnique) {
                     console.log('Self-healing: Adding unique constraint to tax_wp.identity_number...');
                     await knex.schema.alterTable('tax_wp', table => {
@@ -395,7 +418,7 @@ const initDb = async () => {
             const columnInfo = await knex('tax_audit_notes').columnInfo();
             // Check if ID is varchar/string/text
             const isIdString = columnInfo.id && (String(columnInfo.id.type).toLowerCase().includes('char') || String(columnInfo.id.type).toLowerCase().includes('text'));
-            
+
             if (isIdString) {
                 console.log('Self-healing: Detected incompatible ID type (String) in tax_audit_notes. Recreating table as Auto-Increment...');
                 await knex.schema.dropTable('tax_audit_notes');
@@ -412,7 +435,7 @@ const initDb = async () => {
                 table.string('user').notNullable();
                 table.text('text').notNullable();
                 table.timestamp('timestamp').defaultTo(knex.fn.now());
-                
+
                 // CamelCase columns to match backend controller
                 table.string('attachmentName').nullable();
                 table.string('attachmentUrl').nullable();

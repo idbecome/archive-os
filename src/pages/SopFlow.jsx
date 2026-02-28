@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GitBranch, Plus, Trash2, Edit3, Search, Info } from 'lucide-react';
+import { GitBranch, Plus, Trash2, Edit3, Search, Info, Globe, Lock, Users, Shield } from 'lucide-react';
 import { Card } from '../components/ui/Card';
 import { sopService } from '../services/sopService';
 import { parseApiError } from '../utils/errorHandler';
@@ -7,7 +7,7 @@ import Modal from '../components/common/Modal';
 import WorkflowDesigner from '../components/workflow/WorkflowDesigner';
 import WorkflowViewer from '../components/workflow/WorkflowViewer';
 
-export default function SopFlow({ currentUser, hasPermission, users = [], syncSopFolder }) {
+export default function SopFlow({ currentUser, hasPermission, users = [], departments = [], syncSopFolder }) {
     const [flows, setFlows] = useState([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingFlow, setEditingFlow] = useState(null);
@@ -19,6 +19,9 @@ export default function SopFlow({ currentUser, hasPermission, users = [], syncSo
         title: '',
         description: '',
         category: 'Operasional',
+        privacy_type: 'public',
+        allowed_departments: [],
+        allowed_users: [],
         steps: [{ title: '', pic: '', documents: [] }]
     });
 
@@ -87,9 +90,16 @@ export default function SopFlow({ currentUser, hasPermission, users = [], syncSo
         }
     };
 
-    const filteredFlows = flows.filter(f =>
-        f.title.toLowerCase().includes(searchQuery.toLowerCase())
+    const filteredFlows = (flows || []).filter(f =>
+        (f.title || "").toLowerCase().includes((searchQuery || "").toLowerCase())
     );
+
+    const stats = {
+        total: (flows || []).length,
+        public: (flows || []).filter(f => (f.privacy_type || 'public') === 'public').length,
+        private: (flows || []).filter(f => f.privacy_type === 'private').length,
+        restricted: (flows || []).filter(f => f.privacy_type === 'department' || f.privacy_type === 'user').length
+    };
 
     return (
         <div className="space-y-6 animate-in fade-in duration-500">
@@ -106,13 +116,42 @@ export default function SopFlow({ currentUser, hasPermission, users = [], syncSo
                 <button
                     onClick={() => {
                         setEditingFlow(null);
-                        setForm({ title: '', description: '', category: 'Operasional', steps: [], visual_config: null });
+                        setForm({
+                            title: '',
+                            description: '',
+                            category: 'Operasional',
+                            privacy_type: 'public',
+                            allowed_departments: [],
+                            allowed_users: [],
+                            steps: [],
+                            visual_config: null
+                        });
                         setIsModalOpen(true);
                     }}
                     className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
                 >
                     <Plus size={18} /> Buat Flow SOP
                 </button>
+            </div>
+
+            {/* SUMMARY CARDS */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 animate-in slide-in-from-bottom-4 duration-700">
+                {[
+                    { label: 'Total SOP', value: stats.total, icon: GitBranch, bg: 'bg-indigo-50', darkBg: 'dark:bg-indigo-900/30', text: 'text-indigo-600', border: 'border-indigo-100' },
+                    { label: 'SOP Publik', value: stats.public, icon: Globe, bg: 'bg-emerald-50', darkBg: 'dark:bg-emerald-900/30', text: 'text-emerald-600', border: 'border-emerald-100' },
+                    { label: 'SOP Pribadi', value: stats.private, icon: Lock, bg: 'bg-orange-50', darkBg: 'dark:bg-orange-900/30', text: 'text-orange-600', border: 'border-orange-100' },
+                    { label: 'Terbatas', value: stats.restricted, icon: Shield, bg: 'bg-blue-50', darkBg: 'dark:bg-blue-900/30', text: 'text-blue-600', border: 'border-blue-100' }
+                ].map((stat, idx) => (
+                    <div key={idx} className={`bg-white/60 dark:bg-slate-900/60 backdrop-blur-xl p-4 rounded-[2rem] border ${stat.border} dark:border-slate-800/50 shadow-sm flex items-center gap-4 transition-all hover:shadow-xl hover:shadow-indigo-500/5 hover:-translate-y-1 group`}>
+                        <div className={`w-12 h-12 rounded-2xl ${stat.bg} ${stat.darkBg} flex items-center justify-center ${stat.text} transform transition-transform group-hover:rotate-12`}>
+                            <stat.icon size={22} />
+                        </div>
+                        <div>
+                            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-slate-400 mb-0.5">{stat.label}</p>
+                            <h4 className="text-xl font-black text-slate-800 dark:text-white leading-tight">{stat.value}</h4>
+                        </div>
+                    </div>
+                ))}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -127,6 +166,17 @@ export default function SopFlow({ currentUser, hasPermission, users = [], syncSo
                             <div className="flex justify-between items-start mb-4">
                                 <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 rounded-2xl text-indigo-600">
                                     <GitBranch size={24} />
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                    <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${flow.privacy_type === 'public' ? 'bg-green-100 text-green-700' :
+                                        flow.privacy_type === 'private' ? 'bg-red-100 text-red-700' :
+                                            flow.privacy_type === 'department' ? 'bg-blue-100 text-blue-700' :
+                                                'bg-amber-100 text-amber-700'
+                                        }`}>
+                                        {flow.privacy_type === 'public' ? 'PUBLIK' :
+                                            flow.privacy_type === 'private' ? 'PRIBADI' :
+                                                flow.privacy_type === 'department' ? 'DEPARTEMEN' : 'USER PILIHAN'}
+                                    </span>
                                 </div>
                             </div>
                             <h3 className="font-black text-slate-800 dark:text-white text-lg mb-1">{flow.title}</h3>
@@ -172,8 +222,8 @@ export default function SopFlow({ currentUser, hasPermission, users = [], syncSo
                 noPadding
             >
                 <div className="flex flex-col h-[85vh]">
-                    <div className="p-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 grid grid-cols-2 gap-6">
-                        <div className="space-y-2">
+                    <div className="p-6 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                        <div className="space-y-2 lg:col-span-2">
                             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Judul SOP</label>
                             <input
                                 className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-black"
@@ -192,6 +242,77 @@ export default function SopFlow({ currentUser, hasPermission, users = [], syncSo
                                 <option>Operasional</option><option>Finance</option><option>HR</option><option>IT</option>
                             </select>
                         </div>
+                        <div className="space-y-2">
+                            <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Privacy</label>
+                            <select
+                                className="w-full px-5 py-3 bg-slate-50 dark:bg-slate-800 border-2 border-transparent focus:border-indigo-500 rounded-2xl outline-none dark:text-white font-bold appearance-none"
+                                value={form.privacy_type}
+                                onChange={e => setForm({ ...form, privacy_type: e.target.value })}
+                            >
+                                <option value="public">Publik</option>
+                                <option value="private">Pribadi</option>
+                                <option value="department">Departemen</option>
+                                <option value="specific_users">User Pilihan</option>
+                            </select>
+                        </div>
+
+                        {form.privacy_type === 'department' && (
+                            <div className="lg:col-span-4 space-y-2 animate-in fade-in slide-in-from-top-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Departemen yang Diizinkan</label>
+                                <div className="flex flex-wrap gap-2 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border-2 border-transparent">
+                                    {(departments || []).map(dept => {
+                                        const isSelected = (form.allowed_departments || []).includes(dept.name);
+                                        return (
+                                            <button
+                                                key={dept.id}
+                                                onClick={() => {
+                                                    const current = form.allowed_departments || [];
+                                                    const next = isSelected
+                                                        ? current.filter(n => n !== dept.name)
+                                                        : [...current, dept.name];
+                                                    setForm({ ...form, allowed_departments: next });
+                                                }}
+                                                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${isSelected
+                                                    ? 'bg-indigo-600 text-white shadow-md'
+                                                    : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:border-indigo-300'
+                                                    }`}
+                                            >
+                                                {dept.name}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
+
+                        {form.privacy_type === 'specific_users' && (
+                            <div className="lg:col-span-4 space-y-2 animate-in fade-in slide-in-from-top-2">
+                                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">User yang Diizinkan</label>
+                                <div className="flex flex-wrap gap-2 p-4 bg-slate-50 dark:bg-slate-800 rounded-2xl border-2 border-transparent">
+                                    {(users || []).map(user => {
+                                        const isSelected = (form.allowed_users || []).includes(user.username);
+                                        return (
+                                            <button
+                                                key={user.id}
+                                                onClick={() => {
+                                                    const current = form.allowed_users || [];
+                                                    const next = isSelected
+                                                        ? current.filter(u => u !== user.username)
+                                                        : [...current, user.username];
+                                                    setForm({ ...form, allowed_users: next });
+                                                }}
+                                                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${isSelected
+                                                    ? 'bg-indigo-600 text-white shadow-md'
+                                                    : 'bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-600 hover:border-indigo-300'
+                                                    }`}
+                                            >
+                                                {user.name || user.username}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
                     </div>
 
                     <div className="flex-1 min-h-0">
