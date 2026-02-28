@@ -1,5 +1,5 @@
 import React from 'react';
-import { Grid3x3, Package, Clock, AlertCircle, Download, FileSpreadsheet, Search, FileText, Truck, Sparkles, TrendingUp, ShieldAlert, RefreshCw } from 'lucide-react';
+import { Grid3x3, Package, Clock, AlertCircle, Download, FileSpreadsheet, Search, FileText, Truck, Sparkles, TrendingUp, ShieldAlert, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
 import InventoryGrid from '../components/inventory/InventoryGrid';
 import ExternalInventoryTable from '../components/inventory/ExternalInventoryTable';
@@ -11,6 +11,14 @@ export default function Inventory({
     hasPermission, activeInvTab, setActiveInvTab, externalItems, isProcessing,
     ocrStats, onRestoreExternal, onViewExternal, inventoryIssues = []
 }) {
+    const [currentPage, setCurrentPage] = React.useState(1);
+    const itemsPerPage = 25;
+    const pageCount = Math.ceil(TOTAL_SLOTS / itemsPerPage);
+
+    // Reset page when search query changes to avoid being on an empty page
+    React.useEffect(() => {
+        setCurrentPage(1);
+    }, [inventorySearchQuery]);
 
     // Unified match helper for both Internal Slot and External Item
     const isMatch = (item) => {
@@ -332,15 +340,55 @@ export default function Inventory({
 
                 {/* GRID */}
                 {activeInvTab === 'internal' && (
-                    <InventoryGrid
-                        TOTAL_SLOTS={TOTAL_SLOTS}
-                        inventory={inventory}
-                        handleSlotClick={handleSlotClick}
-                        getStatusStyle={getStatusStyle}
-                        isMatch={isMatch}
-                        inventorySearchQuery={inventorySearchQuery}
-                        ocrStats={ocrStats}
-                    />
+                    <>
+                        <InventoryGrid
+                            TOTAL_SLOTS={TOTAL_SLOTS}
+                            inventory={inventory}
+                            handleSlotClick={handleSlotClick}
+                            getStatusStyle={getStatusStyle}
+                            isMatch={isMatch}
+                            inventorySearchQuery={inventorySearchQuery}
+                            ocrStats={ocrStats}
+                            currentPage={currentPage}
+                            itemsPerPage={itemsPerPage}
+                        />
+
+                        {/* PAGINATION CONTROLS */}
+                        {!inventorySearchQuery && (
+                            <div className="mt-8 flex items-center justify-center gap-4">
+                                <button
+                                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                    disabled={currentPage === 1}
+                                    className="p-2.5 rounded-xl bg-white/50 dark:bg-slate-800/50 border border-white/40 dark:border-white/10 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white dark:hover:bg-slate-700 transition-all shadow-sm"
+                                >
+                                    <ChevronLeft size={20} />
+                                </button>
+
+                                <div className="flex items-center gap-2">
+                                    {Array.from({ length: pageCount }).map((_, i) => (
+                                        <button
+                                            key={i}
+                                            onClick={() => setCurrentPage(i + 1)}
+                                            className={`w-10 h-10 rounded-xl text-sm font-bold transition-all ${currentPage === i + 1
+                                                    ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-500/30 scale-110'
+                                                    : 'bg-white/50 dark:bg-slate-800/50 text-slate-500 hover:bg-white dark:hover:bg-slate-700 border border-white/40 dark:border-white/10'
+                                                }`}
+                                        >
+                                            {i + 1}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <button
+                                    onClick={() => setCurrentPage(prev => Math.min(pageCount, prev + 1))}
+                                    disabled={currentPage === pageCount}
+                                    className="p-2.5 rounded-xl bg-white/50 dark:bg-slate-800/50 border border-white/40 dark:border-white/10 disabled:opacity-30 disabled:cursor-not-allowed hover:bg-white dark:hover:bg-slate-700 transition-all shadow-sm"
+                                >
+                                    <ChevronRight size={20} />
+                                </button>
+                            </div>
+                        )}
+                    </>
                 )}
 
                 {/* EXTERNAL / INDOARSIP TAB CONTENT */}

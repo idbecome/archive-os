@@ -25,6 +25,7 @@ import { checkAuth } from './middleware/auth.js';
 import { UPLOADS_DIR, upload } from './config/upload.js';
 import { logger } from './utils/logger.js';
 import { uploadDocument } from './controllers/documentController.js';
+import { vectorStore } from './ai_search.js';
 
 // Setup
 const __filename = fileURLToPath(import.meta.url);
@@ -42,7 +43,7 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-const PORT = 5005;
+const PORT = process.env.PORT || 5005;
 
 // Middleware
 app.use(cors({
@@ -431,8 +432,17 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: err.message });
 });
 
-// Import Fast In-Memory Vector Store
-import { vectorStore } from './ai_search.js';
+// Handle Server Errors (e.g. EADDRINUSE)
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.error(`CRITICAL: Port ${PORT} is already in use by another process.`);
+    } else {
+        console.error(`SERVER ERROR: ${err.message}`);
+    }
+    process.exit(1);
+});
+
+
 
 // Start Server
 // Ensure DB migration or init logic is handled if needed
