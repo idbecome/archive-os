@@ -39,6 +39,23 @@ export default function SopFlow({ currentUser, hasPermission, users = [], depart
 
     useEffect(() => { fetchFlows(); }, []);
 
+    // Real-time sync: auto-refresh when another client modifies SOP data
+    useEffect(() => {
+        let cleanup;
+        import('../services/socketService.js').then(({ getSocket }) => {
+            const socket = getSocket();
+            const handler = ({ channel }) => {
+                if (channel === 'sop-flows') {
+                    console.log('[Socket.IO] SOP Flow data changed — refetching...');
+                    fetchFlows();
+                }
+            };
+            socket.on('data:changed', handler);
+            cleanup = () => socket.off('data:changed', handler);
+        });
+        return () => cleanup?.();
+    }, []);
+
     const handleSaveVisual = async (updatedForm) => {
         if (!updatedForm.title) return alert("Judul SOP wajib diisi!");
 

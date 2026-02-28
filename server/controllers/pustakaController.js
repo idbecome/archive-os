@@ -47,6 +47,7 @@ export const createGuide = async (req, res) => {
             allowed_users: JSON.stringify(allowed_users || []),
             owner
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'pustaka' });
         res.json({ id });
     } catch (err) {
         handleError(res, err, "PUSTAKA Error");
@@ -67,6 +68,7 @@ export const updatePustakaGuide = async (req, res) => {
             allowed_depts: JSON.stringify(allowed_depts || []),
             allowed_users: JSON.stringify(allowed_users || [])
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'pustaka' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "PUSTAKA Error");
@@ -81,6 +83,7 @@ export const deletePustakaGuide = async (req, res) => {
 
         // Then delete the guide
         await knex('pustaka_guides').where('id', id).del();
+        req.app.get('io')?.emit('data:changed', { channel: 'pustaka' });
         res.json({ success: true });
     } catch (err) {
         console.error("Delete Guide Error:", err);
@@ -111,6 +114,7 @@ export const createPustakaSlide = async (req, res) => {
             image: image_url || image, // Support both naming conventions
             step_order: order_index || 0
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'pustaka' });
         res.json({ id });
     } catch (err) {
         handleError(res, err, "PUSTAKA Error");
@@ -121,6 +125,7 @@ export const deleteSlidesByGuideId = async (req, res) => {
     try {
         const { guideId } = req.params;
         await knex('pustaka_slides').where('guide_id', guideId).del();
+        req.app.get('io')?.emit('data:changed', { channel: 'pustaka' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "PUSTAKA Error");

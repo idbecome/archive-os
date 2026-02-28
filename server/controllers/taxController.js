@@ -26,6 +26,7 @@ export const createTaxObject = async (req, res) => {
             markup_mode: markup_mode || 'none'
         });
         await systemLog('Admin', "Create Tax Object", `Created: ${name} (${code})`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ id });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -45,6 +46,7 @@ export const updateTaxObject = async (req, res) => {
             markup_mode: markup_mode || 'none'
         });
         await systemLog('Admin', "Update Tax Object", `Updated: ${name} (ID: ${id})`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -57,6 +59,7 @@ export const deleteTaxObject = async (req, res) => {
         const obj = await knex('master_tax_objects').where('id', id).first();
         await knex('master_tax_objects').where('id', id).del();
         await systemLog('Admin', "Delete Tax Object", `Deleted: ${obj?.name || id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -89,6 +92,7 @@ export const createTaxAudit = async (req, res) => {
 
         await knex('tax_audits').insert(data);
         await systemLog('Admin', "Create Audit", `Started audit for: ${data.title}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true, id: data.id });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -103,6 +107,7 @@ export const updateAuditStatus = async (req, res) => {
             status,
             notes: remarks ? knex.raw('CONCAT(notes, ?)', [`\n[${new Date().toISOString()}] ${remarks}`]) : undefined
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -121,6 +126,7 @@ export const updateTaxAudit = async (req, res) => {
 
         await knex('tax_audits').where('id', id).update(data);
         await systemLog('Admin', "Update Audit", `Updated audit ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -134,6 +140,7 @@ export const deleteTaxAudit = async (req, res) => {
         // Also delete associated notes
         await knex('tax_audit_notes').where('auditId', id).del();
         await systemLog('Admin', "Delete Audit", `Deleted audit ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -190,6 +197,7 @@ export const upsertTaxSummary = async (req, res) => {
         }
 
         await systemLog('System', "Upsert Tax Summary", `Updated summary for ${month} ${year} (${type})`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true, id: recordId });
     } catch (e) {
         console.error("Upsert Tax Summary Error:", e);
@@ -202,6 +210,7 @@ export const deleteTaxSummary = async (req, res) => {
         const { id } = req.params;
         await knex('tax_summaries').where('id', id).del();
         await systemLog('Admin', "Delete Tax Summary", `Deleted record ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -222,6 +231,7 @@ export const createTaxWp = async (req, res) => {
     try {
         const [id] = await knex('tax_objects').insert(req.body);
         await systemLog('Admin', "Create Tax WP", `Created entry for: ${req.body.name}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ id });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -233,6 +243,7 @@ export const updateTaxWp = async (req, res) => {
         const { id } = req.params;
         await knex('tax_objects').where('id', id).update(req.body);
         await systemLog('Admin', "Update Tax WP", `Updated ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -242,6 +253,7 @@ export const updateTaxWp = async (req, res) => {
 export const deleteTaxWp = async (req, res) => {
     try {
         await knex('tax_objects').where('id', req.params.id).del();
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -252,6 +264,7 @@ export const deleteAllTaxWp = async (req, res) => {
     try {
         await knex('tax_objects').del();
         await systemLog('Admin', "Delete All Tax WP", "Cleared all WP data");
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -300,6 +313,7 @@ export const addAuditNote = async (req, res) => {
         });
 
         await systemLog(user || 'System', "Add Audit Note", `Added note to audit ${id} step ${stepIndex}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ success: true, id: noteId });
     } catch (e) {
         handleError(res, e, "TAX Error");
@@ -367,6 +381,7 @@ export const importTaxObjects = async (req, res) => {
         if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
 
         await systemLog('Admin', "Import Tax Objects", `Success: ${importCount}/${formattedData.length} records`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ message: `Berhasil mengimport ${importCount} data master objek pajak` });
     } catch (e) {
         if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
@@ -429,6 +444,7 @@ export const importTaxWp = async (req, res) => {
         if (fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
 
         await systemLog('Admin', "Import Tax WP", `Imported ${formattedData.length} records`);
+        req.app.get('io')?.emit('data:changed', { channel: 'tax' });
         res.json({ message: `Berhasil mengimport ${formattedData.length} data wajib pajak` });
     } catch (e) {
         console.error("Import WP error:", e);

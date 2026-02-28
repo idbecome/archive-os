@@ -340,6 +340,23 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
 
     useEffect(() => { fetchGuides(); }, []);
 
+    // Real-time sync: auto-refresh when another client modifies pustaka data
+    useEffect(() => {
+        let cleanup;
+        import('../services/socketService.js').then(({ getSocket }) => {
+            const socket = getSocket();
+            const handler = ({ channel }) => {
+                if (channel === 'pustaka') {
+                    console.log('[Socket.IO] Pustaka data changed — refetching...');
+                    fetchGuides();
+                }
+            };
+            socket.on('data:changed', handler);
+            cleanup = () => socket.off('data:changed', handler);
+        });
+        return () => cleanup?.();
+    }, []);
+
     // Handle Search
     useEffect(() => {
         const delayDebounceFn = setTimeout(() => {
@@ -525,7 +542,7 @@ export default function Pustaka({ currentUser, hasPermission, users = [], depart
             if (editingGuideId) {
                 // Optimistic Update untuk mode Edit
                 setGuides(guides.map(g => g.id === editingGuideId ? { ...g, ...newGuide } : g));
-                
+
                 await api.updatePustakaGuide(editingGuideId, {
                     title: newGuide.title,
                     description: newGuide.description,

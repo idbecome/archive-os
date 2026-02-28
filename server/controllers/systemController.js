@@ -59,6 +59,7 @@ export const createRole = async (req, res) => {
             label: label || name || roleId,
             access: typeof access === 'string' ? access : JSON.stringify(access || {})
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ id: roleId });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -73,6 +74,7 @@ export const updateRole = async (req, res) => {
             label,
             access: typeof access === 'string' ? access : JSON.stringify(access || {})
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -83,6 +85,7 @@ export const deleteRole = async (req, res) => {
     try {
         const { id } = req.params;
         await knex('roles').where('id', id).del();
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -94,6 +97,7 @@ export const createDepartment = async (req, res) => {
     try {
         const { name } = req.body;
         const [id] = await knex('departments').insert({ name });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ id });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -105,6 +109,7 @@ export const updateDepartment = async (req, res) => {
         const { id } = req.params;
         const { name } = req.body;
         await knex('departments').where('id', id).update({ name });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -115,6 +120,7 @@ export const deleteDepartment = async (req, res) => {
     try {
         const { id } = req.params;
         await knex('departments').where('id', id).del();
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -154,6 +160,7 @@ export const createFolder = async (req, res) => {
             owner: owner || 'System',
             createdAt: knex.fn.now()
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ id });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -171,6 +178,7 @@ export const updateFolder = async (req, res) => {
             allowedDepts: allowedDepts ? JSON.stringify(allowedDepts) : undefined,
             allowedUsers: allowedUsers ? JSON.stringify(allowedUsers) : undefined
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -182,6 +190,7 @@ export const deleteFolder = async (req, res) => {
         const { id } = req.params;
         await knex('folders').where('id', id).del();
         // Optionally handle recursive delete or move children to root
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -194,6 +203,7 @@ export const moveFolder = async (req, res) => {
         await knex('folders').where('id', id).update({
             parentId: targetParentId || null
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");
@@ -213,6 +223,7 @@ export const copyFolder = async (req, res) => {
             parentId: targetParentId || null,
             createdAt: knex.fn.now()
         });
+        req.app.get('io')?.emit('data:changed', { channel: 'system' });
         res.json({ success: true, id: newId });
     } catch (err) {
         handleError(res, err, "SYSTEM Error");

@@ -41,6 +41,7 @@ export const createBox = async (req, res) => {
             location
         });
         await systemLog('Admin', "Create Box", `Created box: ${box_id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'inventory' });
         res.json({ id });
     } catch (e) {
         handleError(res, e, "INVENTORY Error");
@@ -67,6 +68,7 @@ export const updateInventoryItem = async (req, res) => {
         }
 
         await systemLog('System', "Update Inventory", `Updated item ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'inventory' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "INVENTORY Error");
@@ -114,6 +116,7 @@ export const createExternalItem = async (req, res) => {
             history: typeof history === 'string' ? history : JSON.stringify(history || [])
         });
         await systemLog('System', "External Inventory", `Added item: ${boxId} to ${destination}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'inventory' });
         res.json({ id });
     } catch (e) {
         handleError(res, e, "INVENTORY Error");
@@ -125,6 +128,7 @@ export const deleteExternalItem = async (req, res) => {
         const { id } = req.params;
         await knex('external_items').where('id', id).del();
         await systemLog('System', "External Inventory", `Deleted item ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'inventory' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "INVENTORY Error");
@@ -184,6 +188,7 @@ export const moveInventoryItem = async (req, res) => {
         });
 
         await systemLog(user || 'System', "Move Inventory", `Moved box from #${sourceId} to #${targetId}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'inventory' });
         res.json({ success: true });
     } catch (err) {
         handleError(res, err, "INVENTORY Error");

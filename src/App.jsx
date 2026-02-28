@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿﻿import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
@@ -12,6 +12,7 @@ import { inventoryService } from './services/inventoryService';
 import { taxService } from './services/taxService';
 import { authService } from './services/authService';
 import { pustakaService } from './services/pustakaService';
+import { getSocket, disconnectSocket } from './services/socketService';
 import Sidebar from './components/layout/Sidebar';
 import Modal from './components/common/Modal';
 import MasterDataModals from './components/modals/MasterDataModals';
@@ -421,6 +422,60 @@ export default function App() {
       setIsLoading(false);
     };
     initData();
+  }, [currentUser]);
+
+  // --- SOCKET.IO REAL-TIME SYNC ---
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const socket = getSocket();
+    const debounceTimers = {};
+
+    const handleDataChanged = ({ channel }) => {
+      // Debounce: jika ada banyak perubahan cepat, tunggu 500ms sebelum refetch
+      if (debounceTimers[channel]) clearTimeout(debounceTimers[channel]);
+      debounceTimers[channel] = setTimeout(() => {
+        console.log(`[Socket.IO] Data changed: ${channel} — refetching...`);
+        switch (channel) {
+          case 'inventory':
+            fetchInventory();
+            break;
+          case 'documents':
+            fetchDocs();
+            fetchFolders();
+            break;
+          case 'tax':
+            fetchTaxAudits();
+            api.getTaxSummaries().then(setTaxSummaries);
+            break;
+          case 'approvals':
+            fetchApprovals();
+            break;
+          case 'system':
+            fetchFolders();
+            api.getUsers().then(setUsers);
+            api.getRoles().then(setRoles);
+            api.getDepartments().then(setDepartments);
+            fetchLogs();
+            break;
+          case 'pustaka':
+            // Pustaka data is fetched by the Pustaka page component itself
+            break;
+          case 'sop-flows':
+            // SOP flows data is fetched by the SopFlow page component itself
+            break;
+          default:
+            break;
+        }
+      }, 500);
+    };
+
+    socket.on('data:changed', handleDataChanged);
+
+    return () => {
+      socket.off('data:changed', handleDataChanged);
+      Object.values(debounceTimers).forEach(clearTimeout);
+    };
   }, [currentUser]);
 
   // Theme Effect

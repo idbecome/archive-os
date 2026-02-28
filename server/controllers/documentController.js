@@ -143,6 +143,7 @@ export const uploadDocument = async (req, res) => {
             }
 
             await systemLog(owner, "Revisi", `Otomatis membuat revisi: "${title}" v${(existingDoc.version || 1) + 1}`);
+            req.app.get('io')?.emit('data:changed', { channel: 'documents' });
             return res.json({ success: true, id: existingDoc.id, version: (existingDoc.version || 1) + 1, isRevision: true, url: fileUrl });
         }
 
@@ -204,6 +205,7 @@ export const uploadDocument = async (req, res) => {
 
         await systemLog(owner, "Upload", `Mengunggah dokumen (Queued): "${title}"`);
 
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({
             success: true,
             id: newDocId,
@@ -255,6 +257,7 @@ export const deleteDocument = async (req, res) => {
         vectorStore.removeDocument(subId);
 
         await systemLog(null, "Delete Document", `Menghapus dokumen: "${doc.title}"`);
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true });
     } catch (err) {
         console.error("[Delete Error] Failed to delete document:", err);
@@ -282,6 +285,7 @@ export const moveDocument = async (req, res) => {
         }
 
         await systemLog(owner || 'System', "Move", `Pindah file ID: ${id} ke folder: ${targetFolderId || 'Root'}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true });
     } catch (err) {
         console.error("[Move] Error:", err);
@@ -321,6 +325,7 @@ export const copyDocument = async (req, res) => {
         });
 
         await systemLog(owner || doc.owner || 'System', "Copy", `Salin file: "${doc.title}" ke folder: ${targetFolderId || 'Root'}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true, newId: newDocId });
     } catch (err) {
         console.error("[Copy] Error:", err);
@@ -394,6 +399,7 @@ export const restoreVersion = async (req, res) => {
         }
 
         await systemLog(user, "Restore", `Restore dokumen "${doc.title}" ke versi tanggal ${timestamp}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true });
 
     } catch (err) {
@@ -478,6 +484,7 @@ export const updateDocument = async (req, res) => {
             } catch (qErr) { console.error("Queue Error:", qErr); }
         }
 
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true, id, ...updateData });
     } catch (err) {
         console.error("Update Error:", err);
@@ -555,6 +562,7 @@ export const addComment = async (req, res) => {
             } catch (e) { }
         }
 
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true, comment: responseComment });
     } catch (err) {
         console.error("[AddComment Error]:", err);
@@ -634,6 +642,7 @@ export const promoteCommentAttachment = async (req, res) => {
         }
 
         await systemLog(comment.user, "Revisi (Chat Promotion)", `Mempromosikan lampiran chat sebagai revisi: "${doc.title}"`);
+        req.app.get('io')?.emit('data:changed', { channel: 'documents' });
         res.json({ success: true });
     } catch (err) {
         console.error("[PromoteComment Error]:", err);

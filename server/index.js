@@ -42,6 +42,7 @@ const server = http.createServer(app);
 const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
+app.set('io', io);
 
 const PORT = process.env.PORT || 5005;
 
@@ -123,6 +124,7 @@ app.post('/api/approvals', checkAuth, async (req, res) => {
         }
 
         await trx.commit();
+        io.emit('data:changed', { channel: 'approvals' });
         res.json({ id, message: 'Pengajuan berhasil dibuat' });
     } catch (err) {
         await trx.rollback();
@@ -159,6 +161,7 @@ app.put('/api/approvals/:id', checkAuth, async (req, res) => {
         }
 
         await trx.commit();
+        io.emit('data:changed', { channel: 'approvals' });
         res.json({ message: 'Pengajuan berhasil diperbarui' });
     } catch (err) {
         await trx.rollback();
@@ -206,6 +209,7 @@ app.post('/api/approvals/:id/action', checkAuth, upload.single('file'), async (r
         }
 
         await trx.commit();
+        io.emit('data:changed', { channel: 'approvals' });
         res.json({ message: `Berhasil ${action === 'Approve' ? 'menyetujui' : 'menolak'} pengajuan` });
     } catch (err) {
         await trx.rollback();
@@ -241,6 +245,7 @@ app.post('/api/approvals/:id/reset-step', checkAuth, async (req, res) => {
         });
 
         await trx.commit();
+        io.emit('data:changed', { channel: 'approvals' });
         res.json({ message: 'Berhasil menarik kembali keputusan. Alur diulang dari tahap ini.' });
     } catch (err) {
         await trx.rollback();
@@ -252,6 +257,7 @@ app.delete('/api/approvals/:id', checkAuth, async (req, res) => {
     try {
         const { id } = req.params;
         await knex('document_approvals').where({ id }).delete();
+        io.emit('data:changed', { channel: 'approvals' });
         res.json({ message: 'Pengajuan berhasil dihapus' });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -326,6 +332,7 @@ app.post('/api/sop-flows', checkAuth, async (req, res) => {
             updated_at: new Date()
         });
         res.json({ id, message: 'SOP Flow created successfully' });
+        io.emit('data:changed', { channel: 'sop-flows' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -348,6 +355,7 @@ app.put('/api/sop-flows/:id', checkAuth, async (req, res) => {
         });
         if (!affected) return res.status(404).json({ error: "SOP Flow tidak ditemukan" });
         res.json({ message: 'SOP Flow updated successfully' });
+        io.emit('data:changed', { channel: 'sop-flows' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -357,6 +365,7 @@ app.delete('/api/sop-flows/:id', checkAuth, async (req, res) => {
     try {
         const { id } = req.params;
         await knex('sop_flows').where({ id }).delete();
+        io.emit('data:changed', { channel: 'sop-flows' });
         res.json({ message: 'SOP Flow deleted successfully' });
     } catch (err) {
         res.status(500).json({ error: err.message });
