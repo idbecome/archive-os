@@ -179,32 +179,144 @@ export const semanticSearch = async (req, res) => {
         const { query } = req.body;
         if (!query) return res.status(400).json({ error: "Query required" });
 
+        // 1. Keyword Searches across multiple tables
+        const [kwDocs, kwInvoices, kwTaxObjects, kwExternal, kwInventory] = await Promise.all([
+            knex('documents')
+                .where('title', 'like', `%${query}%`)
+                .orWhere('ocrContent', 'like', `%${query}%`)
+                .limit(20),
+            knex('invoices')
+                .where('invoice_no', 'like', `%${query}%`)
+                .orWhere('tax_invoice_no', 'like', `%${query}%`)
+                .orWhere('vendor', 'like', `%${query}%`)
+                .limit(20),
+            knex('tax_objects')
+                .where('name', 'like', `%${query}%`)
+                .orWhere('identity_number', 'like', `%${query}%`)
+                .orWhere('tax_object_name', 'like', `%${query}%`)
+                .limit(20),
+            knex('external_items')
+                .where('boxId', 'like', `%${query}%`)
+                .orWhere('destination', 'like', `%${query}%`)
+                .orWhere('sender', 'like', `%${query}%`)
+                .limit(20),
+            knex('inventory')
+                .where('box_data', 'like', `%${query}%`)
+                .limit(20)
+        ]);
+
+        // 2. Semantic Vector Search
         const queryVector = await generateEmbedding(query);
-        const intent = await parseIntent(query, queryVector);
+        const docsWithVectors = await knex('documents').whereNotNull('vector').andWhereNot('vector', '');
 
-        // Mock Search: In real app, use vector similarity on DB. 
-        // Here we just fetch docs and filter loosely for demo + basic keyword match
-        const docs = await knex('documents').select('*').limit(50);
+        const semanticMatches = docsWithVectors.map(d => {
+            let similarity = 0;
+            try {
+                const docVector = typeof d.vector === 'string' ? JSON.parse(d.vector) : d.vector;
+                similarity = cosineSimilarity(queryVector, docVector);
+            } catch (e) { }
 
-        const results = docs
-            .filter(d => {
-                const titleMatch = d.title.toLowerCase().includes(query.toLowerCase());
-                const contentMatch = (d.ocrContent || '').toLowerCase().includes(query.toLowerCase());
-                return titleMatch || contentMatch;
-            })
-            .map(d => ({
+            return {
                 id: d.id,
                 name: d.title,
                 date: d.uploadDate,
                 size: d.size,
-                matchType: d.category === 'invoice' ? 'invoice' : 'document', // Basic mapping
-                score: 0.85, // Mock score
+                matchType: d.category || (d.title.toLowerCase().includes('invoice') ? 'invoice' : 'document'),
+                score: similarity,
                 data: d
-            }));
+            };
+        }).filter(r => r.score > 0.4);
 
-        res.json({ results });
+        // 3. Merging and Deduplication
+        const resultsMap = new Map();
+
+        // Add semantic results first
+        semanticMatches.forEach(r => resultsMap.set(`${r.matchType}-${r.id}`, r));
+
+        // Keyword matches get top priority (Score 1.0)
+        kwDocs.forEach(d => {
+            const matchType = d.category || (d.title.toLowerCase().includes('invoice') ? 'invoice' : 'document');
+            resultsMap.set(`${matchType}-${d.id}`, {
+                id: d.id,
+                name: d.title,
+                date: d.uploadDate,
+                size: d.size,
+                matchType,
+                score: 1.0,
+                data: d
+            });
+        });
+
+        kwInvoices.forEach(inv => {
+            // Check if we already have this as a document to avoid double display 
+            // Often invoices have a corresponding document.
+            resultsMap.set(`invoice-${inv.id}`, {
+                id: inv.id,
+                name: `${inv.vendor} (No: ${inv.invoice_no})`,
+                date: inv.payment_date,
+                url: inv.file_url, // Add url for preview
+                size: inv.tax_invoice_no || 'Invoice',
+                matchType: 'invoice',
+                score: 1.0,
+                data: inv
+            });
+        });
+
+        kwTaxObjects.forEach(t => {
+            resultsMap.set(`tax_object-${t.id}`, {
+                id: t.id,
+                name: t.name,
+                date: t.created_at,
+                url: null, // No preview for WP data
+                size: `${t.identity_number} (${t.tax_object_name})`,
+                matchType: 'tax_object',
+                score: 1.0,
+                data: t
+            });
+        });
+
+        kwExternal.forEach(e => {
+            resultsMap.set(`external_item-${e.id}`, {
+                id: e.id,
+                name: `Box ${e.boxId}`,
+                date: e.sentDate,
+                url: null, // No preview for external
+                size: `${e.destination} • ${e.sender}`,
+                matchType: 'external_item',
+                score: 1.0,
+                data: e
+            });
+        });
+
+        kwInventory.forEach(inv => {
+            let boxId = `Slot ${inv.id}`;
+            try {
+                const data = typeof inv.box_data === 'string' ? JSON.parse(inv.box_data) : inv.box_data;
+                if (data && data.id) boxId = data.id;
+                else if (data && data.box_id) boxId = data.box_id;
+            } catch (e) { }
+
+            resultsMap.set(`inventory-${inv.id}`, {
+                id: inv.id,
+                name: `Gudang: ${boxId}`,
+                date: inv.lastUpdated,
+                url: null,
+                content: inv.box_data, // Add content for snippet display
+                size: `${inv.rack}-${inv.shelf}-${inv.position}`,
+                matchType: 'inventory',
+                score: 1.0,
+                data: inv
+            });
+        });
+
+        const finalResults = Array.from(resultsMap.values())
+            .sort((a, b) => b.score - a.score)
+            .slice(0, 15);
+
+        res.json({ results: finalResults });
+
     } catch (err) {
-        console.error("Semantic Search Error:", err);
+        console.error("Hybrid Search Error:", err);
         res.status(500).json({ error: err.message });
     }
 };

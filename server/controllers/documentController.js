@@ -129,7 +129,14 @@ export const uploadDocument = async (req, res) => {
 
             if (absoluteFilePath && !initialOcr) {
                 try {
-                    await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', title);
+                    const context = {
+                        type: 'inventory_invoice', // Label for worker
+                        invoiceNo: req.body.invoiceNo,
+                        vendor: req.body.vendor,
+                        taxInvoiceNo: req.body.taxInvoiceNo,
+                        specialNote: req.body.specialNote
+                    };
+                    await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', title, context);
                 } catch (qErr) { console.error("Queue Error:", qErr); }
             }
 
@@ -180,7 +187,14 @@ export const uploadDocument = async (req, res) => {
 
         if (absoluteFilePath && !initialOcr) {
             try {
-                await addOCRJob(newDocId, absoluteFilePath, finalType || 'application/octet-stream', title);
+                const context = {
+                    type: 'inventory_invoice', // Label for worker
+                    invoiceNo: req.body.invoiceNo,
+                    vendor: req.body.vendor,
+                    taxInvoiceNo: req.body.taxInvoiceNo,
+                    specialNote: req.body.specialNote
+                };
+                await addOCRJob(newDocId, absoluteFilePath, finalType || 'application/octet-stream', title, context);
             } catch (qErr) {
                 console.error("Queue Error:", qErr);
             }

@@ -1193,7 +1193,12 @@ export default function App() {
                   owner: capturedCurrentUser?.name || 'Admin',
                   status: 'waiting', // Masuk antrean FIFO (1 per 1)
                   ocrContent: '',
-                  file: inv.rawFile // Kirim file mentah untuk diupload oleh createDocument
+                  file: inv.rawFile, // Kirim file mentah untuk diupload oleh createDocument
+                  // Metadata for AI Search
+                  invoiceNo: inv.invoiceNo,
+                  vendor: inv.vendor,
+                  taxInvoiceNo: inv.taxInvoiceNo,
+                  specialNote: inv.specialNote
                 };
 
                 try {

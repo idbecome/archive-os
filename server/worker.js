@@ -453,27 +453,49 @@ async function processOCRJob(job) {
         }
 
         // 4. Generate & Save AI Embedding (Background)
-        if (extractedText && extractedText.length > 10) {
+        if (extractedText && extractedText.length > 5) {
             try {
-                const vector = await generateEmbedding(extractedText);
+                // Enrich indexing for inventory invoices
+                let indexingText = extractedText;
+                if (context && context.type === 'inventory_invoice') {
+                    const meta = [
+                        `No Invoice: ${context.invoiceNo || '-'}`,
+                        `Vendor: ${context.vendor || '-'}`,
+                        `No Faktur Pajak: ${context.taxInvoiceNo || '-'}`,
+                        `Keterangan: ${context.specialNote || '-'}`
+                    ].join('\n');
+                    indexingText = `[METADATA]\n${meta}\n\n[OCR CONTENT]\n${extractedText}`;
+
+                    // Also update documents table with rich text so it's searchable via keyword and visible in UI
+                    if (docId) {
+                        await knex('documents')
+                            .where('id', docId)
+                            .update({ ocrContent: indexingText });
+                    }
+                }
+
+                const vector = await generateEmbedding(indexingText);
                 const vectorJson = JSON.stringify(vector);
 
                 if (isInventory) {
                     // Update vector in the relational 'invoices' table
+                    // Use invoice_no and ordner linkage to be precise
                     await knex('invoices')
-                        .where('invoice_no', context.invoiceId)
+                        .where('invoice_no', context.invoiceNo) // Use invoiceNo from context
                         .whereIn('ordner_ref_id', function () {
                             this.select('id').from('ordners').whereIn('box_ref_id', function () {
                                 this.select('id').from('boxes').where('inventory_id', context.slotId);
                             });
                         })
                         .update({ vector: vectorJson });
-                } else {
+                }
+
+                if (docId) {
                     await knex('documents')
                         .where('id', docId)
                         .update({ vector: vectorJson });
                 }
-                console.log(`[Worker] AI Embedding Generated for: ${docId}`);
+                console.log(`[Worker] AI Embedding Generated for: ${docId || context.invoiceId}`);
             } catch (vErr) {
                 console.warn(`[Worker] AI Search Indexing Failed: ${vErr.message}`);
             }

@@ -54,7 +54,7 @@ export default function Dashboard({
             // Use the new AI Search Endpoint
             const res = await fetch(`${API_URL}/search/ai`, {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': token ? `Bearer ${token}` : ''
                 },
@@ -232,13 +232,15 @@ export default function Dashboard({
                                                                 doc.matchType === 'pustaka' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-400' :
                                                                     doc.matchType === 'note' ? 'bg-teal-50 dark:bg-teal-900/20 text-teal-600 dark:text-teal-400' :
                                                                         doc.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' :
-                                                                            'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'}`}>
+                                                                            doc.matchType === 'inventory' ? 'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400' :
+                                                                                'bg-indigo-50 dark:bg-indigo-900/20 text-indigo-600 dark:text-indigo-400'}`}>
                                             {doc.matchType === 'invoice' ? <Package size={20} /> :
                                                 doc.matchType === 'external_item' ? <Truck size={20} /> :
                                                     doc.matchType === 'tax_summary' ? <FileBarChart size={20} /> :
                                                         doc.matchType === 'tax_monitoring' ? <ClipboardCheck size={20} /> : doc.matchType === 'approval' ? <FileCheck size={20} /> : doc.matchType === 'pustaka' ? <BookOpen size={20} /> : doc.matchType === 'note' ? <MessageSquare size={20} /> :
                                                             doc.matchType === 'tax_object' ? <User size={20} /> :
-                                                                (doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />)}
+                                                                doc.matchType === 'inventory' ? <Grid3x3 size={20} /> :
+                                                                    (doc.type?.includes('pdf') ? <FileDigit size={20} /> : <FileText size={20} />)}
                                         </div>
                                         <span className={`text-xs font-bold px-2 py-1 rounded-full ${doc.score > 0.3 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'}`}>
                                             {(doc.score * 100).toFixed(0)}% Match
@@ -309,6 +311,9 @@ export default function Dashboard({
                                                         setActiveTab('documents');
                                                         if (doc.folderId) handleNavigateToFolder(doc.folderId);
                                                     }
+                                                } else if (doc.matchType === 'inventory') {
+                                                    setActiveTab('inventory');
+                                                    setActiveInvTab('internal');
                                                 } else {
                                                     handleNavigateToFolder(doc.folderId);
                                                 }
@@ -321,7 +326,8 @@ export default function Dashboard({
                                                                 doc.matchType === 'approval' ? 'bg-rose-50 dark:bg-rose-900/20 text-rose-600 hover:bg-rose-100' :
                                                                     doc.matchType === 'pustaka' ? 'bg-blue-50 dark:bg-blue-900/20 text-blue-600 hover:bg-blue-100' :
                                                                         doc.matchType === 'tax_object' ? 'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400' :
-                                                                            'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
+                                                                            doc.matchType === 'inventory' ? 'bg-slate-50 dark:bg-slate-900/30 hover:bg-slate-100 dark:hover:bg-slate-900/50 text-slate-600 dark:text-slate-400' :
+                                                                                'bg-indigo-50 dark:bg-indigo-900/30 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 text-indigo-600 dark:text-indigo-400'}`}
                                         >
                                             {doc.matchType === 'invoice' ? `📦 ${doc.folderName}` :
                                                 doc.matchType === 'external_item' ? `🚚 ${doc.folderName}` :
@@ -331,7 +337,8 @@ export default function Dashboard({
                                                                 doc.matchType === 'approval' ? `✅ ${doc.folderName || 'Approval'}` :
                                                                     doc.matchType === 'pustaka' ? `📚 ${doc.folderName || 'Pustaka'}` :
                                                                         doc.matchType === 'tax_object' ? `👥 ${doc.folderName || 'Database WP'}` :
-                                                                            `📂 ${doc.folderName || 'General'}`}
+                                                                            doc.matchType === 'inventory' ? `📦 internal: ${doc.size || 'Slot'}` :
+                                                                                `📂 ${doc.folderName || 'General'}`}
                                         </button>
                                     </div>
                                 </div>
