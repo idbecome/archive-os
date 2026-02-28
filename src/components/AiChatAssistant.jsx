@@ -8,7 +8,7 @@ import {
 
 const getApiUrl = () => {
     const { hostname, port, protocol } = window.location;
-    if (port === '5173' || port === '3000' || hostname === 'localhost') {
+    if (port === '5173' || port === '3000' || hostname === 'localhost' || hostname.startsWith('192.168.')) {
         return `${protocol}//${hostname}:5005/api`;
     }
     return '/api';
@@ -244,12 +244,18 @@ export default function AiChatAssistant({
         setIsLoading(true);
 
         try {
+            const token = localStorage.getItem('archive_token');
             const res = await fetch(`${API_URL}/search/chat`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
                 body: JSON.stringify({ message: msg })
             });
+            
             const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'Gagal menghubungi asisten AI');
 
             let mappedResults = [];
             if (data.results) {
@@ -268,10 +274,10 @@ export default function AiChatAssistant({
                 results: mappedResults,
                 intent: data.intent
             }]);
-        } catch (error) {
+        } catch (err) {
             setMessages(prev => [...prev, {
                 role: 'assistant',
-                text: 'Maaf, koneksi ke server gagal. Pastikan server berjalan.',
+                text: err.message === 'Failed to fetch' ? 'Maaf, koneksi ke server gagal. Pastikan server berjalan.' : `Maaf, terjadi kendala: ${err.message}`,
                 results: []
             }]);
         } finally {

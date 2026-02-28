@@ -1,6 +1,6 @@
 const getApiUrl = () => {
     const { hostname, port, protocol } = window.location;
-    if (port === '5173' || port === '3000' || hostname === 'localhost') {
+    if (port === '5173' || port === '3000' || hostname === 'localhost' || hostname.startsWith('192.168.')) {
         return `${protocol}//${hostname}:5005/api`;
     }
     return '/api';
@@ -32,8 +32,12 @@ export const apiClient = {
     },
 
     async upload(url, formData) {
+        const token = localStorage.getItem('archive_token');
         const response = await fetch(url, {
             method: 'POST',
+            headers: {
+                'Authorization': token ? `Bearer ${token}` : ''
+            },
             body: formData,
         });
         if (!response.ok) throw new Error('Upload failed');

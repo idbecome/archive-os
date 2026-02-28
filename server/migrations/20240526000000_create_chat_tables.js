@@ -17,13 +17,16 @@ export const up = async function(knex) {
       table.string('attachment_type').nullable();
     });
   } else {
-    // FIX: Jika tabel sudah ada, pastikan kolom sesuai dengan yang diminta backend
     const hasAttachment = await knex.schema.hasColumn('comments', 'attachment');
     const hasDocId = await knex.schema.hasColumn('comments', 'documentId');
+    const hasAttachName = await knex.schema.hasColumn('comments', 'attachment_name');
+    const hasAttachType = await knex.schema.hasColumn('comments', 'attachment_type');
     
     await knex.schema.alterTable('comments', table => {
       if (!hasAttachment) table.string('attachment').nullable();
       if (!hasDocId) table.string('documentId').notNullable();
+      if (!hasAttachName) table.string('attachment_name').nullable();
+      if (!hasAttachType) table.string('attachment_type').nullable();
     });
   }
 

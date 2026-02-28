@@ -109,11 +109,12 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
     const handleEdit = (app, e) => {
         e.stopPropagation();
         setEditingApproval(app);
+        const steps = Array.isArray(app.steps) ? app.steps : [];
         setForm({
             title: app.title,
             description: app.description,
             division: app.division,
-            steps: (app.steps || []).map(s => ({ username: s.approver_username, name: s.approver_name, nodeId: s.node_id }))
+            steps: steps.map(s => ({ username: s.approver_username || s.username, name: s.approver_name || s.name, nodeId: s.node_id || s.nodeId, instruction: s.instruction }))
         });
         setSelectedFlowId(app.flow_id || "");
         setNoteAttachment(null);
@@ -125,16 +126,29 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
         setIsSubmitting(true);
 
         // Sync folder ApprovalDoc
-        if (syncApprovalFolder) await syncApprovalFolder(form.title, 'ACTIVE');
+        let folderId = null;
+        if (syncApprovalFolder) folderId = await syncApprovalFolder(form.title, 'ACTIVE');
 
         try {
             let fileUrl = editingApproval ? editingApproval.attachment_url : null;
             let fileName = editingApproval ? editingApproval.attachment_name : null;
 
             if (attachment) {
-                const uploadRes = await api.uploadFile(attachment);
-                if (uploadRes.success) {
-                    fileUrl = uploadRes.url;
+                // Gunakan createDocument agar file masuk ke folder ApprovalDoc dan diproses OCR
+                const docPayload = {
+                    title: attachment.name,
+                    type: attachment.type,
+                    size: (attachment.size / 1024 / 1024).toFixed(2) + ' MB',
+                    folderId: folderId,
+                    department: currentUser?.department || '',
+                    owner: currentUser?.name || 'Admin',
+                    status: 'waiting', // Masuk antrean OCR
+                    file: attachment
+                };
+
+                const uploadRes = await api.createDocument(docPayload);
+                if (uploadRes && (uploadRes.url || uploadRes.file_url)) {
+                    fileUrl = uploadRes.url || uploadRes.file_url;
                     fileName = attachment.name;
                 }
             }
@@ -171,11 +185,41 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
     const handleAction = async (action) => {
         if (!selectedApproval) return;
         try {
+            let fileUrl = null;
+            let fileName = null;
+
+            if (actionAttachment) {
+                // Sync folder ApprovalDoc agar file masuk ke folder yang sama dengan pengajuan
+                let folderId = null;
+                if (syncApprovalFolder) folderId = await syncApprovalFolder(selectedApproval.title, 'ACTIVE');
+
+                const docPayload = {
+                    title: `[Decision] ${actionAttachment.name}`,
+                    type: actionAttachment.type,
+                    size: (actionAttachment.size / 1024 / 1024).toFixed(2) + ' MB',
+                    folderId: folderId,
+                    department: currentUser?.department || '',
+                    owner: currentUser?.name || 'Admin',
+                    status: 'waiting', // Masuk antrean OCR
+                    file: actionAttachment
+                };
+
+                const uploadRes = await api.createDocument(docPayload);
+                if (uploadRes && (uploadRes.url || uploadRes.file_url)) {
+                    fileUrl = uploadRes.url || uploadRes.file_url;
+                    fileName = actionAttachment.name;
+                }
+            }
+
             const formData = new FormData();
             formData.append('action', action);
             formData.append('note', actionNote);
             formData.append('username', currentUser.username);
-            if (actionAttachment) {
+            
+            if (fileUrl) {
+                formData.append('attachment_url', fileUrl);
+                formData.append('attachment_name', fileName);
+            } else if (actionAttachment) {
                 formData.append('file', actionAttachment);
             }
 
@@ -579,6 +623,19 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
                                                         </div>
                                                         {step?.action_date && <span className="text-[9px] font-bold text-slate-400">{new Date(step.action_date).toLocaleDateString()}</span>}
                                                     </div>
+
+                                                    {step?.instruction && (
+                                                        <div className="mt-3 p-3 bg-indigo-50/50 dark:bg-indigo-900/20 rounded-2xl border border-indigo-100/50 dark:border-indigo-800/50 flex items-start gap-2 animate-in slide-in-from-left-2">
+                                                            <Sparkles size={12} className="text-indigo-500 mt-0.5 shrink-0" />
+                                                            <div className="flex-1">
+                                                                <p className="text-[10px] text-indigo-700 dark:text-indigo-300 font-medium leading-relaxed">
+                                                                    <span className="font-black uppercase mr-1">Instruksi Proses:</span>
+                                                                    {step.instruction}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    )}
+
                                                     {step?.note && <p className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-2 border-l-2 border-slate-200 dark:border-slate-700 pl-3">"{step.note}"</p>}
 
                                                     {step?.attachment_url && (
@@ -625,11 +682,47 @@ export default function DocumentApproval({ approvals = [], users = [], departmen
                                     </div>
                                 </div>
                             ) : (
-                                <div className="w-full h-full rounded-3xl overflow-hidden border border-slate-100 dark:border-slate-800">
+                                <div className="w-full h-full rounded-3xl overflow-hidden border border-slate-100 dark:border-slate-800 relative">
                                     {(() => {
                                         const flow = flows.find(f => String(f.id) === String(selectedApproval?.flow_id));
                                         if (!flow?.visual_config) return <div className="flex flex-col items-center justify-center h-full text-slate-400 bg-slate-50 dark:bg-slate-900/50"><Map size={48} className="mb-4 opacity-20" /><p className="text-[10px] font-black uppercase tracking-widest">Peta Visual Tidak Tersedia</p></div>;
-                                        return <WorkflowViewer nodes={flow.visual_config.nodes} edges={flow.visual_config.edges} currentStepNodeId={(selectedApproval?.steps || [])[selectedApproval?.current_step_index]?.node_id} approvalStatus={selectedApproval?.status} stepsStatus={selectedApproval?.steps} />;
+                                        
+                                        // Pastikan visual_config adalah objek, bukan string JSON
+                                        const config = typeof flow.visual_config === 'string' ? JSON.parse(flow.visual_config) : flow.visual_config;
+                                        
+                                        // Pastikan ID Node adalah string untuk sinkronisasi dengan Edges
+                                        const nodesWithStrings = (config.nodes || []).map(node => ({
+                                            ...node,
+                                            id: String(node.id)
+                                        }));
+
+                                        // Pastikan arah panah (markerEnd) selalu ada di mode view
+                                        const edgesWithArrows = (config.edges || [])
+                                            .filter(edge => edge.source && edge.target)
+                                            .map((edge, eIdx) => ({
+                                            ...edge,
+                                            id: String(edge.id || `edge-${selectedApproval?.id}-${eIdx}`),
+                                            source: String(edge.source),
+                                            target: String(edge.target),
+                                            type: 'smoothstep',
+                                            style: { stroke: '#475569', strokeWidth: 3 },
+                                            markerEnd: { type: 'arrowclosed', color: '#475569', width: 25, height: 25 },
+                                            // Sanitasi handle untuk memastikan panah menempel dengan benar pada node
+                                            sourceHandle: (edge.sourceHandle === null || edge.sourceHandle === "null") ? undefined : edge.sourceHandle,
+                                            targetHandle: (edge.targetHandle === null || edge.targetHandle === "null") ? undefined : edge.targetHandle
+                                        }));
+                                        return (
+                                            <div className="absolute inset-0">
+                                                <WorkflowViewer 
+                                                    key={`viewer-${selectedApproval?.id}`}
+                                                    nodes={nodesWithStrings} 
+                                                    edges={edgesWithArrows} 
+                                                    currentStepNodeId={(selectedApproval?.steps || [])[selectedApproval?.current_step_index]?.node_id} 
+                                                    approvalStatus={selectedApproval?.status} 
+                                                    stepsStatus={selectedApproval?.steps} 
+                                                />
+                                            </div>
+                                        );
                                     })()}
                                 </div>
                             )}

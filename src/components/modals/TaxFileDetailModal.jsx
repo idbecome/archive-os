@@ -24,7 +24,7 @@ export default function TaxFileDetailModal({
                     {String(selectedFileDetail?.type || '').toLowerCase().startsWith('image/') ? (
                         <img src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} alt="Preview" className="max-w-full max-h-full object-contain" onError={(e) => { e.target.style.display = 'none'; }} />
                     ) : String(selectedFileDetail?.type || '').toLowerCase().includes('pdf') ? (
-                        <iframe src={selectedFileDetail?.fileData || getFullUrl(selectedFileDetail?.url)} className="w-full h-full" title="PDF Preview"></iframe>
+                        <iframe src={selectedFileDetail?.fileData?.startsWith('data:') ? selectedFileDetail.fileData : getFullUrl(selectedFileDetail?.url)} className="w-full h-full" title="PDF Preview"></iframe>
                     ) : (
                         <div className="text-center p-6 text-slate-500">
                             <FileText size={48} className="mx-auto mb-2 opacity-50" />

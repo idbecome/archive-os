@@ -161,7 +161,13 @@ export default function Documents({
 
                 if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
                     console.log('[Preview] Fetching buffer from URL...');
-                    const response = await fetch(normalizedUrl);
+                    const token = localStorage.getItem('archive_token');
+                    const response = await fetch(normalizedUrl, {
+                        headers: {
+                            'Authorization': token ? `Bearer ${token}` : ''
+                        }
+                    });
+                    
                     if (!response.ok) {
                         const errorText = await response.text();
                         const isHtml = errorText.includes('<!DOCTYPE');
@@ -971,8 +977,10 @@ export default function Documents({
 
                                             <div className="flex items-center justify-between text-[10px] text-gray-400 dark:text-slate-500 mt-auto">
                                                 <span className="font-mono bg-gray-100 dark:bg-slate-800 px-1.5 py-0.5 rounded">{doc.size}</span>
-                                                {doc.status === 'processing' && !doc.ocrContent ? (
+                                                {doc.status === 'processing' || doc.status === 'waiting' ? (
                                                     <span className="text-amber-500 font-bold animate-pulse">PROSES OCR...</span>
+                                                ) : doc.status === 'failed' ? (
+                                                    <span className="text-red-500 font-bold">OCR GAGAL</span>
                                                 ) : (
                                                     <div className="flex flex-col items-end">
                                                         <span className="font-bold text-indigo-500">v{doc.version}</span>

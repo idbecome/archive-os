@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp, FileDigit, Image as ImageIcon, Edit3, Eye } from 'lucide-react';
-import { taxService } from '../services/taxService';
-import { documentService } from '../services/documentService';
+import { db as taxService, db as documentService } from '../services/database';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
@@ -107,11 +106,11 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
     // POLL STATUS for processing files
     useEffect(() => {
-        const hasProcessing = Array.isArray(auditFiles) && auditFiles.some(f => f.status === 'processing' || (f.ocrContent === '' && !f.type?.includes('image') && !f.type?.includes('pdf')));
-        // Note: Simple check. Better to rely on explicit 'status' field from DB.
+        // Pantau jika ada file yang sedang 'processing' atau masih 'waiting' di antrean
+        const hasProcessing = Array.isArray(auditFiles) && auditFiles.some(f => f.status === 'processing' || f.status === 'waiting');
 
-        // We'll trust availability of 'status' field from backend now.
-        const processingFiles = auditFiles.filter(f => f.status === 'processing');
+        // Poll jika ada file yang sedang diproses ATAU sedang menunggu antrean
+        const processingFiles = auditFiles.filter(f => f.status === 'processing' || f.status === 'waiting');
 
         if (processingFiles.length > 0) {
             const interval = setInterval(() => {
@@ -588,7 +587,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             type: uploadForm.fileType,
             size: uploadForm.fileSize,
             uploadDate: new Date().toISOString(),
-            status: 'processing',
+            status: 'waiting', // Set status awal sebagai waiting (antrean)
             owner: currentUser?.name || 'Tax Team'
         };
 
@@ -614,6 +613,8 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 department: 'Tax',
                 owner: currentUser?.name || 'Tax Team',
                 ocrContent: '', // Biarkan server yang memproses
+                forceOcr: true, // Paksa OCR untuk menangani PDF hasil scan (image-based)
+                status: 'waiting', // Masukkan ke antrean OCR (1 per 1)
                 file: uploadForm.file // File object
             };
 
@@ -1426,7 +1427,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                 setSelectedFileDetail={setSelectedFileDetail}
                 getFullUrl={getFullUrl}
                 handleSecureDownload={handleSecureDownload}
-                documentService={documentService} // Pass documentService instead of api
+                api={documentService} // Sesuaikan dengan nama prop di komponen tujuan
             />
 
             <TaxUploadModal

@@ -8,7 +8,6 @@ import mammoth from 'mammoth';
 import * as XLSX from 'xlsx';
 import JSZip from 'jszip';
 import { knex } from './db.js';
-import { JOB_STATUS, DOC_STATUS } from './constants/status.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { generateEmbedding } from './ai_search.js';
 
@@ -126,7 +125,7 @@ async function extractImagesFromPDF(pdfBuffer, maxPages = Infinity, job = null) 
 
                 for (let j = 0; j < ops.fnArray.length; j++) {
                     const op = ops.fnArray[j];
-                    if (op === pdfjsLib.OPS.paintImageXObject) {
+                    if (op === pdfjsLib.OPS.paintImageXObject || op === pdfjsLib.OPS.paintInlineImageXObject) {
                         const imgName = ops.argsArray[j][0];
                         try {
                             const imgObj = await page.objs.get(imgName);
@@ -158,7 +157,7 @@ async function extractImagesFromPDF(pdfBuffer, maxPages = Infinity, job = null) 
 
 // Core Processing Logic (Decoupled from Queue System)
 async function processOCRJob(job) {
-    const { docId, filePath, fileType, originalName, context } = job.data;
+    const { docId, filePath, fileType, originalName, context, forceOcr } = job.data;
     const isInventory = context && context.type === 'inventory';
 
     console.log(`[Worker] Processing Job ${job.id} for ${isInventory ? 'Inventory Invoice' : 'Document'}: ${docId}`);
@@ -239,21 +238,54 @@ async function processOCRJob(job) {
                         totalTextLength += pageText.length;
                     }
 
-                    // Heuristic: If average text per page < 50 chars, assume scanned
-                    if (totalTextLength / Math.min(numPages, 50) < 50) {
+                    // Heuristic: Jika rata-rata teks per halaman sangat rendah, anggap sebagai hasil scan atau "Print to PDF" tanpa teks
+                    if (totalTextLength / Math.min(numPages, 50) < 30) {
                         isScanned = true;
                     }
                 } catch (e) {
                     console.error("[Worker] PDF.js Text Extraction Error:", e);
+                    // Fallback ke pdf-parse untuk varian PDF dengan encoding kompleks (Print to PDF)
+                    try {
+                        console.log("[Worker] Attempting pdf-parse fallback...");
+                        const data = await pdf(dataBuffer);
+                        if (data && data.text) {
+                            pdfText = data.text;
+                            isScanned = pdfText.trim().length < 50;
+                        }
+                    } catch (e2) {
+                        console.error("[Worker] pdf-parse fallback failed:", e2);
+                    }
                 }
 
                 extractedText = pdfText.trim();
 
-                // 2. If Scanned or Low Text, Try OCR on Images
-                if (isScanned || extractedText.length < 50) {
+                // 2. Jika terdeteksi Scan, Teks Rendah, atau dipaksa (forceOcr), jalankan OCR berbasis Gambar
+                if (forceOcr || isScanned || extractedText.length < 50) {
                     console.log('[Worker] PDF appears to be scanned or low text. Attempting OCR...');
                     try {
-                        const images = await extractImagesFromPDF(dataBuffer, Infinity, job);
+                        let images = await extractImagesFromPDF(dataBuffer, Infinity, job);
+                        
+                        // [FALLBACK] Jika ekstraksi objek gambar gagal (0 gambar), ini biasanya PDF vector tanpa text layer.
+                        // Kita perlu melakukan rasterisasi halaman penuh.
+                        if (images.length === 0) {
+                            console.log('[Worker] No embedded images found. Attempting full page rasterization for vector-based PDF...');
+                            try {
+                                // Dynamic import untuk menangani dependensi opsional
+                                const pdfImgConvert = await import('pdf-img-convert');
+                                // Konversi PDF ke array gambar (Uint8Array)
+                                const pageImages = await pdfImgConvert.convert(filePath, {
+                                    width: 1200, // Resolusi tinggi untuk akurasi OCR yang lebih baik
+                                    density: 200
+                                });
+                                if (pageImages && pageImages.length > 0) {
+                                    console.log(`[Worker] Successfully rasterized ${pageImages.length} pages.`);
+                                    images = pageImages;
+                                }
+                            } catch (rasterErr) {
+                                console.warn('[Worker] Full page rasterization failed. Please run: npm install pdf-img-convert');
+                            }
+                        }
+
                         if (images.length > 0) {
                             const tess = await createWorker('eng+ind');
                             let ocrText = "";
@@ -266,10 +298,14 @@ async function processOCRJob(job) {
                             if (ocrText.trim().length > 20) {
                                 extractedText = `[OCR-SCAN]\n${ocrText}\n\n[METADATA]\n${extractedText}`;
                             } else {
-                                extractedText = `[PDF-LOW-TEXT]\n${extractedText}\n(OCR yielded no text)`;
+                                // Jika OCR dari gambar gagal mendapatkan teks, tandai untuk re-proses mendalam
+                                console.warn('[Worker] OCR yielded no text from extracted images.');
+                                extractedText = `[PDF-OCR-EMPTY]\n${extractedText}\n(Processed ${images.length} images, but no text found. Rasterization recommended.)`;
                             }
                         } else {
-                            extractedText = `[PDF-NO-IMAGES]\n${extractedText}`;
+                            // Jika tidak ada gambar sama sekali, tandai sebagai file yang perlu dikonversi manual ke gambar (Rasterize)
+                            console.log('[Worker] No text or images found. Marking for deep visual scan.');
+                            extractedText = `[PDF-RASTER-REQUIRED]\n${extractedText}\n(Vector-based PDF detected, conversion to image required for OCR)`;
                         }
                     } catch (ocrErr) {
                         console.error("[Worker] OCR Failed:", ocrErr);
@@ -356,12 +392,12 @@ async function processOCRJob(job) {
             const ordnerId = context.ordnerId;
             const invoiceId = context.invoiceId;
 
-            const row = await knex('inventory').select('boxData').where('id', slotId).first();
+            const row = await knex('inventory').select('box_data').where('id', slotId).first();
             if (!row) throw new Error(`[Worker] Inventory ${slotId} not found`);
 
             let box;
             try {
-                const raw = row.boxData;
+                const raw = row.box_data;
                 box = typeof raw === 'string' ? JSON.parse(raw) : raw;
             } catch (e) {
                 throw new Error(`[Worker] Corrupt Inventory JSON for ${slotId}`);
@@ -375,6 +411,7 @@ async function processOCRJob(job) {
                             ord.invoices.forEach(inv => {
                                 if (inv.id == invoiceId) {
                                     inv.ocrContent = extractedText;
+                            inv.status = 'done'; // Update status di JSON agar UI berhenti loading
                                     updated = true;
                                 }
                             });
@@ -384,7 +421,7 @@ async function processOCRJob(job) {
                     if (updated) {
                         await knex('inventory')
                             .where('id', slotId)
-                            .update({ boxData: JSON.stringify(box) });
+                            .update({ box_data: JSON.stringify(box) });
                         console.log(`[Worker] Inventory OCR Completed & Saved: Slot ${slotId}, Invoice ${invoiceId}`);
                     } else {
                         console.warn(`[Worker] Invoice ${invoiceId} not found in Ordner ${ordnerId}`);
@@ -393,22 +430,25 @@ async function processOCRJob(job) {
             } catch (pe) {
                 throw new Error(`[Worker] Processing error for inventory: ${pe.message}`);
             }
+        }
 
-        } else if (context && context.type === 'approval') {
+        if (context && context.type === 'approval') {
             const approvalId = context.approvalId;
             await knex('approvals')
                 .where('id', approvalId)
                 .update({ ocr_content: extractedText });
             console.log(`[Worker] Approval OCR Completed: ${approvalId}`);
-        } else {
-            // Standard Document Logic
+        } else if (docId) {
+            // Standard Document OR Inventory Document
+            // Memperbarui tabel documents sangat penting agar frontend (docList) 
+            // mengetahui bahwa proses OCR telah selesai dan menghentikan animasi loading.
             await knex('documents')
                 .where('id', docId)
                 .update({
                     ocrContent: extractedText,
-                    status: DOC_STATUS.DONE
+                    status: 'done'
                 });
-            console.log(`[Worker] Document OCR Completed & Saved: ${docId}`);
+            console.log(`[Worker] Document OCR Status Updated to Done: ${docId}`);
         }
 
         // 4. Generate & Save AI Embedding (Background)
@@ -447,26 +487,26 @@ async function processOCRJob(job) {
 async function startPolling() {
     console.log("[Worker] Starting MySQL Polling (No Redis)...");
 
-    // FIX: Reset stuck jobs on startup (Active -> Waiting)
+    // FIX: Reset stuck jobs on startup (Active/Processing -> Waiting)
     await knex('job_queue')
-        .where('status', JOB_STATUS.ACTIVE)
-        .update({ status: JOB_STATUS.WAITING });
-    console.log("[Worker] Startup: Reset stuck 'active' jobs to 'waiting'.");
+        .whereIn('status', ['active', 'processing'])
+        .update({ status: 'waiting' });
+    console.log("[Worker] Startup: Reset stuck jobs to 'waiting'.");
 
     const poll = async () => {
         try {
             // 1. Fetch one waiting job
             const row = await knex('job_queue')
-                .where('status', JOB_STATUS.WAITING)
+                .whereIn('status', ['waiting', 'pending']) // Mendukung status 'pending' dari controller
                 .orderBy('created_at', 'asc')
                 .first();
 
             if (row) {
-                // 2. Mark as Active
+                // 2. Mark as Processing (sesuai dengan getOCRQueue)
                 await knex('job_queue')
                     .where('id', row.id)
                     .update({
-                        status: JOB_STATUS.ACTIVE,
+                        status: 'processing',
                         processed_at: knex.fn.now()
                     });
 
@@ -478,7 +518,7 @@ async function startPolling() {
                     console.error(`[Worker] Job ${row.id} has corrupt JSON data. Marking failed.`);
                     await knex('job_queue')
                         .where('id', row.id)
-                        .update({ status: JOB_STATUS.FAILED, error: 'Corrupt JSON Data' });
+                        .update({ status: 'failed', error: 'Corrupt JSON Data' });
                     return setTimeout(poll, 100);
                 }
 
@@ -503,7 +543,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({
-                            status: JOB_STATUS.COMPLETED,
+                            status: 'completed',
                             finished_at: knex.fn.now(),
                             progress: 100
                         });
@@ -514,7 +554,7 @@ async function startPolling() {
                     await knex('job_queue')
                         .where('id', row.id)
                         .update({
-                            status: JOB_STATUS.FAILED,
+                            status: 'failed',
                             finished_at: knex.fn.now(),
                             error: e.message
                         });
@@ -533,34 +573,4 @@ async function startPolling() {
     poll();
 }
 
-async function startWorker() {
-    console.log("[Worker] Initializing...");
-
-    // Wait for database and tables to be ready (robustness for dev environment)
-    let ready = false;
-    let retries = 0;
-    while (!ready && retries < 10) {
-        try {
-            const exists = await knex.schema.hasTable('job_queue');
-            if (exists) {
-                ready = true;
-            } else {
-                console.log("[Worker] Waiting for 'job_queue' table...");
-                await new Promise(r => setTimeout(r, 2000));
-                retries++;
-            }
-        } catch (e) {
-            console.warn("[Worker] Database not ready, retrying...");
-            await new Promise(r => setTimeout(r, 2000));
-            retries++;
-        }
-    }
-
-    if (ready) {
-        startPolling();
-    } else {
-        console.error("[Worker] Failed to start: 'job_queue' table not found after retries.");
-    }
-}
-
-startWorker();
+startPolling();

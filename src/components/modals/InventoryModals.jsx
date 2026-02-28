@@ -3,7 +3,7 @@ import {
     Package, History, Edit3, Trash2, ChevronRight, ChevronLeft,
     FolderOpen, Paperclip, Plus, Save, RefreshCw,
     Eye, X, ArrowLeftRight, CheckCircle2, Clock,
-    AlertCircle, Truck, LogOut, FileText, Download
+    AlertCircle, Truck, LogOut, FileText, Download, User, Shield
 } from 'lucide-react';
 import PdfViewer from '../ui/PdfViewer';
 

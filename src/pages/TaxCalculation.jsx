@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calculator, Sparkles, TrendingUp, AlertCircle, FileText, Search, Database, User, Download, Upload, Save } from 'lucide-react';
+import { Calculator, Sparkles, TrendingUp, AlertCircle, FileText, Search, Database, User, Download, Upload, Save, Loader2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
-import { taxService } from '../services/taxService';
+import { db as taxService } from '../services/database';
 import TaxObjectForm from '../components/tax/TaxObjectForm';
 import { API_URL } from '../services/database';
 import { parseApiError } from '../utils/errorHandler';
 import TaxWpDatabase from '../components/tax/TaxWpDatabase';
+import { useToast } from '../components/ui/Toast';
 
 export default function TaxCalculation({ onCopy, hasPermission }) {
+    const { toast, updateToast } = useToast();
     const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database'
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -72,21 +74,30 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const fetchDatabase = async () => {
         try {
             const data = await taxService.getWpDatabase();
+            console.log("[Debug] Raw Data from Service:", data);
+            
             if (Array.isArray(data)) {
-                setSavedData(data);
+                const validData = data.filter(item => item && (item.name || item.identityNumber));
+                console.log("WP Database Loaded:", validData.length, "records");
+                setSavedData(validData);
+                return validData;
             } else {
-                console.error("Fetch tax-objects returned non-array:", data);
+                console.error("Fetch WP Database returned non-array:", data);
                 setSavedData([]);
+                return [];
             }
         } catch (error) {
-            console.error("Failed to fetch tax objects:", error);
+            console.error("Failed to fetch WP Database:", error);
             setSavedData([]);
+            return [];
         }
     };
 
     const fetchMasterData = async () => {
         try {
             const data = await taxService.getTaxObjects();
+            // Data sudah dinormalisasi di service
+
             if (Array.isArray(data)) {
                 setMasterData(data);
             } else {
@@ -118,19 +129,44 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         const file = e.target.files[0];
         if (!file) return;
 
+        const tid = toast.loading(`Menyiapkan file "${file.name}"...`);
         setIsImporting(true);
+        
         try {
+            updateToast(tid, { message: "Mengunggah file ke server...", progress: 30 });
             const result = await taxService.importWpExcel(file);
-            if (result) {
-                alert(result.message || 'Import berhasil');
-                fetchDatabase();
+            
+            if (result && !result.error) {
+                updateToast(tid, { message: "Sinkronisasi data & indexing...", progress: 70 });
+                
+                // Berikan jeda agar DB commit selesai, lalu verifikasi data
+                setTimeout(async () => {
+                    const finalData = await fetchDatabase();
+                    const finalCount = finalData?.length || 0;
+                    
+                    if (finalCount === 0) {
+                        updateToast(tid, { 
+                            type: 'error', 
+                            message: "Kritis: Server melaporkan sukses, tapi 0 data tersimpan. Database sedang diperbaiki otomatis, silakan coba lagi.", 
+                            progress: 100 
+                        });
+                    } else {
+                        updateToast(tid, { 
+                            type: 'success', 
+                            message: `Berhasil! ${finalCount} data Wajib Pajak telah disinkronkan.`, 
+                            progress: 100 
+                        });
+                    }
+                }, 3500);
             } else {
-                alert('Gagal import: ' + result.error);
+                throw new Error(result?.error || "Respons server tidak valid");
             }
         } catch (error) {
-            console.error("Import error:", error);
-            const msg = await parseApiError(error);
-            alert('Gagal import: ' + msg);
+            console.error("Import Error Detail:", error);
+            updateToast(tid, { 
+                type: 'error', 
+                message: `Gagal Import: ${error.message}. Pastikan kolom Excel sudah sesuai template.` 
+            });
         } finally {
             setIsImporting(false);
             e.target.value = null; // Reset input
@@ -141,23 +177,36 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         const file = e.target.files[0];
         if (!file) return;
 
+        const tid = toast.loading(`Mengimport Master Objek Pajak...`);
         setIsImporting(true);
+        
         try {
+            updateToast(tid, { message: "Memproses file master...", progress: 40 });
             const result = await taxService.importMasterExcel(file);
-            if (result) {
-                alert(result.message || 'Import master berhasil');
-                fetchMasterData();
+            
+            if (result && !result.error) {
+                updateToast(tid, { message: "Memperbarui daftar objek...", progress: 80 });
+                await fetchMasterData();
+                updateToast(tid, { type: 'success', message: 'Master Objek Pajak berhasil diperbarui!', progress: 100 });
             } else {
-                alert('Gagal import master: ' + result.error);
+                updateToast(tid, { type: 'error', message: 'Gagal import master: ' + (result?.error || 'Terjadi kesalahan') });
             }
         } catch (error) {
-            console.error("Import master error:", error);
-            const msg = await parseApiError(error);
-            alert('Gagal import master: ' + msg);
+            updateToast(tid, { type: 'error', message: 'Gagal import master: ' + error.message });
         } finally {
             setIsImporting(false);
             e.target.value = null; // Reset input
         }
+    };
+
+    const handleDownloadWpTemplate = () => {
+        const ws = XLSX.utils.json_to_sheet([
+            { "Nama WP": "PT. Contoh Maju", "Jenis Identitas": "NPWP", "Nomor Identitas": "1234567890123456", "Email": "admin@contoh.com", "Jenis Pajak": "23", "Kode Objek": "23-100-01", "Nama Objek": "Sewa Alat", "Gross Up": "none", "Bukan Pegawai": 0, "Gunakan PPN": 1 },
+            { "Nama WP": "Budi Santoso", "Jenis Identitas": "KTP", "Nomor Identitas": "3201234567890001", "Email": "budi@email.com", "Jenis Pajak": "21", "Kode Objek": "21-100-01", "Nama Objek": "Upah Harian", "Gross Up": "gross", "Bukan Pegawai": 1, "Gunakan PPN": 0 }
+        ]);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "Database WP");
+        XLSX.writeFile(wb, "template_database_wajib_pajak.xlsx");
     };
 
     const handleDownloadMasterTemplate = () => {
@@ -241,16 +290,16 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const handleEdit = (item) => {
         setEditingId(item.id);
         setFormData({
-            idType: item.id_type,
-            identityNumber: item.identity_number,
+            idType: item.idType,
+            identityNumber: item.identityNumber,
             name: item.name,
             email: item.email || '',
-            taxType: item.tax_type,
-            taxObjectCode: item.tax_object_code,
-            taxObjectName: item.tax_object_name,
-            markupMode: item.markup_mode || 'none',
-            isPph21BukanPegawai: !!item.is_pph21_bukan_pegawai,
-            usePpn: item.use_ppn !== undefined ? !!item.use_ppn : true
+            taxType: item.taxType,
+            taxObjectCode: item.taxObjectCode,
+            taxObjectName: item.taxObjectName,
+            markupMode: item.markupMode || 'none',
+            isPph21BukanPegawai: !!item.isPph21BukanPegawai,
+            usePpn: !!item.usePpn
         });
         setCalcData({
             dpp: item.dpp,
@@ -325,11 +374,12 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     };
 
     const filteredData = savedData.filter(item =>
-        (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.identity_number || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.tax_object_name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (item.tax_object_code || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
+        item && (
+            (item.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (item.identityNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (item.taxObjectName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+            (item.taxObjectCode || '').toLowerCase().includes(searchTerm.toLowerCase())
+        ));
 
     const getSmartInsight = () => {
         // 1. Konteks Pencarian
@@ -386,6 +436,24 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
     return (
         <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
+            {/* IMPORT LOADING OVERLAY */}
+            {isImporting && (
+                <div className="fixed inset-0 z-[200] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center animate-in fade-in duration-300">
+                    <div className="bg-white dark:bg-slate-900 p-10 rounded-[3rem] shadow-2xl flex flex-col items-center max-w-sm text-center border border-indigo-100 dark:border-indigo-900/50">
+                        <div className="relative mb-8">
+                            <div className="w-24 h-24 border-4 border-indigo-100 dark:border-indigo-900/30 rounded-full"></div>
+                            <div className="w-24 h-24 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin absolute top-0 left-0"></div>
+                            <Database className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-indigo-600 animate-pulse" size={32} />
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-800 dark:text-white mb-3 uppercase tracking-tight">Memproses Database</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
+                            Sedang mengimport ratusan data Wajib Pajak ke sistem. <br />
+                            <span className="font-bold text-indigo-500">Mohon jangan tutup atau refresh halaman ini.</span>
+                        </p>
+                    </div>
+                </div>
+            )}
+
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                 <h2 className="text-2xl font-bold text-gray-900 dark:text-white flex items-center gap-2">
                     <Calculator className="text-indigo-600" />
@@ -611,10 +679,10 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                     {showObjectDropdown && (
                                         <div className="absolute z-50 w-full mt-1 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl shadow-xl max-h-60 overflow-y-auto">
                                             {masterData.filter(item =>
-                                                String(item.tax_type) === String(formData.taxType) && (
+                                                String(item.taxType) === String(formData.taxType) && (
                                                     (item.name || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase()) ||
                                                     (item.code || '').toLowerCase().includes((formData.taxObjectName || '').toLowerCase())
-                                                ) && !(formData.idType === 'KTP' && String(item.tax_type) === '23')
+                                                ) && !(formData.idType === 'KTP' && String(item.taxType) === '23')
                                             ).length === 0 ? (
                                                 <div className="px-4 py-3 text-sm text-gray-500 text-center">
                                                     Tidak ada data ditemukan. <br />
@@ -627,20 +695,20 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                                     const search = (formData.taxObjectName || '').toLowerCase();
                                                     const matchesSearch = (item.name || '').toLowerCase().includes(search) ||
                                                         (item.code || '').toLowerCase().includes(search);
-                                                    const matchesType = String(item.tax_type) === String(formData.taxType);
-                                                    const ktpRestriction = !(formData.idType === 'KTP' && String(item.tax_type) === '23');
+                                                    const matchesType = String(item.taxType) === String(formData.taxType);
+                                                    const ktpRestriction = !(formData.idType === 'KTP' && String(item.taxType) === '23');
                                                     return matchesSearch && matchesType && ktpRestriction;
                                                 }).map((item) => (
                                                     <button
                                                         key={item.id}
                                                         className="w-full text-left px-4 py-3 hover:bg-indigo-50 dark:hover:bg-slate-700 transition-colors border-b border-gray-100 dark:border-slate-700 last:border-0"
                                                         onClick={() => {
-                                                            const isPph21 = String(item.tax_type) === '21';
+                                                            const isPph21 = String(item.taxType) === '21';
                                                             setFormData(prev => ({
                                                                 ...prev,
                                                                 taxObjectName: item.name,
-                                                                taxObjectCode: item.code,
-                                                                taxType: item.tax_type,
+                                                                taxObjectCode: item.code || item.taxObjectCode,
+                                                                taxType: item.taxType,
                                                                 isPph21BukanPegawai: isPph21,
                                                                 usePpn: !isPph21
                                                             }));
@@ -657,9 +725,9 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                                                         <div className="font-medium text-gray-800 dark:text-gray-200">{item.name}</div>
                                                         <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
                                                             <span className="bg-gray-100 dark:bg-slate-900 px-1.5 py-0.5 rounded text-gray-600 dark:text-gray-400 font-mono">
-                                                                {item.code}
+                                                                {item.code || item.taxObjectCode}
                                                             </span>
-                                                            <span className="text-indigo-500 font-medium">PPh {item.tax_type}</span>
+                                                            <span className="text-indigo-500 font-medium">PPh {item.taxType}</span>
                                                             {item.rate !== undefined && item.rate !== null && (
                                                                 <span className="bg-indigo-100 dark:bg-indigo-900/40 px-1.5 py-0.5 rounded text-indigo-700 dark:text-indigo-300 font-bold ml-auto">
                                                                     {item.rate}%
@@ -840,7 +908,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             {/* DATABASE WP TAB */}
             {activeTab === 'database' && (
                 <TaxWpDatabase
-                    savedData={savedData}
+                    savedData={filteredData} // FIX: Gunakan filteredData agar pencarian berfungsi
                     searchTerm={searchTerm}
                     setSearchTerm={setSearchTerm}
                     currentPage={currentPage}
@@ -851,6 +919,8 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                     handleDeleteAll={handleDeleteAll}
                     handleImportDatabase={handleImportDatabase}
                     onCopy={onCopy}
+                    onRefresh={fetchDatabase} // Tambahkan prop refresh
+                    onDownloadTemplate={handleDownloadWpTemplate} // Tambahkan prop template
                     canCreate={canCreate}
                     canEdit={canEdit}
                     canDelete={canDelete}

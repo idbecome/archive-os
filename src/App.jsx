@@ -1,4 +1,4 @@
-﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+﻿﻿﻿﻿﻿﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
 import * as XLSX from 'xlsx';
 import { motion, AnimatePresence } from 'framer-motion';
 import mammoth from 'mammoth';
@@ -172,6 +172,29 @@ export default function App() {
     createExternalItem, deleteExternalItem
   } = useInventoryStore();
 
+  // --- REAL-TIME STATUS HYDRATION ---
+  // Menghubungkan status OCR dari tabel 'documents' ke dalam data 'inventory' secara dinamis
+  const hydratedInventory = useMemo(() => {
+    return inventory.map(slot => {
+      const data = slot.box_data || slot.boxData;
+      if (!data || !data.ordners) return slot;
+
+      const updatedOrdners = data.ordners.map(ord => ({
+        ...ord,
+        invoices: (ord.invoices || []).map(inv => {
+          const realDoc = docList.find(d => d.id === inv.id);
+          return realDoc ? { 
+            ...inv, 
+            status: realDoc.status || inv.status,
+            ocrContent: realDoc.ocrContent || inv.ocrContent 
+          } : inv;
+        })
+      }));
+
+      return { ...slot, boxData: { ...data, ordners: updatedOrdners } };
+    });
+  }, [inventory, docList]);
+
   const handleCloseLanding = () => setShowInitialLanding(false);
   const handleOpenLanding = () => setShowInitialLanding(true);
 
@@ -204,9 +227,15 @@ export default function App() {
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
     const { hostname, port, protocol } = window.location;
     const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
+    const token = localStorage.getItem('archive_token');
     let cleanUrl = url;
     if (url.startsWith('uploads/')) cleanUrl = '/' + url;
-    if (cleanUrl.startsWith('/uploads/')) return isDev ? `${protocol}//${hostname}:5005${cleanUrl}` : cleanUrl;
+    
+    if (cleanUrl.startsWith('/uploads/')) {
+      const baseUrl = isDev ? `${protocol}//${hostname}:5005` : '';
+      const cleanPath = cleanUrl.split('?')[0]; // Bersihkan query lama jika ada
+      return token ? `${baseUrl}${cleanPath}?token=${token}` : `${baseUrl}${cleanPath}`;
+    }
     if (cleanUrl.includes('localhost:5005')) return cleanUrl.replace('localhost', hostname);
     return cleanUrl;
   };
@@ -275,11 +304,16 @@ export default function App() {
         const newWaiting = data?.counts?.waiting || 0;
         const newActive = data?.counts?.active || 0;
 
-        // Completion Toast & Refresh
-        if (newCompleted > lastOcrCompletedRef.current) {
-          const finishedCount = newCompleted - lastOcrCompletedRef.current;
-          toast.success(`OCR Selesai: ${finishedCount} dokumen berhasil diproses.`);
-          console.log("OCR Job Completed! Refreshing data...");
+        // Refresh logic: Dipicu saat jumlah selesai/gagal bertambah OR saat antrean baru saja selesai (transisi sibuk -> kosong)
+        const isQueueEmpty = newActive === 0 && newWaiting === 0;
+        const wasQueueBusy = lastOcrActiveRef.current > 0 || lastOcrWaitingRef.current > 0;
+        const hasLocalProcessing = docList.some(d => d.status === 'processing' || d.status === 'waiting');
+
+        // Hanya refresh jika ada progres nyata atau antrean baru saja tuntas
+        if (newCompleted > lastOcrCompletedRef.current || 
+            newFailed > lastOcrFailedRef.current || 
+            (isQueueEmpty && wasQueueBusy && hasLocalProcessing)) {
+          console.log("OCR Status Change detected. Refreshing data...");
           fetchInventory(); // Refresh Inventory
           fetchDocs();      // Refresh Documents
           fetchLogs();      // Refresh Logs
@@ -311,7 +345,7 @@ export default function App() {
           const progress = job.progress || 0;
           const statusText = job.status === 'active'
             ? `Memproses OCR: ${fileName} (${progress}%)`
-            : `Menunggu di Antrian: ${fileName}`;
+            : `Antrean #${job.queuePosition || ''}: ${fileName} (Menunggu)`;
           const type = job.status === 'active' ? 'loading' : 'info';
 
           if (activeOcrToastsRef.current[jobIdStr]) {
@@ -463,10 +497,10 @@ export default function App() {
       const currentFolders = existingFolders || folders;
 
       // 1. Cari atau Buat folder sistem "DataBox" di Root
-      let dataBoxFolder = currentFolders.find(f => f.name === 'DataBox' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
+      let dataBoxFolder = currentFolders.find(f => f.name === 'DataBox' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
       if (!dataBoxFolder) {
         const allFolders = await api.getFolders();
-        dataBoxFolder = allFolders.find(f => f.name === 'DataBox' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
+        dataBoxFolder = allFolders.find(f => f.name === 'DataBox' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
       }
 
       if (!dataBoxFolder && status !== 'EMPTY' && status !== 'REMOVED') {
@@ -579,10 +613,10 @@ export default function App() {
     if (!auditTitle) return null;
     try {
       // 1. Cari atau Buat folder sistem "TaxAudit" di Root
-      let taxAuditParent = folders.find(f => f.name === 'TaxAudit' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
+      let taxAuditParent = folders.find(f => f.name === 'TaxAudit' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
       if (!taxAuditParent) {
         const allFolders = await api.getFolders();
-        taxAuditParent = allFolders.find(f => f.name === 'TaxAudit' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
+        taxAuditParent = allFolders.find(f => f.name === 'TaxAudit' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
       }
 
       if (!taxAuditParent) {
@@ -601,9 +635,11 @@ export default function App() {
       const folderName = `Pemeriksaan - ${auditTitle}`;
 
       const findInParent = (list, pId, name) => list.find(f => {
-        const fParentId = (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0') ? null : String(f.parent_id);
+        const fParentId = f.parentId || f.parent_id;
+        const isRootF = !fParentId || [0, '0', 'null'].includes(fParentId);
         const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
-        return fParentId === targetParentId && f.name === name;
+        if (targetParentId === null) return isRootF && f.name === name;
+        return String(fParentId) === targetParentId && f.name === name;
       });
 
       let folder = findInParent(folders, taxAuditParentId, folderName);
@@ -794,10 +830,10 @@ export default function App() {
     if (!approvalTitle) return null;
     try {
       // 1. Cari atau Buat folder sistem "ApprovalDoc" di Root
-      let approvalParent = folders.find(f => f.name === 'ApprovalDoc' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
+      let approvalParent = folders.find(f => f.name === 'ApprovalDoc' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
       if (!approvalParent) {
         const allFolders = await api.getFolders();
-        approvalParent = allFolders.find(f => f.name === 'ApprovalDoc' && (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0'));
+        approvalParent = allFolders.find(f => f.name === 'ApprovalDoc' && (!(f.parentId || f.parent_id) || [0, '0', 'null'].includes(f.parentId || f.parent_id)));
       }
 
       if (!approvalParent) {
@@ -816,9 +852,11 @@ export default function App() {
       const folderName = approvalTitle;
 
       const findInParent = (list, pId, name) => list.find(f => {
-        const fParentId = (!f.parent_id || f.parent_id === 'null' || f.parent_id === 0 || f.parent_id === '0') ? null : String(f.parent_id);
+        const fParentId = f.parentId || f.parent_id;
+        const isRootF = !fParentId || [0, '0', 'null'].includes(fParentId);
         const targetParentId = (!pId || pId === 'null' || pId === 0 || pId === '0') ? null : String(pId);
-        return fParentId === targetParentId && f.name === name;
+        if (targetParentId === null) return isRootF && f.name === name;
+        return String(fParentId) === targetParentId && f.name === name;
       });
 
       let folder = findInParent(folders, approvalParentId, folderName);
@@ -883,6 +921,12 @@ export default function App() {
 
   const handleLogin = async (username, password, onError) => {
     try {
+      // Handle Guest Login: Jika username & password kosong, gunakan akun 'viewer' default
+      if (!username && !password) {
+        username = 'viewer';
+        password = 'viewer123';
+      }
+
       // Hardcoded fallbacks for specific accounts if they are not in DB yet (or as emergency)
       if (username === 'admin' && password === 'admin') {
         const adminUser = { name: 'Administrator', role: 'admin', username: 'admin', token: 'dev-token' };
@@ -925,10 +969,15 @@ export default function App() {
     console.log("Slot BoxData:", slot.boxData ? JSON.stringify(slot.boxData) : 'null');
 
     setSelectedSlotId(slot.id);
-    if (slot.status === 'EMPTY') {
+    let data = slot.box_data || slot.boxData;
+    if (typeof data === 'string') {
+      try { data = JSON.parse(data); } catch (e) { data = null; }
+    }
+
+    if (slot.status === 'EMPTY' || !data) {
       setBoxForm({ boxId: `BOX-${new Date().getFullYear()}-${String(slot.id).padStart(3, '0')}`, ordners: [] });
     } else {
-      setBoxForm({ boxId: slot.boxData?.id || '', ordners: slot.boxData?.ordners || [] });
+      setBoxForm({ boxId: data.id || slot.box_id || '', ordners: data.ordners || [] });
     }
     setNewOrdner({ noOrdner: '', period: '' });
     setNewInvoice({ invoiceNo: '', vendor: '', paymentDate: '', file: null, fileName: '', ocrContent: '', isProcessing: false });
@@ -947,16 +996,36 @@ export default function App() {
   useEffect(() => {
     if (selectedSlotId && inventory.length > 0) {
       const currentSlot = inventory.find(s => s.id === selectedSlotId);
-      if (currentSlot && currentSlot.boxData) {
-        // Only update if we are not currently editing to avoid overwriting user input
-        // But for OCR status, we mainly need to update the invoice list
+      let data = currentSlot?.box_data || currentSlot?.boxData;
+      if (typeof data === 'string') {
+        try { data = JSON.parse(data); } catch (e) { data = null; }
+      }
+
+      if (data) {
+        // Hydrate invoices with real-time status from docList
+        const hydratedOrdners = (data.ordners || []).map(ord => ({
+          ...ord,
+          invoices: (ord.invoices || []).map(inv => {
+            // Cari dokumen asli di docList untuk mendapatkan status & ocrContent terbaru
+            const realDoc = docList.find(d => d.id === inv.id);
+            if (realDoc) {
+              return { 
+                ...inv, 
+                status: realDoc.status || inv.status,
+                ocrContent: realDoc.ocrContent || inv.ocrContent 
+              };
+            }
+            return inv;
+          })
+        }));
+
         setBoxForm(prev => ({
           ...prev,
-          ordners: currentSlot.boxData.ordners || []
+          ordners: hydratedOrdners
         }));
       }
     }
-  }, [inventory, selectedSlotId]);
+  }, [inventory, selectedSlotId, docList]); // Tambahkan docList sebagai dependency
 
   const addOrdner = () => {
     if (!newOrdner.noOrdner || !newOrdner.period) return;
@@ -1001,9 +1070,10 @@ export default function App() {
 
   const handleSaveBox = async () => {
     // Validation: Unique Box ID Check
-    const activeDuplicate = inventory.find(slot =>
-      slot.boxData?.id === boxForm.boxId && slot.id !== selectedSlotId
-    );
+    const activeDuplicate = inventory.find(slot => {
+      const data = slot.box_data || slot.boxData;
+      return data?.id === boxForm.boxId && slot.id !== selectedSlotId;
+    });
     const externalDuplicate = externalItems.find(item => item.boxId === boxForm.boxId);
 
     if (activeDuplicate) {
@@ -1020,8 +1090,9 @@ export default function App() {
     if (!currentSlot) return;
 
     // VALIDATION: Cegah menimpa slot yang sudah ada isinya dengan Box ID berbeda
-    if (currentSlot.status !== 'EMPTY' && currentSlot.boxData?.id && currentSlot.boxData.id !== boxForm.boxId) {
-      toast.error(`Gagal: Slot #${selectedSlotId} sudah berisi Box "${currentSlot.boxData.id}". Kosongkan slot terlebih dahulu untuk mengganti Box.`);
+    const currentData = currentSlot.box_data || currentSlot.boxData;
+    if (currentSlot.status !== 'EMPTY' && currentData?.id && currentData.id !== boxForm.boxId) {
+      toast.error(`Gagal: Slot #${selectedSlotId} sudah berisi Box "${currentData.id}". Kosongkan slot terlebih dahulu untuk mengganti Box.`);
       return;
     }
 
@@ -1032,7 +1103,12 @@ export default function App() {
 
       try {
         // --- SYNC FOLDER (Get or Create Box Folder) ---
-        const oldBoxId = currentSlot.boxData?.id;
+        let currentData = currentSlot.box_data || currentSlot.boxData;
+        if (typeof currentData === 'string') {
+          try { currentData = JSON.parse(currentData); } catch (e) { currentData = null; }
+        }
+        const oldBoxId = currentData?.id || currentSlot.box_id;
+        
         const isNew = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
         const boxFolderId = await syncBoxFolder(boxId, isNew ? 'STORED' : 'UPDATED', oldBoxId);
         // --- END SYNC FOLDER ---
@@ -1052,37 +1128,45 @@ export default function App() {
               if (inv.rawFile) {
                 const fileType = inv.rawFile.type;
                 const fileSize = (inv.rawFile.size / 1024).toFixed(2) + ' KB';
-                const uploadRes = await api.uploadFile(inv.rawFile);
+                
+                // Generate unique ID untuk menghubungkan invoice di box_data dengan tabel documents
+                const docId = `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 
-                if (uploadRes && uploadRes.success) {
-                  // Update invoice with real URL and OCR content
-                  updatedInvoices[iIdx] = {
-                    ...inv,
-                    file: uploadRes.url,
-                    ocrContent: '', // Akan diisi otomatis oleh server via Queue
-                    rawFile: undefined // Clear raw file
-                  };
-                  inv = updatedInvoices[iIdx]; // Update local reference for next step
-                  uploadCount++;
+                // Sinkronisasi lampiran invoice ke tabel documents (Upload & Create dalam satu langkah)
+                // Ini mencegah double upload (1 di root, 1 di folder DataBox)
+                const docPayload = {
+                  id: docId,
+                  title: inv.fileName || `Invoice ${inv.invoiceNo}`,
+                    forceOcr: true, // Aktifkan mode scan untuk PDF image-only
+                  type: fileType,
+                  size: fileSize,
+                  uploadDate: new Date().toISOString(),
+                  folderId: String(boxFolderId || ''),
+                  owner: capturedCurrentUser?.name || 'Admin',
+                  status: 'waiting', // Masuk antrean FIFO (1 per 1)
+                  ocrContent: '',
+                  file: inv.rawFile // Kirim file mentah untuk diupload oleh createDocument
+                };
 
-                  // Sinkronisasi lampiran invoice ke tabel documents
-                  if (boxFolderId) {
-                    const docPayload = {
-                      id: `DOC-INV-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-                      title: inv.fileName || `Invoice ${inv.invoiceNo}`,
-                      type: fileType,
-                      size: fileSize,
-                      uploadDate: new Date().toISOString(),
-                      folderId: String(boxFolderId),
-                      uploader: capturedCurrentUser?.name || 'Admin',
+                try {
+                  const createdDoc = await createDocument(docPayload);
+                  
+                  if (createdDoc) {
+                    // Update invoice dengan URL asli dari dokumen yang baru dibuat
+                    updatedInvoices[iIdx] = {
+                      ...inv,
+                      id: docId,
+                      status: 'waiting',
+                      file: createdDoc.url || createdDoc.file_url,
                       ocrContent: '',
-                      url: uploadRes.url,
-                      fileData: null
+                      rawFile: undefined // Bersihkan file mentah setelah upload sukses
                     };
-                    await createDocument(docPayload);
+                    inv = updatedInvoices[iIdx];
+                    uploadCount++;
                   }
-                } else {
-                  throw new Error(`Gagal upload invoice ${inv.invoiceNo}`);
+                } catch (docErr) {
+                  console.error(`[BackgroundSave] Gagal upload/sinkronisasi dokumen ${inv.invoiceNo}:`, docErr);
+                  throw new Error(`Gagal memproses invoice ${inv.invoiceNo}: ${docErr.message}`);
                 }
               }
             }
@@ -1092,6 +1176,7 @@ export default function App() {
 
         if (uploadCount > 0) {
           console.log(`Berhasil mengupload ${uploadCount} dokumen baru.`);
+          await fetchDocs(); // Segera update docList agar status 'waiting' muncul di UI
           // fetchDocs is handled by createDocument store action
         }
         // --- BATCH UPLOAD END ---
@@ -1105,10 +1190,12 @@ export default function App() {
           status: (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY' ? 'STORED' : currentSlot.status.toUpperCase(),
           lastUpdated: new Date().toISOString(),
           history: [...(currentSlot.history || []), ...newHistory],
-          boxData: { id: boxId, ordners: updatedOrdners }
+          box_id: boxId,
+          box_data: { id: boxId, ordners: updatedOrdners }
         };
 
         await updateInventory(slotId, finalSlot);
+        await fetchInventory(); // Refresh UI dengan data final (termasuk URL file)
         addLog(capturedCurrentUser?.name || 'Admin', isNew ? 'Masuk Barang' : 'Update Barang', `Kardus ${boxId} di Slot #${slotId}`);
         updateToast(mainToastId, { message: isNew ? `Box ${boxId} berhasil disimpan!` : `Box ${boxId} berhasil diperbarui!`, type: 'success' });
 
@@ -1120,14 +1207,16 @@ export default function App() {
 
     // 1. Jalankan Simpan Metadata Awal (Skeleton) & Tutup Modal
     const isNewInitial = (currentSlot.status || 'EMPTY').toUpperCase() === 'EMPTY';
+    const boxId = boxForm.boxId;
     const skeletonSlot = {
       ...currentSlot,
       status: isNewInitial ? 'STORED' : currentSlot.status.toUpperCase(),
-      boxData: {
-        id: boxForm.boxId,
+      box_id: boxId,
+      box_data: {
+        id: boxId,
         ordners: boxForm.ordners.map(o => ({
           ...o,
-          invoices: o.invoices.map(i => ({ ...i, rawFile: undefined })) // Don't store Blobs
+          invoices: o.invoices.map(i => ({ ...i, status: i.rawFile ? 'waiting' : (i.status || 'completed'), rawFile: undefined })) // Set status awal 'waiting'
         }))
       }
     };
@@ -1537,7 +1626,16 @@ export default function App() {
   };
 
   const handleViewInvoice = async (inv) => {
-    setSelectedInvoice(inv);
+    // Ambil data terbaru dari server untuk memastikan ocrContent terbaru muncul
+    let fullInv = inv;
+    if (inv.id) {
+      try {
+        const fetched = await api.getDocumentById(inv.id);
+        if (fetched) fullInv = { ...inv, ...fetched };
+      } catch (e) { console.warn("Gagal fetch detail invoice", e); }
+    }
+
+    setSelectedInvoice(fullInv);
     setModalTab('invoice-detail');
     setIsModalOpen(true);
 
@@ -1546,9 +1644,9 @@ export default function App() {
     setPdfBlobUrl(null);
     setPreviewHtml('');
 
-    const content = inv.file || inv.url;
-    const type = String(inv.type || '').toLowerCase();
-    const name = String(inv.fileName || '').toLowerCase();
+    const content = fullInv.file || fullInv.url;
+    const type = String(fullInv.type || '').toLowerCase();
+    const name = String(fullInv.fileName || fullInv.title || '').toLowerCase();
     const isPdf = type.includes('pdf') || name.endsWith('.pdf') || (typeof content === 'string' && (content.match(/\.pdf$/i) || content.startsWith('data:application/pdf')));
 
     console.log('[Preview] handleViewInvoice:', { type, name, isPdf, hasContent: !!content });
@@ -1561,7 +1659,12 @@ export default function App() {
 
         if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
           console.log('[Preview] Fetching buffer from URL...');
-          const response = await fetch(normalizedUrl);
+          const token = localStorage.getItem('archive_token');
+          const response = await fetch(normalizedUrl, {
+            headers: {
+              'Authorization': token ? `Bearer ${token}` : ''
+            }
+          });
           if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
           buffer = await response.arrayBuffer();
           console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
@@ -2025,7 +2128,8 @@ export default function App() {
       owner: currentUser?.name || 'Admin',
       folderId: currentFolderId,
       department: capturedForm.department || '',
-      status: 'processing' // Status optimis
+      forceOcr: true, // Pastikan PDF hasil scan diproses secara mendalam
+      status: 'waiting' // Masuk antrean OCR (1 per 1)
     };
 
     // Update UI Seketika
@@ -2200,7 +2304,12 @@ export default function App() {
 
         if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
           console.log('[Preview] Fetching buffer from URL...');
-          const response = await fetch(normalizedUrl);
+          const token = localStorage.getItem('archive_token');
+          const response = await fetch(normalizedUrl, {
+            headers: {
+              'Authorization': token ? `Bearer ${token}` : ''
+            }
+          });
           if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
           buffer = await response.arrayBuffer();
           console.log('[Preview] Buffer obtained, size:', buffer.byteLength);
@@ -2855,7 +2964,7 @@ export default function App() {
             )}
             {activeTab === 'inventory' && (
               <Inventory
-                inventory={inventory}
+                inventory={hydratedInventory}
                 stats={stats}
                 TOTAL_SLOTS={TOTAL_SLOTS}
                 getStatusStyle={getStatusStyle}
@@ -2876,6 +2985,7 @@ export default function App() {
                   setShowRestoreForm(true);
                 }}
                 onViewExternal={handleViewExternal}
+                ocrStats={ocrStats}
                 inventoryIssues={inventoryIssues}
               />
             )}
@@ -3373,13 +3483,23 @@ export default function App() {
                 const steps = approverNodes.map(n => ({
                   username: n.data.username,
                   name: n.data.label,
-                  nodeId: n.id
+                  nodeId: n.id,
+                  instruction: n.data.instruction || n.data.notes || ''
+                }));
+
+                const sanitizedEdges = (edges || []).map(edge => ({
+                  ...edge,
+                  type: 'smoothstep',
+                  style: { stroke: '#475569', strokeWidth: 3 },
+                  markerEnd: { type: 'arrowclosed', color: '#475569', width: 25, height: 25 },
+                  sourceHandle: (edge.sourceHandle === null || edge.sourceHandle === "null") ? undefined : edge.sourceHandle,
+                  targetHandle: (edge.targetHandle === null || edge.targetHandle === "null") ? undefined : edge.targetHandle
                 }));
 
                 const updatedForm = {
                   ...flowForm,
                   steps: steps,
-                  visual_config: { nodes, edges }
+                  visual_config: { nodes, edges: sanitizedEdges }
                 };
 
                 // Save to state first

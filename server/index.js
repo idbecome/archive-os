@@ -42,7 +42,7 @@ const io = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] }
 });
 
-const PORT = process.env.PORT || 5005;
+const PORT = 5005;
 
 // Middleware
 app.use(cors({
@@ -52,7 +52,7 @@ app.use(cors({
 }));
 
 // Gunakan Morgan untuk log HTTP request ke konsol
-const skipLogPaths = ['/uploads', '/api/ocr/status', '/api/ocr/queue', '/api/pustaka/guides', '/api/pustaka/categories', '/api/inventory', '/api/documents', '/api/logs'];
+const skipLogPaths = ['/uploads', '/api/ocr/status', '/api/ocr/queue', '/api/pustaka/guides', '/api/pustaka/categories', '/api/logs'];
 app.use(morgan('dev', {
     skip: (req, res) => skipLogPaths.some(path => req.originalUrl.includes(path))
 }));
@@ -73,12 +73,18 @@ app.use('/api', systemRoutes); // /api/logs, /api/roles, /api/departments, /api/
 app.get('/api/approvals', checkAuth, async (req, res) => {
     try {
         logger.info(`Fetching approvals for user: ${req.user?.username}`);
-        const data = await knex('approvals').select('*').orderBy('created_at', 'desc');
-        const parsed = data.map(a => ({
-            ...a,
-            steps: typeof a.steps === 'string' ? JSON.parse(a.steps || '[]') : (a.steps || [])
+        // Ambil data dari tabel document_approvals (sesuai migrasi)
+        const approvals = await knex('document_approvals').select('*').orderBy('created_at', 'desc');
+        
+        // Ambil steps secara relasional untuk setiap approval
+        const results = await Promise.all(approvals.map(async (app) => {
+            const steps = await knex('approval_steps')
+                .where('approval_id', app.id)
+                .orderBy('step_index', 'asc');
+            return { ...app, steps };
         }));
-        res.json(parsed);
+        
+        res.json(results);
     } catch (err) {
         console.error("Error fetching approvals:", err);
         res.status(500).json({ error: `Gagal mengambil data approval: ${err.message}` });
@@ -86,18 +92,166 @@ app.get('/api/approvals', checkAuth, async (req, res) => {
 });
 
 app.post('/api/approvals', checkAuth, async (req, res) => {
+    const trx = await knex.transaction();
     try {
         logger.info(`User ${req.user?.username} is creating a new approval`);
         const { title, description, division, requester_name, requester_username, attachment_url, attachment_name, flow_id, steps, ocr_content } = req.body;
-        const [id] = await knex('approvals').insert({
+        
+        // 1. Simpan ke tabel induk document_approvals
+        const [id] = await trx('document_approvals').insert({
             title, description, division, requester_name, requester_username,
             attachment_url, attachment_name, ocr_content, flow_id,
-            steps: JSON.stringify(steps || []),
             status: 'Pending',
             current_step_index: 0,
             created_at: new Date()
         });
+
+        // 2. Simpan steps ke tabel approval_steps secara relasional
+        if (steps && steps.length > 0) {
+            const stepsToInsert = steps.map((s, idx) => ({
+                approval_id: id,
+                approver_name: s.name,
+                approver_username: s.username,
+                step_index: idx,
+                status: 'Pending',
+                note: '',
+                node_id: s.nodeId || null,
+                instruction: s.instruction || ''
+            }));
+            await trx('approval_steps').insert(stepsToInsert);
+        }
+
+        await trx.commit();
         res.json({ id, message: 'Pengajuan berhasil dibuat' });
+    } catch (err) {
+        await trx.rollback();
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/approvals/:id', checkAuth, async (req, res) => {
+    const { id } = req.params;
+    const trx = await knex.transaction();
+    try {
+        const { title, description, division, attachment_url, attachment_name, flow_id, steps } = req.body;
+        
+        // Update tabel induk
+        await trx('document_approvals').where({ id }).update({
+            title, description, division, attachment_url, attachment_name, flow_id,
+            updated_at: new Date()
+        });
+
+        // Refresh steps: Hapus yang lama, masukkan yang baru
+        if (steps) {
+            await trx('approval_steps').where({ approval_id: id }).delete();
+            const stepsToInsert = steps.map((s, idx) => ({
+                approval_id: id,
+                approver_name: s.name,
+                approver_username: s.username,
+                step_index: idx,
+                status: 'Pending',
+                note: '',
+                node_id: s.nodeId || null,
+                instruction: s.instruction || ''
+            }));
+            await trx('approval_steps').insert(stepsToInsert);
+        }
+
+        await trx.commit();
+        res.json({ message: 'Pengajuan berhasil diperbarui' });
+    } catch (err) {
+        await trx.rollback();
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/approvals/:id/action', checkAuth, upload.single('file'), async (req, res) => {
+    const { id } = req.params;
+    const { action, note, username, attachment_url, attachment_name } = req.body;
+    const file = req.file;
+
+    const trx = await knex.transaction();
+    try {
+        const approval = await trx('document_approvals').where({ id }).first();
+        if (!approval) throw new Error("Pengajuan tidak ditemukan");
+
+        const steps = await trx('approval_steps').where({ approval_id: id }).orderBy('step_index', 'asc');
+        const currentStep = steps[approval.current_step_index];
+
+        if (!currentStep || currentStep.approver_username !== username) {
+            throw new Error("Anda bukan approver untuk tahap ini");
+        }
+
+        // Update status step saat ini
+        await trx('approval_steps').where({ id: currentStep.id }).update({
+            status: action === 'Approve' ? 'Approved' : 'Rejected',
+            note: note || '',
+            action_date: new Date(),
+            attachment_url: attachment_url || (file ? `/uploads/${file.filename}` : currentStep.attachment_url),
+            attachment_name: attachment_name || (file ? file.originalname : currentStep.attachment_name)
+        });
+
+        // Update status induk dan index step
+        if (action === 'Reject') {
+            await trx('document_approvals').where({ id }).update({ status: 'Rejected' });
+        } else {
+            if (approval.current_step_index === steps.length - 1) {
+                await trx('document_approvals').where({ id }).update({ status: 'Approved' });
+            } else {
+                await trx('document_approvals').where({ id }).update({ 
+                    current_step_index: approval.current_step_index + 1 
+                });
+            }
+        }
+
+        await trx.commit();
+        res.json({ message: `Berhasil ${action === 'Approve' ? 'menyetujui' : 'menolak'} pengajuan` });
+    } catch (err) {
+        await trx.rollback();
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/approvals/:id/reset-step', checkAuth, async (req, res) => {
+    const { id } = req.params;
+    const { stepIndex } = req.body;
+    const trx = await knex.transaction();
+    try {
+        const approval = await trx('document_approvals').where({ id }).first();
+        if (!approval) throw new Error("Pengajuan tidak ditemukan");
+
+        // Reset status step terpilih dan semua step setelahnya menjadi Pending
+        await trx('approval_steps')
+            .where('approval_id', id)
+            .andWhere('step_index', '>=', stepIndex)
+            .update({
+                status: 'Pending',
+                note: '',
+                action_date: null,
+                attachment_url: null,
+                attachment_name: null
+            });
+
+        // Kembalikan status induk ke Pending dan arahkan index ke step yang di-reset
+        await trx('document_approvals').where({ id }).update({
+            status: 'Pending',
+            current_step_index: stepIndex,
+            updated_at: new Date()
+        });
+
+        await trx.commit();
+        res.json({ message: 'Berhasil menarik kembali keputusan. Alur diulang dari tahap ini.' });
+    } catch (err) {
+        await trx.rollback();
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/approvals/:id', checkAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        await knex('document_approvals').where({ id }).delete();
+        res.json({ message: 'Pengajuan berhasil dihapus' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -105,7 +259,7 @@ app.post('/api/approvals', checkAuth, async (req, res) => {
 
 // Gunakan legacyRoutes hanya untuk fitur yang belum di-override.
 // Pastikan rute /approvals di dalam legacyRoutes.js sudah dinonaktifkan.
-app.use('/api', legacyRoutes);
+app.use('/api', legacyRoutes); 
 
 app.post('/api/upload', upload.single('file'), uploadDocument); // Legacy Alias
 
@@ -182,7 +336,13 @@ app.delete('/api/sop-flows/:id', checkAuth, async (req, res) => {
 
 // Secure File Access
 
-app.get('/uploads/:filename', checkAuth, (req, res) => {
+app.get('/uploads/:filename', (req, res, next) => {
+    // Fallback: Izinkan token dari query parameter untuk akses langsung (preview/download)
+    if (req.query.token && !req.headers.authorization) {
+        req.headers.authorization = `Bearer ${req.query.token}`;
+    }
+    next();
+}, checkAuth, (req, res) => {
     const filename = req.params.filename;
     const filePath = path.join(UPLOADS_DIR, filename);
     const resolvedPath = path.resolve(filePath).toLowerCase();
@@ -246,7 +406,35 @@ app.use((err, req, res, next) => {
 // Start Server
 // Ensure DB migration or init logic is handled if needed
 try {
-    await initDb();
+    // initDb sudah menangani migrasi dan seeding awal secara terpadu
+    await initDb(); 
+
+    // --- POST-MIGRATION SELF-HEALING (CRITICAL) ---
+    // Dijalankan SETELAH migrasi agar tabel yang baru dibuat (seperti 'invoices') bisa diproses
+    const tablesToFix = ['documents', 'invoices', 'approval_steps'];
+    for (const tableName of tablesToFix) {
+        try {
+            const hasTable = await knex.schema.hasTable(tableName);
+            if (hasTable) {
+                const hasVector = await knex.schema.hasColumn(tableName, 'vector');
+                if (!hasVector) {
+                    logger.info(`Self-Healing: Menambahkan kolom 'vector' ke tabel ${tableName}...`);
+                    await knex.schema.alterTable(tableName, table => table.text('vector'));
+                    logger.info(`✅ Kolom 'vector' berhasil ditambahkan ke ${tableName}.`);
+                }
+            }
+            if (tableName === 'approval_steps') {
+                const hasInstruction = await knex.schema.hasColumn(tableName, 'instruction');
+                if (!hasInstruction) {
+                    logger.info(`Self-Healing: Menambahkan kolom 'instruction' ke tabel ${tableName}...`);
+                    await knex.schema.alterTable(tableName, table => table.text('instruction'));
+                }
+            }
+        } catch (err) {
+            logger.error(`❌ Gagal menjalankan Self-Healing pada tabel ${tableName}:`, err.message);
+        }
+    }
+
     server.listen(PORT, '0.0.0.0', () => {
         logger.info(`Server started on http://0.0.0.0:${PORT}`);
         logger.info(`Uploads Directory: ${UPLOADS_DIR}`);

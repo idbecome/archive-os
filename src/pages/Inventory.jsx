@@ -9,7 +9,7 @@ export default function Inventory({
     handleSlotClick, handleExcelImport, downloadTemplate, excelInputRef,
     handleExportInventory, inventorySearchQuery, setInventorySearchQuery,
     hasPermission, activeInvTab, setActiveInvTab, externalItems, isProcessing,
-    onRestoreExternal, onViewExternal, inventoryIssues = []
+    ocrStats, onRestoreExternal, onViewExternal, inventoryIssues = []
 }) {
 
     // Unified match helper for both Internal Slot and External Item
@@ -22,12 +22,17 @@ export default function Inventory({
         if (item.boxId && String(item.boxId).toLowerCase().includes(q)) return true;
 
         // 2. Check boxData (could be item.boxData directly or slot.boxData)
-        const data = item.boxData;
+        let data = item.box_data || item.boxData;
+        if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (e) { return false; }
+        }
 
         // Safety check for data object
         if (!data || typeof data !== 'object') return false;
 
         if (data.id && String(data.id).toLowerCase().includes(q)) return true;
+        // Tambahkan pengecekan ocrContent di level box jika ada
+        if (data.ocrContent && String(data.ocrContent).toLowerCase().includes(q)) return true;
         if (data.destination && String(data.destination).toLowerCase().includes(q)) return true;
         if (data.sender && String(data.sender).toLowerCase().includes(q)) return true;
 
@@ -41,7 +46,8 @@ export default function Inventory({
                 return ord.invoices?.some(inv =>
                     String(inv.invoiceNo || '').toLowerCase().includes(q) ||
                     String(inv.vendor || '').toLowerCase().includes(q) ||
-                    String(inv.ocrContent || '').toLowerCase().includes(q)
+                    String(inv.ocrContent || inv.ocr_content || '').toLowerCase().includes(q) ||
+                    ((inv.status === 'processing' || inv.status === 'waiting') && 'proses ocr'.includes(q))
                 );
             });
         }
@@ -63,6 +69,16 @@ export default function Inventory({
             };
         }
 
+        // 2. Analisis OCR Processing (Background Queue)
+        const totalPending = (ocrStats?.counts?.active || 0) + (ocrStats?.counts?.waiting || 0);
+        if (totalPending > 0) {
+            return {
+                text: `Antrian OCR: ${totalPending} lampiran invoice sedang dalam proses ekstraksi teks. Anda dapat terus bekerja, sistem akan memperbarui konten secara otomatis.`,
+                icon: <RefreshCw className="text-amber-500 animate-spin" size={20} />,
+                color: "border-amber-200 dark:border-amber-800/50 bg-amber-50/50 dark:bg-amber-900/10 text-amber-800 dark:text-amber-200"
+            };
+        }
+
         // 2. Analisis Kapasitas Kritis
         if (stats.occupancy > 90) {
             return {
@@ -75,8 +91,13 @@ export default function Inventory({
         // 3. Analisis Retensi (Mencari data lama > 5 tahun)
         const currentYear = new Date().getFullYear();
         const oldBoxes = inventory.filter(s => {
-            if (!s.boxData?.ordners) return false;
-            return s.boxData.ordners.some(o => {
+            let data = s.box_data || s.boxData;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { return false; }
+            }
+            
+            if (!data?.ordners) return false;
+            return data.ordners.some(o => {
                 const periodYear = parseInt(o.period);
                 return !isNaN(periodYear) && (currentYear - periodYear) >= 5;
             });
@@ -103,8 +124,13 @@ export default function Inventory({
 
         // 5. Analisis Kepadatan Data
         const totalInvoices = inventory.reduce((acc, s) => {
-            if (!s.boxData?.ordners) return acc;
-            return acc + s.boxData.ordners.reduce((sum, o) => sum + (o.invoices?.length || 0), 0);
+            let data = s.box_data || s.boxData;
+            if (typeof data === 'string') {
+                try { data = JSON.parse(data); } catch (e) { return acc; }
+            }
+            
+            if (!data?.ordners) return acc;
+            return acc + data.ordners.reduce((sum, o) => sum + (o.invoices?.length || 0), 0);
         }, 0);
 
         if (totalInvoices > 0 && stats.stored > 0 && (totalInvoices / stats.stored) > 15) {
@@ -311,6 +337,7 @@ export default function Inventory({
                         getStatusStyle={getStatusStyle} 
                         isMatch={isMatch} 
                         inventorySearchQuery={inventorySearchQuery} 
+                        ocrStats={ocrStats}
                     />
                 )}
 
@@ -321,6 +348,7 @@ export default function Inventory({
                         isMatch={isMatch} 
                         onViewExternal={onViewExternal} 
                         onRestoreExternal={onRestoreExternal} 
+                        ocrStats={ocrStats}
                         hasPermission={hasPermission} 
                     />
                 )}
