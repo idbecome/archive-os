@@ -71,47 +71,6 @@ const initDb = async () => {
         }
     } catch (e) { console.warn('Approval self-healing error:', e.message); }
 
-    // --- SELF-HEALING FOR SOP FLOWS ---
-    try {
-        const hasSopFlows = await knex.schema.hasTable('sop_flows');
-        if (!hasSopFlows) {
-            console.log('Self-healing: Creating sop_flows table...');
-            await knex.schema.createTable('sop_flows', table => {
-                table.increments('id').primary();
-                table.string('title').notNullable();
-                table.text('description').nullable();
-                table.string('category').nullable();
-                table.text('steps').nullable();
-                table.text('visual_config').nullable();
-                table.string('owner').nullable();
-                table.string('privacy_type', 50).defaultTo('public');
-                table.text('allowed_departments').nullable();
-                table.text('allowed_users', 50).nullable();
-                table.timestamps(true, true);
-            });
-        } else {
-            // Patch existing sop_flows table
-            const columnsToAdd = [
-                { name: 'privacy_type', type: 'string', size: 50, default: 'public' },
-                { name: 'allowed_departments', type: 'text' },
-                { name: 'allowed_users', type: 'text' }
-            ];
-            for (const col of columnsToAdd) {
-                const exists = await knex.schema.hasColumn('sop_flows', col.name);
-                if (!exists) {
-                    await knex.schema.alterTable('sop_flows', table => {
-                        let builder;
-                        if (col.type === 'string') builder = table.string(col.name, col.size);
-                        else builder = table.text(col.name);
-
-                        if (col.default !== undefined) builder.defaultTo(col.default);
-                        else builder.nullable();
-                    });
-                }
-            }
-        }
-    } catch (e) { console.warn('SOP Flows self-healing error:', e.message); }
-
     // --- STEP 0: CRITICAL SELF-HEALING (Run BEFORE migrations) ---
     try {
         const hasApprovalSteps = await knex.schema.hasTable('approval_steps');
@@ -391,69 +350,6 @@ const initDb = async () => {
                     });
                 }
             } catch (e) { /* Ignore if already unique */ }
-        }
-
-        // Self-Healing: Ensure comments table exists (Fix for 500 Error on Document Chat)
-        const hasCommentsTable = await knex.schema.hasTable('comments');
-        if (!hasCommentsTable) {
-            console.log('Self-healing: Creating missing comments table...');
-            await knex.schema.createTable('comments', table => {
-                table.string('id').primary();
-                table.string('documentId').notNullable();
-                table.string('user').notNullable();
-                table.text('text').notNullable();
-                table.timestamp('timestamp').defaultTo(knex.fn.now());
-                table.string('attachment').nullable();
-                table.string('attachment_name').nullable();
-                table.string('attachment_type').nullable();
-            });
-            console.log('Self-healing: comments table created successfully.');
-        }
-
-        // Self-Healing: Ensure tax_audit_notes table exists and has correct schema (Fix for 500 Error)
-        let hasTaxAuditNotes = await knex.schema.hasTable('tax_audit_notes');
-
-        // CHECK ID TYPE: If it's STRING, we must recreate the table because backend does NOT send ID (needs Auto-Increment)
-        if (hasTaxAuditNotes) {
-            const columnInfo = await knex('tax_audit_notes').columnInfo();
-            // Check if ID is varchar/string/text
-            const isIdString = columnInfo.id && (String(columnInfo.id.type).toLowerCase().includes('char') || String(columnInfo.id.type).toLowerCase().includes('text'));
-
-            if (isIdString) {
-                console.log('Self-healing: Detected incompatible ID type (String) in tax_audit_notes. Recreating table as Auto-Increment...');
-                await knex.schema.dropTable('tax_audit_notes');
-                hasTaxAuditNotes = false; // Mark as not existing so it gets created below
-            }
-        }
-
-        if (!hasTaxAuditNotes) {
-            console.log('Self-healing: Creating missing tax_audit_notes table...');
-            await knex.schema.createTable('tax_audit_notes', table => {
-                table.increments('id').primary(); // FIX: Use Auto-Increment Integer
-                table.string('auditId').notNullable();
-                table.integer('stepIndex').notNullable();
-                table.string('user').notNullable();
-                table.text('text').notNullable();
-                table.timestamp('timestamp').defaultTo(knex.fn.now());
-
-                // CamelCase columns to match backend controller
-                table.string('attachmentName').nullable();
-                table.string('attachmentUrl').nullable();
-                table.string('attachmentType').nullable();
-                table.string('attachmentSize').nullable();
-            });
-        } else {
-            // Ensure columns match backend expectations (camelCase)
-            const hasAttachmentName = await knex.schema.hasColumn('tax_audit_notes', 'attachmentName');
-            if (!hasAttachmentName) {
-                console.log('Self-healing: Patching tax_audit_notes schema...');
-                await knex.schema.alterTable('tax_audit_notes', table => {
-                    table.string('attachmentName').nullable();
-                    table.string('attachmentUrl').nullable();
-                    table.string('attachmentType').nullable();
-                    table.string('attachmentSize').nullable();
-                });
-            }
         }
     } catch (err) {
         console.error('Migration/Seeding failed:', err);

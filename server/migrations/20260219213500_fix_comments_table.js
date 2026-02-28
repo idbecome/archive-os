@@ -1,30 +1,31 @@
 export const up = async (knex) => {
-    // Check if 'comments' exists and rename it, or create 'document_comments'
+    // Ensure 'comments' table has an 'attachment' column for JSON
     const hasComments = await knex.schema.hasTable('comments');
-    const hasDocComments = await knex.schema.hasTable('document_comments');
 
-    if (hasComments && !hasDocComments) {
-        await knex.schema.renameTable('comments', 'document_comments');
-    } else if (!hasDocComments) {
-        await knex.schema.createTable('document_comments', (table) => {
-            table.string('id').primary();
-            table.string('documentId');
-            table.string('user', 100);
-            table.text('text');
-            table.dateTime('timestamp').defaultTo(knex.fn.now());
-            table.text('attachment'); // storing JSON string
-        });
+    if (hasComments) {
+        const hasAttachment = await knex.schema.hasColumn('comments', 'attachment');
+        if (!hasAttachment) {
+            await knex.schema.table('comments', (table) => {
+                table.text('attachment'); // storing JSON string
+            });
+            console.log("  ✅ Added 'attachment' column to comments table.");
+        } else {
+            console.log("  ⏭️  'attachment' column already exists in comments table.");
+        }
     }
 };
 
-export const down = async (knex) => {
-    const hasComments = await knex.schema.hasTable('comments');
-    const hasDocComments = await knex.schema.hasTable('document_comments');
 
-    if (hasDocComments && !hasComments) {
-        await knex.schema.renameTable('document_comments', 'comments');
-    } else if (hasDocComments && hasComments) {
-        // If both exist, just drop the one we created in 'up'
-        await knex.schema.dropTable('document_comments');
+export const down = async (knex) => {
+    // No-op for this revert, as dropping the JSON attachment column 
+    // might destroy data if we depend on it later, but for strictness:
+    const hasComments = await knex.schema.hasTable('comments');
+    if (hasComments) {
+        const hasAttachment = await knex.schema.hasColumn('comments', 'attachment');
+        if (hasAttachment) {
+            await knex.schema.table('comments', (table) => {
+                table.dropColumn('attachment');
+            });
+        }
     }
 };
