@@ -4,7 +4,9 @@ import {
     ReactFlow,
     Controls,
     Background,
-    MarkerType
+    MarkerType,
+    Handle,
+    Position
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { ShieldCheck, Play, Flag, CheckCircle2, XCircle, Clock } from 'lucide-react';
@@ -20,11 +22,13 @@ const StartNode = () => (
             <p className="text-[10px] font-black uppercase opacity-70">Trigger</p>
             <p className="font-bold">START</p>
         </div>
+        <Handle type="source" position={Position.Right} className="opacity-0" />
     </div>
 );
 
 const EndNode = ({ data }) => (
     <div className={`px-6 py-3 rounded-2xl text-white shadow-xl border-2 flex items-center gap-3 min-w-[150px] ${data.status === 'Completed' ? 'bg-indigo-600 border-indigo-400' : 'bg-slate-400 border-slate-300'}`}>
+        <Handle type="target" position={Position.Left} className="opacity-0" />
         <div className="w-8 h-8 rounded-lg bg-white/20 flex items-center justify-center">
             <Flag size={18} fill="white" />
         </div>
@@ -42,15 +46,16 @@ const ApproverNode = ({ data }) => {
 
     return (
         <div className={`px-6 py-4 rounded-3xl bg-white dark:bg-slate-900 shadow-2xl border-2 min-w-[200px] transition-all ${isDone ? 'border-emerald-500' :
-                isRejected ? 'border-red-500' :
-                    isActive ? 'border-amber-500 ring-4 ring-amber-500/20 scale-105 z-50' :
-                        'border-slate-100 dark:border-slate-800'
+            isRejected ? 'border-red-500' :
+                isActive ? 'border-amber-500 ring-4 ring-amber-500/20 scale-105 z-50' :
+                    'border-slate-100 dark:border-slate-800'
             }`}>
+            <Handle type="target" position={Position.Left} className="opacity-0" />
             <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${isDone ? 'bg-emerald-50 text-emerald-600' :
-                        isRejected ? 'bg-red-50 text-red-600' :
-                            isActive ? 'bg-amber-50 text-amber-600 animate-pulse' :
-                                'bg-slate-50 dark:bg-slate-800 text-slate-400'
+                    isRejected ? 'bg-red-50 text-red-600' :
+                        isActive ? 'bg-amber-50 text-amber-600 animate-pulse' :
+                            'bg-slate-50 dark:bg-slate-800 text-slate-400'
                     }`}>
                     {isDone ? <CheckCircle2 size={20} /> :
                         isRejected ? <XCircle size={20} /> :
@@ -61,9 +66,9 @@ const ApproverNode = ({ data }) => {
                     <p className="font-bold text-slate-800 dark:text-white truncate">{data.label}</p>
                     <div className="flex items-center gap-1 mt-1">
                         <span className={`text-[8px] font-black px-1.5 py-0.5 rounded-md uppercase tracking-tighter ${isDone ? 'bg-emerald-500/10 text-emerald-600' :
-                                isRejected ? 'bg-red-500/10 text-red-600' :
-                                    isActive ? 'bg-amber-500/10 text-amber-600' :
-                                        'bg-slate-100 dark:bg-slate-800 text-slate-500'
+                            isRejected ? 'bg-red-500/10 text-red-600' :
+                                isActive ? 'bg-amber-500/10 text-amber-600' :
+                                    'bg-slate-100 dark:bg-slate-800 text-slate-500'
                             }`}>
                             {data.status || 'Waiting'}
                         </span>
@@ -73,6 +78,7 @@ const ApproverNode = ({ data }) => {
             {data.action_date && (
                 <p className="text-[8px] text-slate-400 mt-2 font-bold italic">Done: {new Date(data.action_date).toLocaleDateString()}</p>
             )}
+            <Handle type="source" position={Position.Right} className="opacity-0" />
         </div>
     );
 };
