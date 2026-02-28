@@ -4,8 +4,9 @@ import {
     generateEmbedding,
     cosineSimilarity,
     parseIntent,
-    generateAnswer
-} from '../ai_search.js'; // Keep this service as is for now
+    generateAnswer,
+    vectorStore
+} from '../ai_search.js';
 
 export const searchDocuments = async (req, res) => {
     try {
@@ -206,27 +207,9 @@ export const semanticSearch = async (req, res) => {
                 .limit(20)
         ]);
 
-        // 2. Semantic Vector Search
+        // 2. Semantic Vector Search via High-Speed RAM Cache
         const queryVector = await generateEmbedding(query);
-        const docsWithVectors = await knex('documents').whereNotNull('vector').andWhereNot('vector', '');
-
-        const semanticMatches = docsWithVectors.map(d => {
-            let similarity = 0;
-            try {
-                const docVector = typeof d.vector === 'string' ? JSON.parse(d.vector) : d.vector;
-                similarity = cosineSimilarity(queryVector, docVector);
-            } catch (e) { }
-
-            return {
-                id: d.id,
-                name: d.title,
-                date: d.uploadDate,
-                size: d.size,
-                matchType: d.category || (d.title.toLowerCase().includes('invoice') ? 'invoice' : 'document'),
-                score: similarity,
-                data: d
-            };
-        }).filter(r => r.score > 0.4);
+        const semanticMatches = vectorStore.searchNearest(queryVector, 0.4, 15);
 
         // 3. Merging and Deduplication
         const resultsMap = new Map();

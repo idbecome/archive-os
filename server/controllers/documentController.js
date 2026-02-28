@@ -6,6 +6,7 @@ import { DOC_STATUS } from '../constants/status.js';
 import { systemLog } from '../utils/logger.js';
 import { addOCRJob } from '../queue.js';
 import { UPLOADS_DIR } from '../config/upload.js';
+import { vectorStore } from '../ai_search.js';
 
 export const getDocuments = async (req, res) => {
     try {
@@ -249,6 +250,10 @@ export const deleteDocument = async (req, res) => {
         await knex('job_queue').where('data', 'like', `%"docId":"${subId}"%`).del();
 
         await knex('documents').where('id', subId).del();
+
+        // --- ⚡ Fast RAM Cache Sync ---
+        vectorStore.removeDocument(subId);
+
         await systemLog(null, "Delete Document", `Menghapus dokumen: "${doc.title}"`);
         res.json({ success: true });
     } catch (err) {

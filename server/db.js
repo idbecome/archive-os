@@ -159,64 +159,7 @@ const initDb = async () => {
             }
         }
 
-        // --- FIX: Ensure Tax Tables Exist (Bypass blocked migrations) ---
-        const hasTaxObjects = await knex.schema.hasTable('tax_objects');
-        if (!hasTaxObjects) {
-            console.log('Self-healing: Creating missing tax_objects table...');
-            await knex.schema.createTable('tax_objects', table => {
-                table.increments('id').primary();
-                table.string('tax_type');
-                table.string('tax_object_code');
-                table.string('tax_object_name');
-                table.decimal('rate', 10, 4);
-                table.boolean('is_pph21_bukan_pegawai').defaultTo(false);
-                table.boolean('use_ppn').defaultTo(true);
-                table.string('markup_mode').defaultTo('none');
-                // Add missing columns found in error log to support full data save
-                table.string('name').nullable();
-                table.string('id_type').nullable();
-                table.string('identity_number').nullable();
-                table.string('email').nullable();
-                table.decimal('dpp', 15, 2).defaultTo(0);
-                table.decimal('discount', 15, 2).defaultTo(0);
-                table.decimal('dpp_net', 15, 2).defaultTo(0);
-                table.decimal('pph', 15, 2).defaultTo(0);
-                table.decimal('ppn', 15, 2).defaultTo(0);
-                table.decimal('total_payable', 15, 2).defaultTo(0);
-            });
-        } else {
-            // Patch logic has been permanently moved to server/migrations/20260228130000_fix_tax_objects_columns.js
-            console.log('Self-healing: tax_objects columns integrity delegated to Knex migrations.');
-        }
-
-        const hasTaxWp = await knex.schema.hasTable('tax_wp');
-        if (!hasTaxWp) {
-            console.log('Self-healing: Creating missing tax_wp table...');
-            await knex.schema.createTable('tax_wp', table => {
-                table.increments('id').primary();
-                table.string('name');
-                table.string('id_type').defaultTo('NPWP');
-                table.string('identity_number').unique();
-                table.string('email').nullable();
-                table.string('tax_type');
-                table.string('tax_object_code');
-                table.string('tax_object_name');
-                table.string('markup_mode').defaultTo('none');
-                table.boolean('is_pph21_bukan_pegawai').defaultTo(false);
-                table.boolean('use_ppn').defaultTo(true);
-                table.timestamp('created_at').defaultTo(knex.fn.now());
-                // Add calculation columns
-                table.decimal('dpp', 15, 2).defaultTo(0);
-                table.decimal('discount', 15, 2).defaultTo(0);
-                table.decimal('dpp_net', 15, 2).defaultTo(0);
-                table.decimal('pph', 15, 2).defaultTo(0);
-                table.decimal('ppn', 15, 2).defaultTo(0);
-                table.decimal('total_payable', 15, 2).defaultTo(0);
-            });
-        } else {
-            // Patch logic has been permanently moved to server/migrations/20260228130000_fix_tax_objects_columns.js
-            console.log('Self-healing: tax_wp columns integrity delegated to Knex migrations.');
-        }
+        // --- FIX: Tax Tables are now strictly defined in 20260228140000 Knex migration ---
     } catch (err) {
         console.error('Migration/Seeding failed:', err);
     }

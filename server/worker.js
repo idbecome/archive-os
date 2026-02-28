@@ -10,7 +10,7 @@ import JSZip from 'jszip';
 import { knex } from './db.js';
 import { JOB_STATUS, DOC_STATUS } from './constants/status.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { generateEmbedding } from './ai_search.js';
+import { generateEmbedding, vectorStore } from './ai_search.js';
 
 import { pathToFileURL } from 'url';
 
@@ -495,6 +495,13 @@ async function processOCRJob(job) {
                     await knex('documents')
                         .where('id', docId)
                         .update({ vector: vectorJson });
+
+                    // --- ⚡ Fast RAM Cache Sync ---
+                    // Fetch the updated doc to inject into the cache
+                    const updatedDoc = await knex('documents').where('id', docId).first();
+                    if (updatedDoc) {
+                        vectorStore.upsertDocument(updatedDoc, vector);
+                    }
                 }
                 console.log(`[Worker] AI Embedding Generated for: ${docId || context.invoiceId}`);
             } catch (vErr) {

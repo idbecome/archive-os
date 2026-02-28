@@ -431,13 +431,17 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: err.message });
 });
 
+// Import Fast In-Memory Vector Store
+import { vectorStore } from './ai_search.js';
+
 // Start Server
 // Ensure DB migration or init logic is handled if needed
 try {
     // initDb sudah menangani migrasi dan seeding awal secara terpadu
     await initDb();
 
-
+    // Initialize High-Speed RAM Vector Cache
+    await vectorStore.initialize();
 
     server.listen(PORT, '0.0.0.0', () => {
         logger.info(`Server started on http://0.0.0.0:${PORT}`);
