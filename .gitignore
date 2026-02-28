@@ -14,7 +14,6 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
-dist
 dist-ssr
 *.local
 
@@ -30,8 +29,22 @@ dist-ssr
 *.sw?
 
 # Uploads
-server/uploads/
-uploads/
+# Ignore semua isi folder uploads
+server/uploads/*
+
+# Tapi jangan ignore foldernya
+!server/uploads/
+
+# Jangan ignore file placeholder
+!server/uploads/.gitkeep
 *.sqlite
 *.db
 src_zona1_backup/
+# Ignore semua isi folder uploads
+uploads/*
+
+# Tapi jangan ignore foldernya
+!uploads/
+
+# Jangan ignore file placeholder
+!uploads/.gitkeep
