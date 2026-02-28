@@ -1257,6 +1257,35 @@ export const db = {
         }));
     },
 
+    async createTaxObject(data) {
+        const token = localStorage.getItem('archive_token');
+        const response = await fetch(`${API_URL}/tax/objects`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+            body: JSON.stringify(data)
+        });
+        return await response.json();
+    },
+
+    async updateTaxObject(id, data) {
+        const token = localStorage.getItem('archive_token');
+        const response = await fetch(`${API_URL}/tax/objects/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+            body: JSON.stringify(data)
+        });
+        return await response.json();
+    },
+
+    async deleteTaxObject(id) {
+        const token = localStorage.getItem('archive_token');
+        const response = await fetch(`${API_URL}/tax/objects/${id}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+        });
+        return await response.json();
+    },
+
     async getWpDatabase() {
         const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/tax/wp?cb=${Date.now()}`, {

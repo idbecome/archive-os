@@ -2,6 +2,8 @@ import express from 'express';
 import {
     getTaxObjects,
     createTaxObject,
+    updateTaxObject,
+    deleteTaxObject,
     getTaxAudits,
     createTaxAudit,
     updateAuditStatus,
@@ -31,6 +33,8 @@ router.use(checkAuth);
 // Master Data
 router.get('/objects', getTaxObjects);
 router.post('/objects', createTaxObject);
+router.put('/objects/:id', updateTaxObject);
+router.delete('/objects/:id', deleteTaxObject);
 
 // Audits
 router.get('/audits', getTaxAudits);

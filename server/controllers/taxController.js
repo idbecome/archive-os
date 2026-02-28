@@ -15,16 +15,48 @@ export const getTaxObjects = async (req, res) => {
 
 export const createTaxObject = async (req, res) => {
     try {
-        const { tax_code, name, type, rate, description } = req.body;
+        const { code, name, tax_type, rate, note, is_pph21_bukan_pegawai, use_ppn, markup_mode } = req.body;
         const [id] = await knex('master_tax_objects').insert({
-            tax_code,
-            name,
-            type,
-            rate,
-            description
+            code, name, tax_type,
+            rate: parseFloat(rate) || 0,
+            note: note || null,
+            is_pph21_bukan_pegawai: is_pph21_bukan_pegawai ? 1 : 0,
+            use_ppn: use_ppn !== undefined ? (use_ppn ? 1 : 0) : 1,
+            markup_mode: markup_mode || 'none'
         });
-        await systemLog('Admin', "Create Tax Object", `Created: ${name} (${tax_code})`);
+        await systemLog('Admin', "Create Tax Object", `Created: ${name} (${code})`);
         res.json({ id });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const updateTaxObject = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { code, name, tax_type, rate, note, is_pph21_bukan_pegawai, use_ppn, markup_mode } = req.body;
+        await knex('master_tax_objects').where('id', id).update({
+            code, name, tax_type,
+            rate: parseFloat(rate) || 0,
+            note: note || null,
+            is_pph21_bukan_pegawai: is_pph21_bukan_pegawai ? 1 : 0,
+            use_ppn: use_ppn !== undefined ? (use_ppn ? 1 : 0) : 1,
+            markup_mode: markup_mode || 'none'
+        });
+        await systemLog('Admin', "Update Tax Object", `Updated: ${name} (ID: ${id})`);
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+};
+
+export const deleteTaxObject = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const obj = await knex('master_tax_objects').where('id', id).first();
+        await knex('master_tax_objects').where('id', id).del();
+        await systemLog('Admin', "Delete Tax Object", `Deleted: ${obj?.name || id}`);
+        res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }

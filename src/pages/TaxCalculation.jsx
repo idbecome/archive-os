@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Calculator, Sparkles, TrendingUp, AlertCircle, FileText, Search, Database, User, Download, Upload, Save, Loader2 } from 'lucide-react';
+import { Calculator, Sparkles, TrendingUp, AlertCircle, FileText, Search, Database, User, Download, Upload, Save, Loader2, Book } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Card } from '../components/ui/Card';
 import TaxCalculator from '../components/tax/TaxCalculator';
@@ -9,10 +9,11 @@ import { API_URL } from '../services/database';
 import { parseApiError } from '../utils/errorHandler';
 import TaxWpDatabase from '../components/tax/TaxWpDatabase';
 import { useToast } from '../components/ui/Toast';
+import MasterTaxObjectsTab from '../components/tax/MasterTaxObjectsTab';
 
 export default function TaxCalculation({ onCopy, hasPermission }) {
     const { toast, updateToast } = useToast();
-    const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database'
+    const [activeTab, setActiveTab] = useState('simulation'); // 'simulation', 'object', 'database', 'master'
     const [isLoading, setIsLoading] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [calcData, setCalcData] = useState({ dpp: 0, rate: 0, pph: 0, ppn: 0, totalPayable: 0, discount: 0, dppNet: 0, markupMode: 'none', isPph21BukanPegawai: false, usePpn: true });
@@ -75,7 +76,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         try {
             const data = await taxService.getWpDatabase();
             console.log("[Debug] Raw Data from Service:", data);
-            
+
             if (Array.isArray(data)) {
                 const validData = data.filter(item => item && (item.name || item.identityNumber));
                 console.log("WP Database Loaded:", validData.length, "records");
@@ -131,30 +132,30 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
         const tid = toast.loading(`Menyiapkan file "${file.name}"...`);
         setIsImporting(true);
-        
+
         try {
             updateToast(tid, { message: "Mengunggah file ke server...", progress: 30 });
             const result = await taxService.importWpExcel(file);
-            
+
             if (result && !result.error) {
                 updateToast(tid, { message: "Sinkronisasi data & indexing...", progress: 70 });
-                
+
                 // Berikan jeda agar DB commit selesai, lalu verifikasi data
                 setTimeout(async () => {
                     const finalData = await fetchDatabase();
                     const finalCount = finalData?.length || 0;
-                    
+
                     if (finalCount === 0) {
-                        updateToast(tid, { 
-                            type: 'error', 
-                            message: "Kritis: Server melaporkan sukses, tapi 0 data tersimpan. Database sedang diperbaiki otomatis, silakan coba lagi.", 
-                            progress: 100 
+                        updateToast(tid, {
+                            type: 'error',
+                            message: "Kritis: Server melaporkan sukses, tapi 0 data tersimpan. Database sedang diperbaiki otomatis, silakan coba lagi.",
+                            progress: 100
                         });
                     } else {
-                        updateToast(tid, { 
-                            type: 'success', 
-                            message: `Berhasil! ${finalCount} data Wajib Pajak telah disinkronkan.`, 
-                            progress: 100 
+                        updateToast(tid, {
+                            type: 'success',
+                            message: `Berhasil! ${finalCount} data Wajib Pajak telah disinkronkan.`,
+                            progress: 100
                         });
                     }
                 }, 3500);
@@ -163,9 +164,9 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             }
         } catch (error) {
             console.error("Import Error Detail:", error);
-            updateToast(tid, { 
-                type: 'error', 
-                message: `Gagal Import: ${error.message}. Pastikan kolom Excel sudah sesuai template.` 
+            updateToast(tid, {
+                type: 'error',
+                message: `Gagal Import: ${error.message}. Pastikan kolom Excel sudah sesuai template.`
             });
         } finally {
             setIsImporting(false);
@@ -179,11 +180,11 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
         const tid = toast.loading(`Mengimport Master Objek Pajak...`);
         setIsImporting(true);
-        
+
         try {
             updateToast(tid, { message: "Memproses file master...", progress: 40 });
             const result = await taxService.importMasterExcel(file);
-            
+
             if (result && !result.error) {
                 updateToast(tid, { message: "Memperbarui daftar objek...", progress: 80 });
                 await fetchMasterData();
@@ -230,7 +231,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             alert('Nomor Identitas (NPWP/NIK) harus berjumlah 16 digit angka!');
             return;
         }
-        
+
         const previousData = [...savedData];
 
         setIsLoading(true);
@@ -351,7 +352,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
     const handleDelete = async (id) => {
         if (!window.confirm('Yakin ingin menghapus data ini?')) return; // Use window.confirm
         if (!canDelete) return alert('Anda tidak memiliki izin untuk menghapus data.');
-        
+
         const previousData = [...savedData];
         setSavedData(savedData.filter(d => d.id !== id));
 
@@ -361,6 +362,40 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
             setSavedData(previousData);
             const msg = await parseApiError(error);
             alert('Gagal menghapus data: ' + msg);
+        }
+    };
+
+    // --- MASTER TAX OBJECT HANDLERS ---
+    const handleSaveMaster = async (data) => {
+        try {
+            await taxService.createTaxObject(data);
+            alert('Berhasil menambah objek pajak baru!');
+            fetchMasterData();
+        } catch (error) {
+            const msg = await parseApiError(error);
+            alert('Gagal menambah objek: ' + msg);
+        }
+    };
+
+    const handleUpdateMaster = async (id, data) => {
+        try {
+            await taxService.updateTaxObject(id, data);
+            alert('Berhasil memperbarui objek pajak!');
+            fetchMasterData();
+        } catch (error) {
+            const msg = await parseApiError(error);
+            alert('Gagal memperbarui: ' + msg);
+        }
+    };
+
+    const handleDeleteMaster = async (id) => {
+        try {
+            await taxService.deleteTaxObject(id);
+            alert('Berhasil menghapus objek pajak!');
+            fetchMasterData();
+        } catch (error) {
+            const msg = await parseApiError(error);
+            alert('Gagal menghapus: ' + msg);
         }
     };
 
@@ -467,6 +502,7 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                         { id: 'simulation', label: 'Simulasi PPh', icon: Calculator },
                         { id: 'object', label: 'Objek Pajak', icon: FileText },
                         { id: 'database', label: 'Database WP', icon: Database },
+                        { id: 'master', label: 'Master Objek', icon: Book },
                     ].map(tab => (
                         <button
                             key={tab.id}
@@ -519,6 +555,18 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
                         </p>
                     </Card>
                 </div>
+            )}
+
+            {/* MASTER OBJEK TAB */}
+            {activeTab === 'master' && (
+                <MasterTaxObjectsTab
+                    masterData={masterData}
+                    onRefresh={fetchMasterData}
+                    onSave={handleSaveMaster}
+                    onUpdate={handleUpdateMaster}
+                    onDelete={handleDeleteMaster}
+                    hasPermission={hasPermission}
+                />
             )}
 
             {/* OBJEK PAJAK TAB */}
