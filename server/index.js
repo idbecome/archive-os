@@ -461,6 +461,12 @@ app.get('/api/system/logs-file/:type', checkAuth, (req, res) => {
 // Socket.io
 io.on('connection', (socket) => {
     logger.info(`Client connected: ${socket.id}`);
+
+    // Relay updates from the background worker to UI clients
+    socket.on('worker:update', (data) => {
+        io.emit('data:changed', data);
+    });
+
     socket.on('disconnect', () => logger.info(`Client disconnected: ${socket.id}`));
 });
 

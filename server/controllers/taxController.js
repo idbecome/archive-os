@@ -3,7 +3,7 @@ import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
 import XLSX from 'xlsx';
 import fs from 'fs';
-import { addOCRJob } from '../queue.js';
+import { addOcrJob } from '../utils/queue.js';
 
 // --- TAX OBJECTS ---
 export const getTaxObjects = async (req, res) => {
@@ -316,12 +316,13 @@ export const addAuditNote = async (req, res) => {
         // Trigger OCR if there's an attachment
         if (req.file) {
             try {
-                await addOCRJob(
+                const context = { type: 'tax_note', noteId };
+                await addOcrJob(
                     `note-${noteId}`,
                     req.file.path,
+                    JSON.stringify(context),
                     req.file.mimetype,
-                    req.file.originalname,
-                    { type: 'tax_note', noteId }
+                    req.file.originalname
                 );
             } catch (qErr) {
                 console.error("Queue Error for Tax Note OCR:", qErr);

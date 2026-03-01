@@ -10,7 +10,12 @@ import { pathToFileURL } from 'url';
 import { knex } from './db.js';
 import { JOB_STATUS, DOC_STATUS } from './constants/status.js';
 import { generateEmbedding, parseIntent, generateAnswer, vectorStore } from './ai_search.js';
-import { ocrQueue } from './queue.js';
+import { Worker } from 'bullmq';
+import { connection, USE_BULLMQ } from './utils/queue.js';
+import { io as ioClient } from 'socket.io-client';
+
+// Connect to the main Node.js process to trigger UI refreshes
+const socket = ioClient(`http://localhost:${process.env.PORT || 5005}`, { reconnection: true });
 
 // PDF.js worker setup
 const pdfjsWorkerPath = path.resolve('node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
@@ -141,7 +146,7 @@ async function processJob(job) {
         let extractedText = "";
         let shouldProcess = true;
 
-        if (docId && docId.toLowerCase().startsWith('doc')) { // Real docId check
+        if (docId && String(docId).toLowerCase().startsWith('doc')) { // Real docId check
             const existingData = await knex('documents').select('ocrContent').where('id', docId).first();
             if (existingData && existingData.ocrContent && existingData.ocrContent.trim().length > 50) {
                 extractedText = existingData.ocrContent;
@@ -181,17 +186,75 @@ async function processJob(job) {
                     }
                 }
                 extractedText = pdfText.trim();
-                // If text is thin, try OCR (Simplified for worker restoration)
+                // If text is thin, try OCR via canvas rendering
                 if (forceOcr || extractedText.length < 50) {
-                    // (Omitted detailed rasterization for brevity of restoration)
-                    extractedText = `[SCAN-DETECTED]\n${extractedText}`;
+                    console.log(`[Worker] Thin text in PDF detected. Rasterizing pages for OCR...`);
+                    try {
+                        const { createCanvas } = await import('canvas');
+                        const images = [];
+                        const uint8Array = new Uint8Array(dataBuffer);
+                        const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: pathToFileURL(standardFontDataUrl).href });
+                        const pdfDocument = await loadingTask.promise;
+
+                        for (let i = 1; i <= Math.min(pdfDocument.numPages, 10); i++) {
+                            const page = await pdfDocument.getPage(i);
+                            const viewport = page.getViewport({ scale: 2.0 }); // High-res scale
+                            const canvas = createCanvas(viewport.width, viewport.height);
+                            const ctx = canvas.getContext('2d');
+
+                            // Fix for Tesseract: Force white background since canvas defaults to transparent
+                            ctx.fillStyle = 'white';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                            const buffer = canvas.toBuffer('image/png');
+                            images.push(buffer);
+                        }
+
+                        // Run Tesseract on each rasterized page
+                        if (images.length > 0) {
+                            let rasterText = "";
+                            const tess = await createWorker('eng+ind');
+                            for (let imgBuf of images) {
+                                const { data: { text } } = await tess.recognize(imgBuf);
+                                rasterText += text + "\n";
+                            }
+                            await tess.terminate();
+                            extractedText = `[SCAN-DETECTED]\n${rasterText.trim()}`;
+                        }
+                    } catch (canvasErr) {
+                        console.error("[Worker] Canvas Rasterization failed:", canvasErr);
+                        extractedText = `[SCAN-DETECTED]\n${extractedText}`;
+                    }
                 }
             } else if (fileType.includes('spreadsheet') || fileType.includes('excel')) {
                 const workbook = XLSX.read(fs.readFileSync(filePath), { type: 'buffer' });
                 extractedText = workbook.SheetNames.map(n => XLSX.utils.sheet_to_txt(workbook.Sheets[n])).join("\n\n");
-            } else if (fileType.includes('word')) {
+            } else if (fileType.includes('word') || filePath.endsWith('.docx')) {
                 const res = await mammoth.extractRawText({ path: filePath });
                 extractedText = res.value;
+            } else if (fileType.includes('powerpoint') || fileType.includes('presentation') || filePath.endsWith('.pptx')) {
+                try {
+                    const data = fs.readFileSync(filePath);
+                    const zip = new JSZip();
+                    const contents = await zip.loadAsync(data);
+                    let pptText = "";
+
+                    // PPTX stores text in ppt/slides/slide*.xml
+                    for (const filename of Object.keys(contents.files)) {
+                        if (filename.startsWith('ppt/slides/slide') && filename.endsWith('.xml')) {
+                            const xml = await contents.files[filename].async("string");
+                            // Grab anything between <a:t> and </a:t>
+                            const matches = xml.match(/<a:t.*?>(.*?)<\/a:t>/g);
+                            if (matches) {
+                                pptText += matches.map(m => m.replace(/<.*?>/g, '')).join(' ') + "\n";
+                            }
+                        }
+                    }
+                    extractedText = pptText.trim();
+                } catch (pptErr) {
+                    console.error("PPTX Parsing Failed:", pptErr);
+                }
             }
         }
 
@@ -251,6 +314,17 @@ async function processJob(job) {
                 if (updatedDoc) vectorStore.upsertDocument(updatedDoc, vector);
             }
         }
+
+        // --- UI REFRESH: Relay end-of-process signal to main server ---
+        try {
+            console.log(`[Worker] Emitting data:changed relay via IPC socket...`);
+            socket.emit('worker:update', { channel: 'documents' });
+            socket.emit('worker:update', { channel: 'inventory' });
+            socket.emit('worker:update', { channel: 'tax' });
+        } catch (se) {
+            console.error('[Worker] Socket emit failed:', se);
+        }
+
     } catch (err) {
         console.error(`[Worker] Job ${job.id} Failed:`, err);
         throw err;
@@ -290,4 +364,40 @@ async function startPolling() {
     poll();
 }
 
-startPolling();
+async function startWorkerSystem() {
+    console.log("[Worker] Initializing Queue System...");
+    // Give Redis a moment to initialize connection
+    await new Promise(resolve => setTimeout(resolve, 2500));
+
+    if (USE_BULLMQ) {
+        console.log("🚀 [Worker] BullMQ Active. Starting Redis Event-Driven Worker...");
+        const worker = new Worker('ocr-processor', async job => {
+            const context = JSON.parse(job.data.context || '{}');
+            const jobData = {
+                id: job.id,
+                name: 'process-ocr',
+                data: {
+                    docId: job.data.docId,
+                    filePath: job.data.filename,
+                    fileType: job.data.fileType || '',
+                    originalName: job.data.originalName || '',
+                    context: context
+                }
+            };
+            return await processJob(jobData);
+        }, { connection });
+
+        worker.on('completed', job => {
+            console.log(`[Worker] BullMQ Job ${job.id} completed successfully!`);
+        });
+
+        worker.on('failed', (job, err) => {
+            console.error(`[Worker] BullMQ Job ${job.id} failed:`, err);
+        });
+    } else {
+        console.log("🐌 [Worker] BullMQ Inactive. Starting MySQL Polling Fallback...");
+        startPolling();
+    }
+}
+
+startWorkerSystem();
