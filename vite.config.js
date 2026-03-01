@@ -5,7 +5,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
   server: {
-    host: true, // Izinkan akses dari Network (LAN)
+    host: true, // Izinkan akses dari network
+    allowedHosts: [
+      "pustaka.izal.my.id"
+    ],
     proxy: {
       '/api': {
         target: 'http://localhost:5005',
