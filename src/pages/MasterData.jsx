@@ -21,13 +21,13 @@ export default function MasterData({
     const [expandedLogId, setExpandedLogId] = useState(null);
     const [logCurrentPage, setLogCurrentPage] = useState(1);
     const logsPerPage = 15;
-    const [logSource, setLogSource] = useState('database'); // 'database', 'error_file', 'ocr_file'
-    const [fileLogs, setFileLogs] = useState({ error: '', ocr: '' });
+    const [logSource, setLogSource] = useState('database'); // 'database', 'error_file', 'ocr_file', 'server_file'
+    const [fileLogs, setFileLogs] = useState({ error: '', ocr: '', server: '' });
     const [isFileLoading, setIsFileLoading] = useState(false);
 
     useEffect(() => {
         if (logSource !== 'database' && masterTab === 'logs') {
-            const type = logSource === 'error_file' ? 'error' : 'ocr';
+            const type = logSource.split('_')[0]; // error, ocr, server
             setIsFileLoading(true);
             fetch(`/api/system/logs-file/${type}`, { credentials: 'include' })
                 .then(res => res.json())
@@ -284,6 +284,12 @@ export default function MasterData({
                                     <History size={12} /> Database
                                 </button>
                                 <button
+                                    onClick={() => setLogSource('server_file')}
+                                    className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${logSource === 'server_file' ? 'bg-white dark:bg-slate-800 text-teal-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                >
+                                    <Activity size={12} /> Server Logs
+                                </button>
+                                <button
                                     onClick={() => setLogSource('error_file')}
                                     className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center gap-2 ${logSource === 'error_file' ? 'bg-white dark:bg-slate-800 text-red-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                 >
@@ -429,7 +435,10 @@ export default function MasterData({
                                 </div>
                             ) : (
                                 <pre className="text-xs text-green-400 font-mono whitespace-pre-wrap overflow-x-auto overflow-y-auto max-h-[600px] custom-scrollbar p-2">
-                                    {logSource === 'error_file' ? fileLogs.error : fileLogs.ocr}
+                                    {logSource === 'server_file' && fileLogs.server}
+                                    {logSource === 'error_file' && fileLogs.error}
+                                    {logSource === 'ocr_file' && fileLogs.ocr}
+                                    {(!fileLogs.server && logSource === 'server_file') && "Tidak ada log server (File kosong)."}
                                     {(!fileLogs.error && logSource === 'error_file') && "Tidak ada error system (File kosong)."}
                                     {(!fileLogs.ocr && logSource === 'ocr_file') && "Tidak ada kegagalan OCR (File kosong)."}
                                 </pre>

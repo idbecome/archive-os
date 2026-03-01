@@ -80,7 +80,8 @@ app.use(cors({
 // Gunakan Morgan untuk log HTTP request ke konsol
 const skipLogPaths = ['/uploads', '/api/ocr/status', '/api/ocr/queue', '/api/pustaka/guides', '/api/pustaka/categories', '/api/logs'];
 app.use(morgan('dev', {
-    skip: (req, res) => skipLogPaths.some(path => req.originalUrl.includes(path))
+    skip: (req, res) => skipLogPaths.some(path => req.originalUrl.includes(path)),
+    stream: { write: message => logger.info(message.trim()) }
 }));
 
 app.use(bodyParser.json({ limit: '50mb' }));
@@ -438,7 +439,11 @@ app.get('/uploads/:filename', (req, res, next) => {
 // Endpoint untuk membaca file log Winston
 app.get('/api/system/logs-file/:type', checkAuth, (req, res) => {
     const { type } = req.params;
-    const logFileName = type === 'error' ? 'error.log' : 'ocr-failures.log';
+    let logFileName;
+    if (type === 'error') logFileName = 'error.log';
+    else if (type === 'server') logFileName = 'server.log';
+    else logFileName = 'ocr-failures.log';
+
     const filePath = path.join(logsDir, logFileName);
 
     if (!fs.existsSync(filePath)) {
@@ -455,8 +460,8 @@ app.get('/api/system/logs-file/:type', checkAuth, (req, res) => {
 
 // Socket.io
 io.on('connection', (socket) => {
-    console.log('Client connected:', socket.id);
-    socket.on('disconnect', () => console.log('Client disconnected:', socket.id));
+    logger.info(`Client connected: ${socket.id}`);
+    socket.on('disconnect', () => logger.info(`Client disconnected: ${socket.id}`));
 });
 
 // Global Error Handler

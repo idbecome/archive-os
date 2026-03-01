@@ -36,6 +36,11 @@ export const logger = winston.createLogger({
             level: 'warn',
             handleExceptions: true
         }),
+        // 5. Simpan semua log (info, warn, error) ke server.log
+        new winston.transports.File({
+            filename: path.join(LOGS_PATH, 'server.log'),
+            level: 'info'
+        }),
         // 3. Tampilkan di konsol dengan warna untuk development
         new winston.transports.Console({
             format: combine(
