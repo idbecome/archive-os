@@ -1,6 +1,11 @@
-import { create } from 'zustand';
+import { useAppStore } from './useAppStore';
+import { useDocStore } from './useDocStore';
+import { useInventoryStore } from './useInventoryStore';
+import { usePustakaStore } from './usePustakaStore';
+import { useTaxStore } from './useTaxStore';
+import { useUserStore } from './useUserStore';
 
-export const useAuthStore = create((set) => ({
+const initialState = {
     currentUser: (() => {
         try {
             const saved = localStorage.getItem('archive_user');
@@ -10,6 +15,10 @@ export const useAuthStore = create((set) => ({
     users: [],
     roles: [],
     departments: [],
+};
+
+export const useAuthStore = create((set) => ({
+    ...initialState,
 
     setCurrentUser: (user) => {
         if (user) {
@@ -22,4 +31,29 @@ export const useAuthStore = create((set) => ({
     setUsers: (users) => set({ users }),
     setRoles: (roles) => set({ roles }),
     setDepartments: (departments) => set({ departments }),
+
+    reset: () => set({
+        ...initialState,
+        currentUser: null // Explicitly clear on reset
+    }),
+
+    logout: () => {
+        // 1. Clear LocalStorage
+        localStorage.removeItem('archive_user');
+        localStorage.removeItem('archive_token');
+
+        // 2. Reset all other stores
+        useAppStore.getState().reset();
+        useDocStore.getState().reset();
+        useInventoryStore.getState().reset();
+        usePustakaStore.getState().reset();
+        useTaxStore.getState().reset();
+        useUserStore.getState().reset();
+
+        // 3. Reset self
+        set({
+            ...initialState,
+            currentUser: null
+        });
+    }
 }));

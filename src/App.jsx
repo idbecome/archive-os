@@ -145,7 +145,8 @@ export default function App() {
     currentUser, setCurrentUser,
     users, setUsers,
     roles, setRoles,
-    departments, setDepartments
+    departments, setDepartments,
+    logout
   } = useAuthStore();
 
   const {
@@ -1016,9 +1017,7 @@ export default function App() {
   };
 
   const handleLogout = () => {
-    setCurrentUser(null);
-    localStorage.removeItem('archive_user');
-    localStorage.removeItem('archive_token');
+    logout();
     addLog(currentUser?.name, 'Logout', 'User logged out');
   };
 

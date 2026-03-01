@@ -1,15 +1,18 @@
 import { create } from 'zustand';
 import { db as api } from '../services/database';
 
-export const useDocStore = create((set, get) => ({
+const initialState = {
     docList: [],
     folders: [],
     currentFolderId: null,
     folderHistory: [null],
     historyIndex: 0,
-
     approvals: [],
     flows: [],
+};
+
+export const useDocStore = create((set, get) => ({
+    ...initialState,
 
     // Setters
     setDocList: (docList) => set({ docList }),
@@ -118,5 +121,7 @@ export const useDocStore = create((set, get) => ({
         // Comments are usually fetched separately, but we can refresh docs if needed
         // For now, let's just return the result
         return res;
-    }
+    },
+
+    reset: () => set(initialState),
 }));

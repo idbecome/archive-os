@@ -1,3 +1,5 @@
+import { useAuthStore } from '../store/useAuthStore';
+
 const getApiUrl = () => {
     const { hostname, port, protocol } = window.location;
     if (port === '5173' || port === '3000') {
@@ -27,8 +29,7 @@ export const apiClient = {
         // Auto-logout on 401: clear stale token and reload to login page
         if (response.status === 401) {
             console.warn('[apiClient] 401 Unauthorized - clearing stale token');
-            localStorage.removeItem('archive_token');
-            localStorage.removeItem('archive_user');
+            useAuthStore.getState().logout();
             window.location.reload();
             throw new Error('Session expired. Please login again.');
         }

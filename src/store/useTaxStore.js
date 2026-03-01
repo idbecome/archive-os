@@ -2,11 +2,15 @@ import { create } from 'zustand';
 import { taxService as api } from '../services/taxService';
 import { handleApiError } from '../utils/errorHelper';
 
-export const useTaxStore = create((set, get) => ({
+const initialState = {
     taxSummaries: [],
     taxAudits: [],
     taxWp: [],
     isLoading: false,
+};
+
+export const useTaxStore = create((set, get) => ({
+    ...initialState,
 
     // Setters
     setTaxSummaries: (taxSummaries) => set({ taxSummaries }),
@@ -204,5 +208,7 @@ export const useTaxStore = create((set, get) => ({
             console.error("Failed to delete tax wp:", msg);
             throw msg;
         }
-    }
+    },
+
+    reset: () => set(initialState),
 }));

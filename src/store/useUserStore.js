@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { authService as api } from '../services/authService';
 import { handleApiError } from '../utils/errorHelper';
 
-export const useUserStore = create((set, get) => ({
+const initialState = {
     users: [],
     roles: [],
     departments: [],
@@ -15,6 +15,10 @@ export const useUserStore = create((set, get) => ({
         search: ''
     },
     isLoading: false,
+};
+
+export const useUserStore = create((set, get) => ({
+    ...initialState,
 
     fetchUsers: async () => {
         const data = await api.getUsers();
@@ -162,5 +166,7 @@ export const useUserStore = create((set, get) => ({
             console.error("Failed to delete department:", msg);
             throw msg;
         }
-    }
+    },
+
+    reset: () => set(initialState),
 }));

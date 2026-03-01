@@ -1,5 +1,14 @@
 import { create } from 'zustand';
 
+const initialState = {
+    isSidebarCollapsed: false,
+    activeTab: 'dashboard',
+    isModalOpen: false,
+    modalTab: 'details',
+    copyNotification: null,
+    logs: [],
+};
+
 export const useAppStore = create((set) => ({
     // Theme & Layout
     isDarkMode: (() => {
@@ -7,16 +16,7 @@ export const useAppStore = create((set) => ({
         return saved ? saved === 'dark' : true;
     })(),
     showInitialLanding: (() => !localStorage.getItem('archive_landing_seen'))(),
-    isSidebarCollapsed: false,
-    activeTab: 'dashboard',
-
-    // Modals
-    isModalOpen: false,
-    modalTab: 'details',
-
-    // Misc UI Data
-    copyNotification: null,
-    logs: [],
+    ...initialState,
 
     // Setters
     setIsDarkMode: (val) => {
@@ -33,4 +33,6 @@ export const useAppStore = create((set) => ({
     setModalTab: (val) => set({ modalTab: val }),
     setCopyNotification: (val) => set({ copyNotification: val }),
     setLogs: (logs) => set({ logs }),
+
+    reset: () => set(initialState),
 }));

@@ -2,13 +2,17 @@ import { create } from 'zustand';
 import { db as api } from '../services/database';
 import { TOTAL_SLOTS } from '../utils/constants';
 
-export const useInventoryStore = create((set, get) => ({
+const initialState = {
     inventory: [],
     inventoryIssues: [],
     stats: { stored: 0, borrowed: 0, audit: 0, empty: 0, occupancy: 0 },
     externalItems: [],
     activeInvTab: 'internal', // 'internal' | 'external'
     ocrStats: { counts: { active: 0, waiting: 0, completed: 0, failed: 0 }, activeJobs: [] },
+};
+
+export const useInventoryStore = create((set, get) => ({
+    ...initialState,
 
     setInventory: (inventory) => set({ inventory }),
     setInventoryIssues: (inventoryIssues) => set({ inventoryIssues }),
@@ -89,5 +93,7 @@ export const useInventoryStore = create((set, get) => ({
     deleteExternalItem: async (id) => {
         await api.deleteExternalItem(id);
         await get().fetchInventory();
-    }
+    },
+
+    reset: () => set(initialState),
 }));

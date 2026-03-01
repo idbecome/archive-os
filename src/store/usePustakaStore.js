@@ -2,9 +2,13 @@ import { create } from 'zustand';
 import { pustakaService as api } from '../services/pustakaService';
 import { handleApiError } from '../utils/errorHelper';
 
-export const usePustakaStore = create((set, get) => ({
+const initialState = {
     guides: [],
     categories: [],
+};
+
+export const usePustakaStore = create((set, get) => ({
+    ...initialState,
 
     setGuides: (guides) => set({ guides }),
     setCategories: (categories) => set({ categories }),
@@ -92,5 +96,7 @@ export const usePustakaStore = create((set, get) => ({
             console.error("Failed to create category:", msg);
             throw msg;
         }
-    }
+    },
+
+    reset: () => set(initialState),
 }));
