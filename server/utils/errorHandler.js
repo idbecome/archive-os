@@ -14,8 +14,8 @@ export const handleError = (res, err, context = "Internal Server Error", statusC
     // 1. Log the full error stack securely on the server
     console.error(`[ERROR] ${context}:`, err);
 
-    // Optional: Log to database if needed, but keep it brief to avoid spam
-    // systemLog('System', 'Global Error', `${context}: ${err.message}`).catch(console.error);
+    // 2. Log to database for UI visibility
+    systemLog('System', 'System Error', `${context}: ${err.message}`).catch(console.error);
 
     // 2. Send generic message to client to prevent leakage of DB/File paths
     const clientMessage = statusCode === 500

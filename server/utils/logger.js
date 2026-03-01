@@ -26,12 +26,12 @@ export const logger = winston.createLogger({
     ),
     transports: [
         // 1. Simpan semua error ke file khusus
-        new winston.transports.File({ 
-            filename: path.join(LOGS_PATH, 'error.log'), 
-            level: 'error' 
+        new winston.transports.File({
+            filename: path.join(LOGS_PATH, 'error.log'),
+            level: 'error'
         }),
         // 2. Simpan log spesifik kegagalan OCR agar admin mudah melacak
-        new winston.transports.File({ 
+        new winston.transports.File({
             filename: path.join(LOGS_PATH, 'ocr-failures.log'),
             level: 'warn',
             handleExceptions: true
@@ -43,7 +43,17 @@ export const logger = winston.createLogger({
                 timestamp({ format: 'HH:mm:ss' }),
                 consoleFormat
             )
-        })
+        }),
+        // 4. External Logging (HTTP/Datadog/Logstash)
+        ...(process.env.LOG_HTTP_URL ? [
+            new winston.transports.Http({
+                host: process.env.LOG_HTTP_HOST || 'http-intake.logs.datadoghq.com',
+                path: process.env.LOG_HTTP_PATH || `/api/v2/logs?dd-api-key=${process.env.DATADOG_API_KEY}&ddsource=nodejs&service=${process.env.APP_NAME || 'archive-os'}`,
+                ssl: true,
+                batch: true,
+                batchInterval: 5000
+            })
+        ] : [])
     ]
 });
 
