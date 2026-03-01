@@ -31,7 +31,7 @@ export const searchDocuments = async (req, res) => {
             const queryVector = await generateEmbedding(q);
             const docs = await knex('documents').select('*').limit(100);
             const results = docs.filter(d => {
-                return d.title.toLowerCase().includes(q.toLowerCase()) ||
+                return (d.title || '').toLowerCase().includes(q.toLowerCase()) ||
                     (d.ocrContent || '').toLowerCase().includes(q.toLowerCase());
             });
             return res.json(results);

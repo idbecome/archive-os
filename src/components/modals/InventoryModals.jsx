@@ -190,7 +190,7 @@ export default function InventoryModals({
                                                                     {inv.fileName && (
                                                                         <div className="flex items-center gap-1 text-[9px] text-slate-400 mt-1">
                                                                             <Paperclip size={10} /> {String(inv.fileName)}
-                                                                            {inv.ocrContent ? (
+                                                                            {inv.status === 'done' ? (
                                                                                 <span className="text-emerald-500 font-bold text-[8px] border border-emerald-200 dark:border-emerald-800 px-1 rounded ml-1">OCR READY</span>
                                                                             ) : (
                                                                                 <span className="text-amber-500 font-bold text-[8px] border border-amber-200 dark:border-amber-800 px-1 rounded ml-1 animate-pulse">PROSES OCR...</span>

@@ -18,8 +18,11 @@ import {
     moveFolder,
     copyFolder
 } from '../controllers/systemController.js';
+import { checkAuth } from '../middleware/auth.js';
 
 const router = express.Router();
+
+router.use(checkAuth);
 
 router.get('/logs', getLogs);
 router.post('/logs', createLog);

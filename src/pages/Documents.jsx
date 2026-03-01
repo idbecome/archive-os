@@ -87,31 +87,7 @@ export default function Documents({
         }
     }, [comments, selectedDocPreview]);
 
-    const getFullUrl = (url) => {
-        if (!url || typeof url !== 'string') return null;
-        if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-
-        const { hostname, port, protocol } = window.location;
-        const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
-        const backendPort = '5005';
-
-        let cleanUrl = url;
-        if (cleanUrl.includes(':' + backendPort + '/uploads/')) {
-            cleanUrl = '/uploads/' + cleanUrl.split('/uploads/')[1];
-        } else if (url.startsWith('uploads/')) {
-            cleanUrl = '/' + url;
-        }
-
-        const token = localStorage.getItem('archive_token');
-        const authQuery = token ? `token=${token}` : '';
-
-        if (cleanUrl.startsWith('/uploads/')) {
-            const baseUrl = isDev ? `${protocol}//${hostname}:${backendPort}` : '';
-            const separator = cleanUrl.includes('?') ? '&' : '?';
-            return `${baseUrl}${cleanUrl}${authQuery ? separator + authQuery : ''}`;
-        }
-        return cleanUrl;
-    };
+    // getFullUrl is now imported from urlHelper
 
     const handlePreview = async (doc, isAttachment = false) => {
         setIsGeneratingPreview(true);
@@ -162,11 +138,8 @@ export default function Documents({
 
                 if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
                     console.log('[Preview] Fetching buffer from URL...');
-                    const token = localStorage.getItem('archive_token');
                     const response = await fetch(normalizedUrl, {
-                        headers: {
-                            'Authorization': token ? `Bearer ${token}` : ''
-                        }
+                        credentials: 'include'
                     });
 
                     if (!response.ok) {

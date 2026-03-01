@@ -31,16 +31,35 @@ export const login = async (req, res) => {
             const token = Math.random().toString(36).substring(2) + Date.now().toString(36);
             await knex('users').where('id', user.id).update({ token });
 
-            const { password: _, ...userWithoutPass } = user;
-            userWithoutPass.token = token; // Ensure token is in response
+            // Set HttpOnly Cookie
+            res.cookie('token', token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === 'production',
+                sameSite: 'lax', // Use 'lax' for dev stability on network IPs
+                maxAge: 7 * 24 * 60 * 60 * 1000 // 7 days
+            });
 
-            await systemLog(user.username, "Login", "User logged in");
+            const { password: _, ...userWithoutPass } = user;
+            userWithoutPass.token = token; // Keep for internal context if needed, but not for manual header storage
+
+            await systemLog(user.username, "Login", "User logged in with HttpOnly cookie");
             res.json(userWithoutPass);
         } else {
             res.status(401).json({ error: "Invalid credentials" });
         }
     } catch (err) {
         handleError(res, err, "Login Error");
+    }
+};
+
+export const logout = async (req, res) => {
+    try {
+        const username = req.user?.username || 'Unknown';
+        res.clearCookie('token');
+        await systemLog(username, "Logout", "User logged out (cookie cleared)");
+        res.json({ message: "Logout successful" });
+    } catch (err) {
+        handleError(res, err, "Logout Error");
     }
 };
 

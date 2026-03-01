@@ -1,3 +1,4 @@
+import { create } from 'zustand';
 import { useAppStore } from './useAppStore';
 import { useDocStore } from './useDocStore';
 import { useInventoryStore } from './useInventoryStore';
@@ -37,12 +38,22 @@ export const useAuthStore = create((set) => ({
         currentUser: null // Explicitly clear on reset
     }),
 
-    logout: () => {
-        // 1. Clear LocalStorage
+    logout: async () => {
+        // 1. Clear LocalStorage user data
         localStorage.removeItem('archive_user');
-        localStorage.removeItem('archive_token');
 
-        // 2. Reset all other stores
+        // 2. Clear Cookie via Backend
+        try {
+            const { API_URL } = await import('../services/database');
+            await fetch(`${API_URL}/logout`, {
+                method: 'POST',
+                credentials: 'include'
+            });
+        } catch (err) {
+            console.error("Backend logout failed:", err);
+        }
+
+        // 3. Reset all other stores
         useAppStore.getState().reset();
         useDocStore.getState().reset();
         useInventoryStore.getState().reset();
@@ -50,7 +61,7 @@ export const useAuthStore = create((set) => ({
         useTaxStore.getState().reset();
         useUserStore.getState().reset();
 
-        // 3. Reset self
+        // 4. Reset self
         set({
             ...initialState,
             currentUser: null

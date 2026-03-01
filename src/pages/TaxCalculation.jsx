@@ -344,12 +344,9 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
 
         setIsLoading(true);
         try {
-            const token = localStorage.getItem('archive_token');
             const res = await fetch(`${API_URL}/tax/wp-all`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (res.ok) {
                 alert('Seluruh data Database WP berhasil dihapus.');

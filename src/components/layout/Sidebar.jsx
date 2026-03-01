@@ -22,6 +22,10 @@ import {
     GitBranch
 } from 'lucide-react';
 
+import { useAuthStore } from '../../store/useAuthStore';
+import { useDocStore } from '../../store/useDocStore';
+import { API_URL } from '../../services/apiClient';
+
 const Sidebar = ({
     isSidebarCollapsed,
     setIsSidebarCollapsed,
@@ -242,13 +246,17 @@ const Sidebar = ({
                                                     e.stopPropagation();
                                                     if (window.confirm("Yakin ingin mereset antrian yang macet?")) {
                                                         try {
-                                                            await fetch(`http://${window.location.hostname}:5005/api/ocr/reset`, { method: 'POST' });
+                                                            await fetch(`${API_URL}/ocr/reset`, {
+                                                                method: 'POST',
+                                                                credentials: 'include'
+                                                            });
                                                             window.location.reload();
                                                         } catch (err) {
                                                             alert("Gagal reset: " + err.message);
                                                         }
                                                     }
-                                                }}
+                                                }
+                                                }
                                                 className="text-[8px] bg-white/10 hover:bg-white/20 px-2 py-1 rounded-md border border-white/20 transition-colors font-bold text-white uppercase"
                                             >
                                                 Reset
@@ -360,7 +368,7 @@ const Sidebar = ({
                     )}
                 </div>
             </div>
-        </aside>
+        </aside >
     );
 };
 

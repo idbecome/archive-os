@@ -1,21 +1,14 @@
+import { apiClient } from './apiClient';
+console.log('%c[Database Service] version 1.0.3 loaded', 'color: #4CAF50; font-weight: bold;');
 // Gunakan URL absolut jika di lingkungan development (Vite port 3000)
 // Gunakan relative path jika di production (Docker/Nginx)
 const getApiUrl = () => {
-    const { hostname, port, protocol } = window.location;
-    // Dev server ports (Vite / CRA)
-    if (port === '5173' || port === '3000') {
-        return `${protocol}//${hostname}:5005/api`;
+    // Gunakan relative path '/api' untuk memastikan request diperlakukan Same-Origin.
+    // Ini mengizinkan HttpOnly cookie dikirim dengan benar di Local Network (IP)
+    // mengandalkan konfigurasi `proxy` di vite.config.js dan nginx proxy di Production.
+    if (window.location.protocol === 'file:') {
+        return 'http://localhost:5005/api'; // Fallback Electron Desktop App
     }
-    // Localhost always routes to backend port
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return `${protocol}//${hostname}:5005/api`;
-    }
-    // Any IP address (LAN access from other PCs) → route to backend port 5005
-    // Covers: 192.168.x.x, 10.x.x.x, 172.16-31.x.x, etc.
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-        return `${protocol}//${hostname}:5005/api`;
-    }
-    // Production (domain-based access via Nginx proxy)
     return '/api';
 };
 export const API_URL = getApiUrl();
@@ -23,11 +16,8 @@ export const API_URL = getApiUrl();
 export const db = {
     async getInventory() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/inventory`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal mengambil data');
             const data = await response.json();
@@ -63,12 +53,11 @@ export const db = {
 
     async saveInventory(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/inventory`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -77,11 +66,8 @@ export const db = {
 
     async getLogs() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/logs`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             return await response.json();
         } catch { return []; }
@@ -89,13 +75,11 @@ export const db = {
 
     async saveLogs(data) {
         try {
-            const token = localStorage.getItem('archive_token');
-            const latestLog = data[0];
             await fetch(`${API_URL}/logs`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(latestLog)
             });
@@ -104,14 +88,12 @@ export const db = {
 
     async getDocs() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
+            if (!response.ok) throw new Error('Gagal mengambil data');
             const data = await response.json();
-            return data.map(doc => {
+            return (Array.isArray(data) ? data : []).map(doc => {
                 const rawVersions = doc.versionsHistory || doc.versions_history;
                 return {
                     ...doc,
@@ -127,12 +109,10 @@ export const db = {
 
     async getDocuments(params = {}) {
         try {
-            const token = localStorage.getItem('archive_token');
-            const query = new URLSearchParams(params).toString();
-            const response = await fetch(`${API_URL}/documents?${query}`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+            const docQuery = new URLSearchParams(params).toString();
+            console.log('[DEBUG] getDocuments called with:', params, 'Generated Query:', docQuery);
+            const response = await fetch(`${API_URL}/documents?${docQuery}`, {
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal mengambil dokumen');
             const data = await response.json();
@@ -154,11 +134,8 @@ export const db = {
     // NEW: Ambil detail dokumen (termasuk fileData) jika di list kosong
     async getDocumentById(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/${id}`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal mengambil detail dokumen');
             const doc = await response.json();
@@ -174,12 +151,11 @@ export const db = {
 
     async saveDocs(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/documents`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -189,11 +165,8 @@ export const db = {
 
     async getFolders() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/folders`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             return await response.json();
         } catch { return []; }
@@ -201,7 +174,6 @@ export const db = {
 
     async createFolder(folder) {
         try {
-            const token = localStorage.getItem('archive_token');
 
             // Sinkronisasi payload ke camelCase sesuai standar database Anda
             const payload = {
@@ -216,9 +188,9 @@ export const db = {
 
             const response = await fetch(`${API_URL}/folders`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(payload)
             });
@@ -229,7 +201,6 @@ export const db = {
 
     async updateFolder(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
 
             // Bersihkan data dari field yang menyebabkan error SQL
             const payload = { ...data };
@@ -244,9 +215,9 @@ export const db = {
 
             await fetch(`${API_URL}/folders/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(payload)
             });
@@ -255,36 +226,29 @@ export const db = {
 
     async deleteFolder(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/folders/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
         } catch (e) { console.error("Gagal hapus folder", e); }
     },
 
     async getTaxAudits() {
         try {
-            const token = localStorage.getItem('archive_token');
-            const response = await fetch(`${API_URL}/tax-audits`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
-            });
-            return await response.json();
-        } catch { return []; }
+            return await apiClient.fetchJson(`${API_URL}/tax-audits`);
+        } catch (err) {
+            console.error("getTaxAudits failed:", err);
+            return [];
+        }
     },
 
     async createTaxAudit(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-audits`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -295,12 +259,11 @@ export const db = {
 
     async updateTaxAudit(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-audits/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -310,12 +273,9 @@ export const db = {
 
     async deleteTaxAudit(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-audits/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal hapus audit');
         } catch (e) { console.error("Gagal hapus tax audit", e); throw e; }
@@ -323,13 +283,10 @@ export const db = {
 
     async getTaxSummaries() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-summaries`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
-            if (!response.ok) throw new Error('Gagal mengambil data pajak');
+            if (!response.ok) throw new Error('Gagal mengambil data');
             const data = await response.json();
             return data.map(item => ({
                 ...item,
@@ -345,6 +302,7 @@ export const db = {
         try {
             const response = await fetch(`${API_URL}/login`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
             });
@@ -363,33 +321,24 @@ export const db = {
 
     async getUsers() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/users`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             return await response.json();
         } catch { return []; }
     },
     async getRoles() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/roles`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             return await response.json();
         } catch { return []; }
     },
     async getDepartments() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/departments`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             return await response.json();
         } catch { return []; }
@@ -397,12 +346,11 @@ export const db = {
 
     async createUser(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/users`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -411,12 +359,11 @@ export const db = {
 
     async updateUser(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/users/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -425,24 +372,20 @@ export const db = {
 
     async deleteUser(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/users/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
         } catch (e) { console.error("Gagal hapus user", e); }
     },
 
     async createRole(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/roles`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -451,12 +394,11 @@ export const db = {
 
     async updateRole(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/roles/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -465,26 +407,22 @@ export const db = {
 
     async deleteRole(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/roles/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
         } catch (e) { console.error("Gagal hapus role", e); }
     },
 
     async saveTaxSummary(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const isUpdate = !!data.id;
             const url = isUpdate ? `${API_URL}/tax-summaries/${data.id}` : `${API_URL}/tax-summaries`;
             const response = await fetch(url, {
                 method: isUpdate ? 'PUT' : 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -495,12 +433,9 @@ export const db = {
 
     async deleteTaxSummary(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-summaries/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal menghapus data di server');
         } catch (e) { console.error("Gagal hapus tax summary", e); throw e; }
@@ -508,12 +443,11 @@ export const db = {
 
     async createDepartment(name) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/departments`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ name })
             });
@@ -522,23 +456,19 @@ export const db = {
 
     async deleteDepartment(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/departments/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
         } catch (e) { console.error("Gagal hapus dept", e); }
     },
     async updateDepartment(id, name) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/departments/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ name })
             });
@@ -549,7 +479,6 @@ export const db = {
 
     async createDocument(doc) {
         try {
-            const token = localStorage.getItem('archive_token');
             let body = doc;
             if (!(doc instanceof FormData)) {
                 const formData = new FormData();
@@ -565,9 +494,7 @@ export const db = {
 
             const response = await fetch(`${API_URL}/documents`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                },
+                credentials: 'include',
                 body: body
             });
             if (!response.ok) throw new Error('Gagal buat dokumen');
@@ -580,7 +507,6 @@ export const db = {
 
     async updateDocument(id, doc) {
         try {
-            const token = localStorage.getItem('archive_token');
             let body = doc;
             if (!(doc instanceof FormData)) {
                 const formData = new FormData();
@@ -596,9 +522,7 @@ export const db = {
 
             await fetch(`${API_URL}/documents/${id}`, {
                 method: 'PUT',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                },
+                credentials: 'include',
                 body: body
             });
         } catch (e) { console.error("Gagal update dokumen", e); }
@@ -610,24 +534,20 @@ export const db = {
             return;
         }
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/documents/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
         } catch (e) { console.error("Gagal hapus dokumen", e); }
     },
 
     async createLog(log) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/logs`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(log)
             });
@@ -636,16 +556,15 @@ export const db = {
 
     async updateInventory(id, data) {
         const payload = { ...data };
-        const token = localStorage.getItem('archive_token');
 
         delete payload.id;         // Primary Key tidak boleh di-update
         delete payload.lastUpdated; // Biarkan MySQL menangani timestamp otomatis
 
         const response = await fetch(`${API_URL}/inventory/${id}`, {
             method: 'PUT',
+            credentials: 'include',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify(payload)
         });
@@ -658,12 +577,11 @@ export const db = {
 
     async moveInventory(sourceId, targetId, user) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/inventory/move`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ sourceId, targetId, user })
             });
@@ -686,12 +604,11 @@ export const db = {
 
     async createExternalItem(item) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/inventory/external`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(item)
             });
@@ -700,38 +617,37 @@ export const db = {
 
     async getExternalItems() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/inventory/external`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
-            return await response.json();
-        } catch { return []; }
+            const data = await response.json();
+            return data.map(item => ({
+                ...item,
+                boxData: typeof item.boxData === 'string' ? JSON.parse(item.boxData) : (item.boxData || {}),
+                history: typeof item.history === 'string' ? JSON.parse(item.history) : (item.history || [])
+            }));
+        } catch (e) {
+            console.error("Gagal mengambil external items", e);
+            return [];
+        }
     },
 
     async deleteExternalItem(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/inventory/external/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
         } catch (e) { console.error("Gagal hapus external item", e); }
     },
 
     async uploadFile(file) {
-        const token = localStorage.getItem('archive_token');
         const formData = new FormData();
         formData.append('file', file);
         try {
             const response = await fetch(`${API_URL}/upload`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                },
+                credentials: 'include',
                 body: formData
             });
             if (!response.ok) throw new Error('Upload failed');
@@ -744,12 +660,11 @@ export const db = {
 
     async restoreDocumentVersion(id, versionTimestamp) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/${id}/restore`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     timestamp: versionTimestamp,
@@ -766,12 +681,11 @@ export const db = {
 
     async copyDocument(id, targetFolderId, owner) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/copy`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ id, targetFolderId, owner })
             });
@@ -785,12 +699,11 @@ export const db = {
 
     async moveDocument(id, targetFolderId, owner) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/move`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ id, targetFolderId, owner })
             });
@@ -804,12 +717,11 @@ export const db = {
 
     async copyFolder(id, targetParentId) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/folders/copy`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ id, targetParentId })
             });
@@ -823,12 +735,11 @@ export const db = {
 
     async moveFolder(id, targetParentId) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/folders/move`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ id, targetParentId })
             });
@@ -842,11 +753,8 @@ export const db = {
 
     async getComments(docId) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/${docId}/comments`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             const data = await response.json();
             return Array.isArray(data) ? data : [];
@@ -855,12 +763,9 @@ export const db = {
 
     async addComment(docId, formData) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/${docId}/comments`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                },
+                credentials: 'include',
                 body: formData
             });
             const result = await response.json();
@@ -873,12 +778,11 @@ export const db = {
 
     async promoteCommentAttachment(docId, commentId) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/documents/${docId}/promote-comment-attachment`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ commentId })
             });
@@ -888,11 +792,8 @@ export const db = {
 
     async getAuditNotes(auditId, stepIndex) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             const data = await response.json();
             return Array.isArray(data) ? data : [];
@@ -901,12 +802,9 @@ export const db = {
 
     async addAuditNote(auditId, stepIndex, formData) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`, {
                 method: 'POST',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                },
+                credentials: 'include',
                 body: formData
             });
 
@@ -928,11 +826,8 @@ export const db = {
     // --- DOCUMENT APPROVALS ---
     async getApprovals() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approvals`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) return [];
             const data = await response.json();
@@ -942,12 +837,11 @@ export const db = {
 
     async createApproval(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approvals`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -957,12 +851,11 @@ export const db = {
 
     async updateApproval(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approvals/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -972,15 +865,12 @@ export const db = {
 
     async submitApprovalAction(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const isFormData = data instanceof FormData;
             const response = await fetch(`${API_URL}/approvals/${id}/action`, {
                 method: 'POST',
-                headers: isFormData ? {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                } : {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                credentials: 'include',
+                headers: isFormData ? {} : {
+                    'Content-Type': 'application/json'
                 },
                 body: isFormData ? data : JSON.stringify(data)
             });
@@ -990,12 +880,11 @@ export const db = {
 
     async resetApprovalStep(id, stepIndex) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approvals/${id}/reset-step`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ stepIndex })
             });
@@ -1005,10 +894,9 @@ export const db = {
 
     async deleteApproval(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/approvals/${id}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
         } catch (e) { console.error(e); }
     },
@@ -1016,9 +904,8 @@ export const db = {
     // --- APPROVAL FLOWS (MASTER) ---
     async getApprovalFlows() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approval-flows`, {
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             if (!response.ok) return [];
             const data = await response.json();
@@ -1032,12 +919,11 @@ export const db = {
 
     async createApprovalFlow(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approval-flows`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -1047,12 +933,11 @@ export const db = {
 
     async updateApprovalFlow(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/approval-flows/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -1062,10 +947,9 @@ export const db = {
 
     async deleteApprovalFlow(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             await fetch(`${API_URL}/approval-flows/${id}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
         } catch (e) { console.error(e); }
     },
@@ -1073,9 +957,8 @@ export const db = {
     // --- PUSTAKA ---
     async getPustakaGuides() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/guides`, {
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             if (!response.ok) return [];
             return await response.json();
@@ -1084,9 +967,8 @@ export const db = {
 
     async getGuideSlides(guideId) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/guides/${guideId}/slides`, {
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             if (!response.ok) return [];
             return await response.json();
@@ -1095,12 +977,11 @@ export const db = {
 
     async createPustakaGuide(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/guides`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -1112,12 +993,11 @@ export const db = {
 
     async createPustakaSlide(data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/slides`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -1129,12 +1009,11 @@ export const db = {
 
     async updatePustakaGuide(id, data) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/guides/${id}`, {
                 method: 'PUT',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -1146,10 +1025,9 @@ export const db = {
 
     async deletePustakaGuide(id) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/guides/${id}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.error || 'Gagal menghapus panduan');
@@ -1159,10 +1037,9 @@ export const db = {
 
     async deleteSlidesByGuideId(guideId) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/slides/by-guide/${guideId}`, {
                 method: 'DELETE',
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             return await response.json();
         } catch (e) { console.error(e); return { success: false }; }
@@ -1170,9 +1047,8 @@ export const db = {
 
     async getPustakaCategories() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/categories`, {
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             if (!response.ok) return [];
             return await response.json();
@@ -1181,9 +1057,8 @@ export const db = {
 
     async searchPustaka(query) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/search?q=${encodeURIComponent(query)}`, {
-                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                credentials: 'include'
             });
             if (!response.ok) return [];
             return await response.json();
@@ -1192,12 +1067,11 @@ export const db = {
 
     async createPustakaCategory(name) {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/pustaka/categories`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ name })
             });
@@ -1210,12 +1084,9 @@ export const db = {
     // --- NORMALIZED QUERY ENDPOINTS ---
     async getInvoices(params = {}) {
         try {
-            const token = localStorage.getItem('archive_token');
             const query = new URLSearchParams(params).toString();
             const response = await fetch(`${API_URL}/invoices?${query}`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal mengambil data invoice');
             return await response.json();
@@ -1227,11 +1098,8 @@ export const db = {
 
     async getInvoiceStats() {
         try {
-            const token = localStorage.getItem('archive_token');
             const response = await fetch(`${API_URL}/stats/invoices`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!response.ok) throw new Error('Gagal mengambil statistik invoice');
             return await response.json();
@@ -1243,9 +1111,8 @@ export const db = {
 
     // --- TAX CALCULATION & WP DATABASE ---
     async getTaxObjects() {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/tax/objects?cb=${Date.now()}`, {
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+            credentials: 'include'
         });
         const data = await response.json();
         const list = Array.isArray(data) ? data : (data?.data || []);
@@ -1258,38 +1125,36 @@ export const db = {
     },
 
     async createTaxObject(data) {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/tax/objects`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         return await response.json();
     },
 
     async updateTaxObject(id, data) {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/tax/objects/${id}`, {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(data)
         });
         return await response.json();
     },
 
     async deleteTaxObject(id) {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/tax/objects/${id}`, {
             method: 'DELETE',
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+            credentials: 'include'
         });
         return await response.json();
     },
 
     async getWpDatabase() {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/tax/wp?cb=${Date.now()}`, {
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+            credentials: 'include'
         });
         if (!response.ok) return [];
         const data = await response.json();
@@ -1310,13 +1175,12 @@ export const db = {
     },
 
     async saveWpData(data, id) {
-        const token = localStorage.getItem('archive_token');
         const url = id ? `${API_URL}/tax/wp/${id}` : `${API_URL}/tax/wp`;
         const response = await fetch(url, {
             method: id ? 'PUT' : 'POST',
+            credentials: 'include',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 name: data.name,
@@ -1342,20 +1206,18 @@ export const db = {
     },
 
     async deleteWpData(id) {
-        const token = localStorage.getItem('archive_token');
         await fetch(`${API_URL}/tax/wp/${id}`, {
             method: 'DELETE',
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+            credentials: 'include'
         });
     },
 
     async importWpExcel(file) {
-        const token = localStorage.getItem('archive_token');
         const formData = new FormData();
         formData.append('file', file);
         const response = await fetch(`${API_URL}/tax/wp/import`, {
             method: 'POST',
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+            credentials: 'include',
             body: formData
         });
         if (!response.ok) {
@@ -1366,12 +1228,11 @@ export const db = {
     },
 
     async importMasterExcel(file) {
-        const token = localStorage.getItem('archive_token');
         const formData = new FormData();
         formData.append('file', file);
         const response = await fetch(`${API_URL}/tax/objects/import`, {
             method: 'POST',
-            headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+            credentials: 'include',
             body: formData
         });
         if (!response.ok) {
@@ -1382,12 +1243,11 @@ export const db = {
     },
 
     async chatWithAi(message, history = []) {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(`${API_URL}/search/chat`, {
             method: 'POST',
+            credentials: 'include',
             headers: {
-                'Content-Type': 'application/json',
-                'Authorization': token ? `Bearer ${token}` : ''
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({ message, history })
         });

@@ -23,12 +23,11 @@ export default function Profile({ currentUser, onUpdateProfile }) {
         }
 
         try {
-            const token = localStorage.getItem('archive_token');
             const res = await fetch(`${API_URL}/users/profile/${currentUser.id}`, {
                 method: 'PUT',
-                headers: { 
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({
                     name,
@@ -81,8 +80,8 @@ export default function Profile({ currentUser, onUpdateProfile }) {
 
             {message.text && (
                 <div className={`p-4 rounded-2xl flex items-center gap-3 animate-in zoom-in duration-300 ${message.type === 'success'
-                        ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-100 dark:border-green-900/30'
-                        : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-100 dark:border-red-900/30'
+                    ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 border border-green-100 dark:border-green-900/30'
+                    : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-100 dark:border-red-900/30'
                     }`}>
                     {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertCircle size={20} />}
                     <span className="font-semibold">{message.text}</span>

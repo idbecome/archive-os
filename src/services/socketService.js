@@ -6,20 +6,12 @@ import { io } from 'socket.io-client';
  */
 
 const getServerUrl = () => {
-    const { hostname, port, protocol } = window.location;
-    // Dev server (Vite)
-    if (port === '5173' || port === '3000') {
-        return `${protocol}//${hostname}:5005`;
+    // Return empty string to connect to the same host/port the browser is currently at
+    // In Vite dev, the proxy handles socket.io routing.
+    // In Electron, fallback to localhost:5005
+    if (window.location.protocol === 'file:') {
+        return 'http://localhost:5005';
     }
-    // Localhost
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return `${protocol}//${hostname}:5005`;
-    }
-    // Direct IP access (LAN)
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-        return `${protocol}//${hostname}:5005`;
-    }
-    // Production (same origin)
     return '';
 };
 

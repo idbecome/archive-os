@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ClipboardCheck, CheckCircle2, AlertCircle, Plus, ChevronRight, FileText, UploadCloud, User, Trash2, CheckSquare, Square, File, Search, Calendar, Clock, Paperclip, Edit, MoreVertical, Download, Folder, RotateCcw, Save, X, CloudUpload, Sparkles, TrendingUp, FileDigit, Image as ImageIcon, Edit3, Eye } from 'lucide-react';
-import { db as taxService, db as documentService } from '../services/database';
+import { taxService } from '../services/taxService';
+import { documentService } from '../services/documentService';
 import { performAdvancedOCR } from '../utils/ocr'; // NEW IMPORT
 import { Card, SummaryCard } from '../components/ui/Card';
 import Modal from '../components/common/Modal';
@@ -280,13 +281,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
             cleanUrl = '/' + url;
         }
 
-        const token = localStorage.getItem('archive_token');
-
         if (cleanUrl.startsWith('/uploads/')) {
             const baseUrl = isDev ? `${protocol}//${hostname}:${backendPort}` : `${protocol}//${hostname}:${port}`;
-            const separator = cleanUrl.includes('?') ? '&' : '?';
-            const authQuery = token ? `${separator}token=${token}` : '';
-            return `${baseUrl}${cleanUrl}${authQuery}`;
+            return `${baseUrl}${cleanUrl}`;
         }
         return cleanUrl;
     };
@@ -458,7 +455,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
                     const folderId = await syncAuditFolder(newAuditTitle, 'ACTIVE');
 
                     const docPayload = {
-                        id: String(Date.now() + 1),
+                        id: `doc-${Date.now()}`,
                         title: newAuditFile.name,
                         type: newAuditFile.type,
                         size: (newAuditFile.size / 1024 / 1024).toFixed(2) + ' MB',
@@ -617,8 +614,9 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         setUploadModalOpen(false);
         setIsUploadingFile(true);
 
+        const newDocId = `doc-${Date.now()}`;
         const tempDoc = {
-            id: String(Date.now()),
+            id: newDocId,
             title: uploadForm.title || uploadForm.fileName,
             type: uploadForm.fileType,
             size: uploadForm.fileSize,
@@ -638,7 +636,7 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
 
             // Backend will handle OCR via Queue if client fails
             const docPayload = {
-                id: String(Date.now()),
+                id: newDocId,
                 title: uploadForm.title || uploadForm.fileName,
                 type: uploadForm.fileType,
                 size: uploadForm.fileSize,

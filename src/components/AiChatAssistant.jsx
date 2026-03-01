@@ -7,15 +7,8 @@ import {
 } from 'lucide-react';
 
 const getApiUrl = () => {
-    const { hostname, port, protocol } = window.location;
-    if (port === '5173' || port === '3000') {
-        return `${protocol}//${hostname}:5005/api`;
-    }
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return `${protocol}//${hostname}:5005/api`;
-    }
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-        return `${protocol}//${hostname}:5005/api`;
+    if (window.location.protocol === 'file:') {
+        return 'http://localhost:5005/api';
     }
     return '/api';
 };
@@ -241,11 +234,10 @@ export default function AiChatAssistant({
     }, [isOpen]);
 
     const pollJobStatus = async (jobId) => {
-        const token = localStorage.getItem('archive_token');
         const poll = async () => {
             try {
                 const res = await fetch(`${API_URL}/search/job/${jobId}`, {
-                    headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                    credentials: 'include'
                 });
                 const data = await res.json();
 
@@ -300,12 +292,11 @@ export default function AiChatAssistant({
         setIsLoading(true);
 
         try {
-            const token = localStorage.getItem('archive_token');
             const res = await fetch(`${API_URL}/search/chat`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ message: msg })
             });

@@ -105,6 +105,7 @@ import DocumentApproval from './pages/DocumentApproval';
 import Pustaka from './pages/Pustaka';
 import SystemLogs from './pages/SystemLogs';
 import SopFlow from './pages/SopFlow';
+import { getFullUrl } from './utils/urlHelper';
 import { useToast, ToastContainer } from './components/ui/Toast';
 import PdfViewer from './components/ui/PdfViewer';
 import AiChatAssistant from './components/AiChatAssistant';
@@ -224,23 +225,7 @@ export default function App() {
     document.body.removeChild(textArea);
   };
 
-  const getFullUrl = (url) => {
-    if (typeof url !== 'string') return url;
-    if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-    const { hostname, port, protocol } = window.location;
-    const isDev = port === '3000' || port === '5173' || hostname === 'localhost';
-    const token = localStorage.getItem('archive_token');
-    let cleanUrl = url;
-    if (url.startsWith('uploads/')) cleanUrl = '/' + url;
-
-    if (cleanUrl.startsWith('/uploads/')) {
-      const baseUrl = isDev ? `${protocol}//${hostname}:5005` : '';
-      const cleanPath = cleanUrl.split('?')[0]; // Bersihkan query lama jika ada
-      return token ? `${baseUrl}${cleanPath}?token=${token}` : `${baseUrl}${cleanPath}`;
-    }
-    if (cleanUrl.includes('localhost:5005')) return cleanUrl.replace('localhost', hostname);
-    return cleanUrl;
-  };
+  // getFullUrl is now imported from urlHelper
 
   const [selectedSlotId, setSelectedSlotId] = useState(null);
   const [showExternalForm, setShowExternalForm] = useState(false);
@@ -291,11 +276,8 @@ export default function App() {
     const fetchOcrStatus = async () => {
       try {
         const url = `${API_BASE}/ocr/status`;
-        const token = localStorage.getItem('archive_token');
         const res = await fetch(url, {
-          headers: {
-            'Authorization': token ? `Bearer ${token}` : ''
-          }
+          credentials: 'include'
         });
         if (!res.ok) return;
         const data = await res.json();
@@ -410,11 +392,8 @@ export default function App() {
       ]);
       // Initialize OCR completion count
       try {
-        const token = localStorage.getItem('archive_token');
         const ocrRes = await fetch(`/api/ocr/status`, {
-          headers: {
-            'Authorization': token ? `Bearer ${token}` : ''
-          }
+          credentials: 'include'
         });
         const ocrData = await ocrRes.json();
         lastOcrCompletedRef.current = ocrData?.counts?.completed || 0;
@@ -961,6 +940,10 @@ export default function App() {
   // --- HELPERS (RESTORED) ---
 
   const addLog = async (user, action, details) => {
+    if (!currentUser && user !== 'Admin') {
+      console.warn("addLog: Skipping log creation for unauthenticated user.");
+      return;
+    }
     try {
       await api.createLog({ user, action, details });
       const updatedLogs = await api.getLogs();
@@ -996,20 +979,9 @@ export default function App() {
         password = 'viewer123';
       }
 
-      // Hardcoded fallbacks for specific accounts if they are not in DB yet (or as emergency)
-      if (username === 'admin' && password === 'admin') {
-        const adminUser = { name: 'Administrator', role: 'admin', username: 'admin', token: 'dev-token' };
-        setCurrentUser(adminUser);
-        localStorage.setItem('archive_user', JSON.stringify(adminUser));
-        localStorage.setItem('archive_token', 'dev-token');
-        addLog('Admin', 'Login', 'Admin logged in');
-        return;
-      }
-
       const user = await api.login(username, password);
       setCurrentUser(user);
       localStorage.setItem('archive_user', JSON.stringify(user));
-      if (user.token) localStorage.setItem('archive_token', user.token);
       addLog(user.name, 'Login', 'User logged in');
     } catch (error) {
       if (onError) onError(error.message);
@@ -1771,11 +1743,8 @@ export default function App() {
 
         if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
           console.log('[Preview] Fetching buffer from URL...');
-          const token = localStorage.getItem('archive_token');
           const response = await fetch(normalizedUrl, {
-            headers: {
-              'Authorization': token ? `Bearer ${token}` : ''
-            }
+            credentials: 'include'
           });
           if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
           buffer = await response.arrayBuffer();
@@ -2438,11 +2407,8 @@ export default function App() {
 
         if (normalizedUrl.startsWith('http') || normalizedUrl.startsWith('/') || normalizedUrl.startsWith('blob:')) {
           console.log('[Preview] Fetching buffer from URL...');
-          const token = localStorage.getItem('archive_token');
           const response = await fetch(normalizedUrl, {
-            headers: {
-              'Authorization': token ? `Bearer ${token}` : ''
-            }
+            credentials: 'include'
           });
           if (!response.ok) throw new Error(`Fetch failed: ${response.status} ${response.statusText}`);
           buffer = await response.arrayBuffer();

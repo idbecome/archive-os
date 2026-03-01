@@ -1,6 +1,6 @@
-
 import React, { useState, useEffect } from 'react';
 import { Box, Layers, Map, Flame } from 'lucide-react';
+import { API_URL } from '../services/apiClient';
 
 const WarehouseMap = ({ inventory, onSelectInfo }) => {
     const [hotItems, setHotItems] = useState([]);
@@ -8,7 +8,9 @@ const WarehouseMap = ({ inventory, onSelectInfo }) => {
 
     useEffect(() => {
         // Fetch predictive analytics
-        fetch('http://localhost:5005/api/inventory/analytics')
+        fetch(`${API_URL}/inventory/analytics`, {
+            credentials: 'include'
+        })
             .then(res => res.json())
             .then(data => {
                 // data is array of { location: "Box A-1", frequency: 5, ... }

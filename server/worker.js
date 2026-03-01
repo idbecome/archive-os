@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { createWorker } from 'tesseract.js';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.js';
-import pdf from 'pdf-parse/lib/pdf-parse.js';
+import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
@@ -13,7 +13,7 @@ import { generateEmbedding, parseIntent, generateAnswer, vectorStore } from './a
 import { ocrQueue } from './queue.js';
 
 // PDF.js worker setup
-const pdfjsWorkerPath = path.resolve('node_modules/pdfjs-dist/legacy/build/pdf.worker.js');
+const pdfjsWorkerPath = path.resolve('node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
 const standardFontDataUrl = path.resolve('node_modules/pdfjs-dist/standard_fonts/');
 
 if (!fs.existsSync(pdfjsWorkerPath)) {
@@ -138,13 +138,15 @@ async function processJob(job) {
     try {
         if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
 
-        const existingData = await knex('documents').select('ocrContent').where('id', docId).first();
         let extractedText = "";
         let shouldProcess = true;
 
-        if (existingData && existingData.ocrContent && existingData.ocrContent.trim().length > 50) {
-            extractedText = existingData.ocrContent;
-            shouldProcess = false;
+        if (docId && docId.toLowerCase().startsWith('doc')) { // Real docId check
+            const existingData = await knex('documents').select('ocrContent').where('id', docId).first();
+            if (existingData && existingData.ocrContent && existingData.ocrContent.trim().length > 50) {
+                extractedText = existingData.ocrContent;
+                shouldProcess = false;
+            }
         }
 
         if (shouldProcess) {
@@ -169,8 +171,14 @@ async function processJob(job) {
                         pdfText += tokenizedText.items.map(t => t.str).join(' ') + "\n";
                     }
                 } catch (e) {
-                    const data = await pdf(dataBuffer);
-                    pdfText = data.text || "";
+                    try {
+                        const parser = new PDFParse({ data: dataBuffer });
+                        const pdfResult = await parser.getText();
+                        pdfText = pdfResult.text || "";
+                        await parser.destroy();
+                    } catch (pdfErr) {
+                        console.error("PDF Parsing Fallback Failed:", pdfErr);
+                    }
                 }
                 extractedText = pdfText.trim();
                 // If text is thin, try OCR (Simplified for worker restoration)
@@ -188,17 +196,50 @@ async function processJob(job) {
         }
 
         // Database updates
-        if (isInventory) {
-            const row = await knex('inventory').select('box_data').where('id', context.slotId).first();
-            if (row) {
-                let box = typeof row.box_data === 'string' ? JSON.parse(row.box_data) : row.box_data;
-                box.ordners?.forEach(ord => ord.invoices?.forEach(inv => {
-                    if (inv.id == context.invoiceId) { inv.ocrContent = extractedText; inv.status = DOC_STATUS.DONE; }
-                }));
-                await knex('inventory').where('id', context.slotId).update({ box_data: JSON.stringify(box) });
+        if (isInventory || (context && context.type === 'inventory_invoice')) {
+            const slotId = context.slotId || context.slot_id;
+            const invoiceId = context.invoiceId || context.invoice_id;
+
+            console.log(`[Worker] Updating Inventory: Slot=${slotId}, Invoice=${invoiceId}`);
+
+            if (slotId && invoiceId) {
+                const row = await knex('inventory').select('box_data').where('id', slotId).first();
+                if (row) {
+                    let box = typeof row.box_data === 'string' ? JSON.parse(row.box_data) : row.box_data;
+                    let changed = false;
+                    box.ordners?.forEach(ord => ord.invoices?.forEach(inv => {
+                        if (inv.id == invoiceId) {
+                            inv.ocrContent = extractedText;
+                            inv.status = DOC_STATUS.DONE;
+                            changed = true;
+                        }
+                    }));
+                    if (changed) {
+                        await knex('inventory').where('id', slotId).update({ box_data: JSON.stringify(box) });
+                        console.log(`[Worker] Inventory updated successfully for Slot ${slotId}`);
+                    } else {
+                        console.warn(`[Worker] Invoice ${invoiceId} not found in Slot ${slotId}`);
+                    }
+                }
             }
         }
-        if (docId) await knex('documents').where('id', docId).update({ ocrContent: extractedText, status: DOC_STATUS.DONE });
+        if (docId) {
+            const docExists = await knex('documents').where('id', docId).first();
+            if (docExists) {
+                await knex('documents').where('id', docId).update({ ocrContent: extractedText, status: DOC_STATUS.DONE });
+                console.log(`[Worker] Updated document ${docId} with OCR results.`);
+            }
+        }
+
+        // --- NEW: Update Tax Audit Notes ---
+        if (context && context.type === 'tax_note') {
+            const noteId = context.noteId;
+            console.log(`[Worker] Updating Tax Audit Note: ${noteId}`);
+            if (noteId) {
+                await knex('tax_audit_notes').where('id', noteId).update({ ocrContent: extractedText });
+                console.log(`[Worker] Tax Note ${noteId} updated with OCR content.`);
+            }
+        }
 
         // Embedding
         if (extractedText.length > 10) {
@@ -222,8 +263,13 @@ async function startPolling() {
 
     const poll = async () => {
         try {
-            const row = await knex('job_queue').where('status', JOB_STATUS.WAITING).orderBy('created_at', 'asc').first();
+            const row = await knex('job_queue')
+                .where('status', JOB_STATUS.WAITING)
+                .orderBy('created_at', 'asc')
+                .first();
+
             if (row) {
+                console.log(`[Worker] Found Job: ${row.id} (${row.name})`);
                 await knex('job_queue').where('id', row.id).update({ status: JOB_STATUS.ACTIVE, processed_at: knex.fn.now() });
                 const job = { id: row.id, name: row.name, data: JSON.parse(row.data || '{}'), updateProgress: async (p) => await knex('job_queue').where('id', row.id).update({ progress: p }) };
                 try {

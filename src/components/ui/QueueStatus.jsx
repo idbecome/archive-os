@@ -8,16 +8,15 @@ export default function QueueStatus() {
 
     const fetchQueue = async () => {
         try {
-            const { hostname, port, protocol } = window.location;
-            const API_URL = (port === '5173' || port === '3000' || hostname === 'localhost')
-                ? `${protocol}//${hostname}:5005/api`
-                : '/api';
-            const token = localStorage.getItem('archive_token');
+            const API_URL = window.location.protocol === 'file:' ? 'http://localhost:5005/api' : '/api';
             const res = await fetch(`${API_URL}/ocr/queue`, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
+            if (res.status === 401) {
+                console.warn("QueueStatus: 401 Unauthorized - trigger reload");
+                window.location.reload();
+                return;
+            }
             if (!res.ok) throw new Error('Gagal mengambil data antrian');
             const data = await res.json();
             setQueue(data);

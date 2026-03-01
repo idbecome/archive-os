@@ -63,12 +63,9 @@ export default function OcrQueueModal({ ocrStats, API_BASE, toast }) {
           onClick={async () => {
             if (window.confirm("Yakin ingin mereset antrian?")) {
               try {
-                const token = localStorage.getItem('archive_token');
                 await fetch(`${API_BASE}/ocr/reset`, {
                   method: 'POST',
-                  headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                  }
+                  credentials: 'include'
                 });
                 toast.success('Antrian direset.');
               } catch (e) { toast.error(e.message); }

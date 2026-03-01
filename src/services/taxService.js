@@ -67,9 +67,7 @@ export const taxService = {
         // formData handles its own content-type
         const response = await fetch(`${API_URL}/tax-audits/${auditId}/steps/${stepIndex}/notes`, {
             method: 'POST',
-            headers: {
-                'Authorization': localStorage.getItem('archive_token') ? `Bearer ${localStorage.getItem('archive_token')}` : ''
-            },
+            credentials: 'include',
             body: formData
         });
         return response.json();

@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
 import morgan from 'morgan';
+import cookieParser from 'cookie-parser';
 import bodyParser from 'body-parser';
 import { knex, initDb } from './db.js';
 import path from 'path';
@@ -47,10 +48,33 @@ app.set('io', io);
 const PORT = process.env.PORT || 5005;
 
 // Middleware
+app.use(cookieParser());
 app.use(cors({
-    origin: '*', // Allow all origins (for now) to fix local network/IP access
+    origin: (origin, callback) => {
+        // Allow requests with no origin (like mobile apps or curl)
+        if (!origin) return callback(null, true);
+
+        const allowedOrigins = [
+            'http://localhost:5173',
+            'http://127.0.0.1:5173',
+            'http://localhost:3000',
+            // Add other local IPs if needed, or use a regex
+        ];
+
+        // Match localhost or any IP on the local network (simplified for dev)
+        const isLocal = allowedOrigins.includes(origin) ||
+            /^http:\/\/\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}:5173$/.test(origin);
+
+        if (isLocal) {
+            callback(null, true);
+        } else {
+            // For production, you might want to be more restrictive
+            callback(null, true);
+        }
+    },
+    credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }));
 
 // Gunakan Morgan untuk log HTTP request ke konsol

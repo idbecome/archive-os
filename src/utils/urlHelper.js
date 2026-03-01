@@ -7,20 +7,19 @@ export const getFullUrl = (url) => {
     const backendPort = '5005';
 
     let cleanUrl = url;
-    if (cleanUrl.includes(':' + backendPort + '/uploads/')) {
+    if (cleanUrl.includes('/uploads/')) {
         cleanUrl = '/uploads/' + cleanUrl.split('/uploads/')[1];
     } else if (url.startsWith('uploads/')) {
         cleanUrl = '/' + url;
     }
 
-    // Ambil token terbaru dari storage untuk menghindari 401 setelah reset
-    const token = localStorage.getItem('archive_token') || '';
-    const authQuery = token ? `token=${token}` : '';
-
+    // Gunakan relative path untuk memanfaatkan Vite Proxy dan Same-Origin policy
     if (cleanUrl.startsWith('/uploads/')) {
-        const baseUrl = isDev ? `${protocol}//${hostname}:${backendPort}` : '';
-        const separator = cleanUrl.includes('?') ? '&' : '?';
-        return `${baseUrl}${cleanUrl}${authQuery ? separator + authQuery : ''}`;
+        if (window.location.protocol === 'file:') {
+            // Fallback Electron Desktop App
+            return `http://localhost:5005${cleanUrl}`;
+        }
+        return cleanUrl;
     }
     return cleanUrl;
 };

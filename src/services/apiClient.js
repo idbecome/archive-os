@@ -1,15 +1,11 @@
 import { useAuthStore } from '../store/useAuthStore';
 
 const getApiUrl = () => {
-    const { hostname, port, protocol } = window.location;
-    if (port === '5173' || port === '3000') {
-        return `${protocol}//${hostname}:5005/api`;
-    }
-    if (hostname === 'localhost' || hostname === '127.0.0.1') {
-        return `${protocol}//${hostname}:5005/api`;
-    }
-    if (/^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)) {
-        return `${protocol}//${hostname}:5005/api`;
+    // Gunakan relative path '/api' untuk memastikan request diperlakukan Same-Origin.
+    // Ini mengizinkan HttpOnly cookie dikirim dengan benar di Local Network (IP)
+    // mengandalkan konfigurasi `proxy` di vite.config.js dan nginx proxy di Production.
+    if (window.location.protocol === 'file:') {
+        return 'http://localhost:5005/api'; // Fallback Electron Desktop App
     }
     return '/api';
 };
@@ -20,15 +16,15 @@ export const apiClient = {
     async fetchJson(url, options = {}) {
         const response = await fetch(url, {
             ...options,
+            credentials: 'include',
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': localStorage.getItem('archive_token') ? `Bearer ${localStorage.getItem('archive_token')}` : '',
                 ...options.headers,
             },
         });
-        // Auto-logout on 401: clear stale token and reload to login page
+        // Auto-logout on 401: reload to login page (cookie is already invalid/gone)
         if (response.status === 401) {
-            console.warn('[apiClient] 401 Unauthorized - clearing stale token');
+            console.warn('[apiClient] 401 Unauthorized - clearing state');
             useAuthStore.getState().logout();
             window.location.reload();
             throw new Error('Session expired. Please login again.');
@@ -41,18 +37,18 @@ export const apiClient = {
     },
 
     async fetchRaw(url, options = {}) {
-        const response = await fetch(url, options);
+        const response = await fetch(url, {
+            ...options,
+            credentials: 'include'
+        });
         if (!response.ok) throw response;
         return response;
     },
 
     async upload(url, formData) {
-        const token = localStorage.getItem('archive_token');
         const response = await fetch(url, {
             method: 'POST',
-            headers: {
-                'Authorization': token ? `Bearer ${token}` : ''
-            },
+            credentials: 'include',
             body: formData,
         });
         if (!response.ok) throw new Error('Upload failed');

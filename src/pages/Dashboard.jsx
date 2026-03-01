@@ -35,6 +35,8 @@ export default function Dashboard({
     const docList = Array.isArray(propDocList) ? propDocList : [];
     const logs = Array.isArray(propLogs) ? propLogs : [];
     const docStats = propDocStats || { totalSizeMB: 0, totalDocs: 0, totalRevisions: 0 };
+    const safeTaxSummaries = Array.isArray(taxSummaries) ? taxSummaries : [];
+    const safeTaxAudits = Array.isArray(taxAudits) ? taxAudits : [];
 
     const [expandedLogId, setExpandedLogId] = useState(null);
     const [semanticQuery, setSemanticQuery] = useState('');
@@ -50,13 +52,12 @@ export default function Dashboard({
         setIsSearching(true);
         setCurrentPage(1);
         try {
-            const token = localStorage.getItem('archive_token');
             // Use the new AI Search Endpoint
             const res = await fetch(`${API_URL}/search/ai`, {
                 method: 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify({ query: semanticQuery })
             });
@@ -409,8 +410,8 @@ export default function Dashboard({
                 />
                 <SummaryCard
                     title="Audit Pajak"
-                    value={(taxAudits?.filter(a => a.status !== 'Selesai') || []).length}
-                    subtext={`${taxAudits?.length || 0} Total Pemeriksaan`}
+                    value={(Array.isArray(taxAudits) ? taxAudits.filter(a => a.status !== 'Selesai') : []).length}
+                    subtext={`${Array.isArray(taxAudits) ? taxAudits.length : 0} Total Pemeriksaan`}
                     icon={FileSearch}
                     colorClass="bg-amber-100 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400"
                 />

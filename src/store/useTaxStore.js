@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { taxService as api } from '../services/taxService';
+import { API_URL } from '../services/database';
 import { handleApiError } from '../utils/errorHelper';
 
 const initialState = {
@@ -28,12 +29,9 @@ export const useTaxStore = create((set, get) => ({
     },
     fetchTaxWp: async () => {
         try {
-            const token = localStorage.getItem('archive_token');
-            const url = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}/tax/wp` : 'http://localhost:5005/api/tax/wp';
+            const url = import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL} /tax/wp` : 'http://localhost:5005/api/tax/wp';
             const res = await fetch(url, {
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (res.ok) {
                 const data = await res.json();
@@ -51,7 +49,7 @@ export const useTaxStore = create((set, get) => ({
         if (isUpdate) {
             set({ taxSummaries: prev.map(s => s.id === data.id ? { ...s, ...data } : s) });
         } else {
-            const tempId = `temp-${Date.now()}`;
+            const tempId = `temp - ${Date.now()} `;
             set({ taxSummaries: [{ ...data, id: tempId }, ...prev] });
         }
 
@@ -82,7 +80,7 @@ export const useTaxStore = create((set, get) => ({
 
     createTaxAudit: async (data) => {
         const prev = get().taxAudits;
-        const tempId = `temp-${Date.now()}`;
+        const tempId = `temp - ${Date.now()} `;
         set({ taxAudits: [{ ...data, id: tempId }, ...prev] });
         try {
             await api.createTaxAudit(data);
@@ -167,14 +165,12 @@ export const useTaxStore = create((set, get) => ({
         }
 
         try {
-            const token = localStorage.getItem('archive_token');
-            const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5005/api';
-            const url = isUpdate ? `${baseUrl}/tax/wp/${id}` : `${baseUrl}/tax/wp`;
+            const url = isUpdate ? `${API_URL}/tax/wp/${id}` : `${API_URL}/tax/wp`;
             const res = await fetch(url, {
                 method: isUpdate ? 'PUT' : 'POST',
+                credentials: 'include',
                 headers: {
-                    'Content-Type': 'application/json',
-                    'Authorization': token ? `Bearer ${token}` : ''
+                    'Content-Type': 'application/json'
                 },
                 body: JSON.stringify(data)
             });
@@ -192,13 +188,9 @@ export const useTaxStore = create((set, get) => ({
         const prev = get().taxWp;
         set({ taxWp: prev.filter(w => w.id !== id) });
         try {
-            const token = localStorage.getItem('archive_token');
-            const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:5005/api';
-            const res = await fetch(`${baseUrl}/tax/wp/${id}`, {
+            const res = await fetch(`${API_URL}/tax/wp/${id}`, {
                 method: 'DELETE',
-                headers: {
-                    'Authorization': token ? `Bearer ${token}` : ''
-                }
+                credentials: 'include'
             });
             if (!res.ok) throw res;
             await get().fetchTaxWp();

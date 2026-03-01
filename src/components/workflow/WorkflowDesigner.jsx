@@ -194,14 +194,13 @@ export default function WorkflowDesigner({ initialNodes = [], initialEdges = [],
 
         setIsUploading(true);
         try {
-            const token = localStorage.getItem('archive_token');
             const uploaded = [];
             for (const file of files) {
                 const formData = new FormData();
                 formData.append('file', file);
                 const response = await fetch(`${API_URL}/upload`, {
                     method: 'POST',
-                    headers: { 'Authorization': token ? `Bearer ${token}` : '' },
+                    credentials: 'include',
                     body: formData
                 });
                 if (!response.ok) throw new Error('Upload failed');
