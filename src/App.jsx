@@ -458,6 +458,9 @@ export default function App() {
             api.getDepartments().then(setDepartments);
             fetchLogs();
             break;
+          case 'users':
+            api.getUsers().then(setUsers);
+            break;
           case 'pustaka':
             // Pustaka data is fetched by the Pustaka page component itself
             break;

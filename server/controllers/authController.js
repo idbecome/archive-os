@@ -65,6 +65,7 @@ export const createUser = async (req, res) => {
             department
         });
         await systemLog('Admin', "Create User", `Created user: ${username}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'users' });
         res.json({ id });
     } catch (e) {
         handleError(res, e, "Create User Error");
@@ -83,6 +84,7 @@ export const updateUser = async (req, res) => {
 
         await knex('users').where('id', id).update(updateData);
         await systemLog('Admin', "Update User", `Updated user ID: ${id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'users' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "Update User Error");
@@ -93,6 +95,7 @@ export const deleteUser = async (req, res) => {
     try {
         await knex('users').where('id', req.params.id).del();
         await systemLog('Admin', "Delete User", `Deleted user ID: ${req.params.id}`);
+        req.app.get('io')?.emit('data:changed', { channel: 'users' });
         res.json({ success: true });
     } catch (e) {
         handleError(res, e, "Delete User Error");

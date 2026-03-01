@@ -219,6 +219,29 @@ export default function Documents({
         }
     }, [selectedDocPreview]);
 
+    // --- REAL-TIME SYNC: useRef for stable closure ---
+    const selectedDocPreviewRef = useRef(selectedDocPreview);
+    useEffect(() => { selectedDocPreviewRef.current = selectedDocPreview; }, [selectedDocPreview]);
+
+    useEffect(() => {
+        let cleanup;
+        import('../services/socketService.js').then(({ getSocket }) => {
+            const socket = getSocket();
+            const handler = ({ channel }) => {
+                if (channel === 'documents') {
+                    const doc = selectedDocPreviewRef.current;
+                    if (doc) {
+                        console.log('[Socket.IO] Documents changed — refreshing comments...');
+                        fetchComments(doc.id);
+                    }
+                }
+            };
+            socket.on('data:changed', handler);
+            cleanup = () => socket.off('data:changed', handler);
+        });
+        return () => cleanup?.();
+    }, []);
+
     const handlePostComment = async () => {
         if (!newComment.trim() && !commentAttachment) return;
         setIsPostingComment(true);

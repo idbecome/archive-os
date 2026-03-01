@@ -80,20 +80,22 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         }
     }, [stepNotes, selectedAudit]);
 
+    // --- FUNCTION: LOAD GENERAL ATTACHMENTS (extracted for reuse) ---
+    const loadGeneralAttachments = async () => {
+        try {
+            const docs = await documentService.getDocuments({ stepIndex: 0 });
+            if (Array.isArray(docs)) {
+                const map = {};
+                docs.forEach(d => { if (d.auditId) map[d.auditId] = d; });
+                setGeneralAttachments(map);
+            }
+        } catch (e) {
+            console.error("Failed to load attachments", e);
+        }
+    };
+
     // --- EFFECT: LOAD GENERAL ATTACHMENTS ---
     useEffect(() => {
-        const loadGeneralAttachments = async () => {
-            try {
-                const docs = await documentService.getDocuments({ stepIndex: 0 });
-                if (Array.isArray(docs)) {
-                    const map = {};
-                    docs.forEach(d => { if (d.auditId) map[d.auditId] = d; });
-                    setGeneralAttachments(map);
-                }
-            } catch (e) {
-                console.error("Failed to load attachments", e);
-            }
-        };
         loadGeneralAttachments();
     }, [taxAudits]);
 
@@ -149,6 +151,40 @@ export default function TaxMonitoring({ taxAudits, hasPermission, currentUser, o
         const notes = await taxService.getAuditNotes(selectedAudit.id, activeStep);
         setStepNotes(notes);
     };
+
+    // --- REAL-TIME SYNC: useRef approach for stable closures ---
+    const selectedAuditRef = useRef(selectedAudit);
+    const activeStepRef = useRef(activeStep);
+    useEffect(() => { selectedAuditRef.current = selectedAudit; }, [selectedAudit]);
+    useEffect(() => { activeStepRef.current = activeStep; }, [activeStep]);
+
+    useEffect(() => {
+        let cleanup;
+        import('../services/socketService.js').then(({ getSocket }) => {
+            const socket = getSocket();
+            const handler = ({ channel }) => {
+                if (channel === 'tax' || channel === 'documents') {
+                    console.log(`[Socket.IO] ${channel} data changed — refreshing audit details...`);
+                    const audit = selectedAuditRef.current;
+                    if (audit) {
+                        // Re-fetch notes and files for the currently viewed audit/step
+                        taxService.getAuditNotes(audit.id, activeStepRef.current).then(setStepNotes);
+                        // Re-load files
+                        loadFiles(audit);
+                        // Re-fetch the audit object itself (for checklist/PIC data in steps[].notes[])
+                        taxService.getTaxAudits().then(audits => {
+                            const updated = (audits || []).find(a => String(a.id) === String(audit.id));
+                            if (updated) setSelectedAudit(updated);
+                        });
+                    }
+                    loadGeneralAttachments();
+                }
+            };
+            socket.on('data:changed', handler);
+            cleanup = () => socket.off('data:changed', handler);
+        });
+        return () => cleanup?.();
+    }, []);
 
     const handlePostNote = async () => {
         if (!newNoteText.trim() && !noteAttachment) return;

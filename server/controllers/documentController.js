@@ -8,6 +8,13 @@ import { addOCRJob } from '../queue.js';
 import { UPLOADS_DIR } from '../config/upload.js';
 import { vectorStore } from '../ai_search.js';
 
+// Helper: Convert ISO 8601 datetime to MySQL-compatible format
+const toMySQLDate = (isoOrDate) => {
+    const d = isoOrDate ? new Date(isoOrDate) : new Date();
+    if (isNaN(d.getTime())) return new Date().toISOString().slice(0, 19).replace('T', ' ');
+    return d.toISOString().slice(0, 19).replace('T', ' ');
+};
+
 export const getDocuments = async (req, res) => {
     try {
         const { folderId } = req.query;
@@ -47,7 +54,7 @@ export const uploadDocument = async (req, res) => {
         const title = req.body.title || (req.file ? req.file.originalname : 'Document');
         const type = req.file ? req.file.mimetype : (req.body.type || 'application/octet-stream');
         const size = req.file ? (req.file.size / 1024 / 1024).toFixed(2) + ' MB' : (req.body.size || '0 MB');
-        const uploadDate = req.body.uploadDate || new Date().toISOString();
+        const uploadDate = toMySQLDate(req.body.uploadDate);
 
         // Check for duplicate title in same folder (Auto Revision)
         const normalizedFolderId = (folderId === "null" || folderId === "" || !folderId) ? null : folderId;
@@ -82,7 +89,7 @@ export const uploadDocument = async (req, res) => {
             }
 
             versionsHistory.push({
-                timestamp: existingDoc.uploadDate || new Date().toISOString(),
+                timestamp: existingDoc.uploadDate || toMySQLDate(),
                 size: existingDoc.size,
                 type: existingDoc.type,
                 file_data: null,
@@ -321,7 +328,7 @@ export const copyDocument = async (req, res) => {
             id: newDocId,
             folderId: targetFolderId,
             title: "Copy of " + doc.title,
-            uploadDate: new Date().toISOString()
+            uploadDate: toMySQLDate()
         });
 
         await systemLog(owner || doc.owner || 'System', "Copy", `Salin file: "${doc.title}" ke folder: ${targetFolderId || 'Root'}`);
@@ -359,7 +366,7 @@ export const restoreVersion = async (req, res) => {
 
         // Push current state to history before restoring
         history.push({
-            timestamp: doc.uploadDate || new Date().toISOString(),
+            timestamp: doc.uploadDate || toMySQLDate(),
             size: doc.size,
             type: doc.type,
             file_data: null,
@@ -384,7 +391,7 @@ export const restoreVersion = async (req, res) => {
             type: restoredType,
             url: restoredUrl,
             ocrContent: ocrToUse,
-            uploadDate: new Date().toISOString(),
+            uploadDate: toMySQLDate(),
             version: knex.raw('version + 1'),
             versionsHistory: JSON.stringify(history),
             status: shouldRunOCR ? DOC_STATUS.PROCESSING : DOC_STATUS.DONE
@@ -447,7 +454,7 @@ export const updateDocument = async (req, res) => {
             }
 
             versionsHistory.push({
-                timestamp: existingDoc.uploadDate || new Date().toISOString(),
+                timestamp: existingDoc.uploadDate || toMySQLDate(),
                 size: existingDoc.size,
                 type: existingDoc.type,
                 file_data: null,
@@ -461,7 +468,7 @@ export const updateDocument = async (req, res) => {
             updateData.url = `/uploads/${req.file.filename}`;
             updateData.type = req.file.mimetype;
             updateData.size = (req.file.size / 1024 / 1024).toFixed(2) + ' MB';
-            updateData.uploadDate = new Date().toISOString();
+            updateData.uploadDate = toMySQLDate();
             updateData.versionsHistory = JSON.stringify(versionsHistory);
             updateData.version = (existingDoc.version || 1) + 1;
 
@@ -535,7 +542,7 @@ export const addComment = async (req, res) => {
             documentId: id,
             user: user || 'System',
             text: text || '',
-            timestamp: new Date().toISOString(),
+            timestamp: toMySQLDate(),
             attachment: attachment || null
         };
 
@@ -603,7 +610,7 @@ export const promoteCommentAttachment = async (req, res) => {
         }
 
         versionsHistory.push({
-            timestamp: doc.uploadDate || new Date().toISOString(),
+            timestamp: doc.uploadDate || toMySQLDate(),
             size: doc.size,
             type: doc.type,
             file_data: null,
@@ -625,7 +632,7 @@ export const promoteCommentAttachment = async (req, res) => {
             .update({
                 type: finalType,
                 size: finalSize,
-                uploadDate: new Date().toISOString(),
+                uploadDate: toMySQLDate(),
                 url: newUrl,
                 ocrContent: '', // Trigger new OCR
                 file_data: null,

@@ -121,6 +121,24 @@ export default function TaxCalculation({ onCopy, hasPermission }) {
         }
     }, [activeTab]);
 
+    // Real-time sync: auto-refresh WP database and master objects when another client modifies tax data
+    useEffect(() => {
+        let cleanup;
+        import('../services/socketService.js').then(({ getSocket }) => {
+            const socket = getSocket();
+            const handler = ({ channel }) => {
+                if (channel === 'tax') {
+                    console.log('[Socket.IO] Tax data changed — refreshing WP database & master...');
+                    if (activeTab === 'database') fetchDatabase();
+                    if (activeTab === 'master' || activeTab === 'object') fetchMasterData();
+                }
+            };
+            socket.on('data:changed', handler);
+            cleanup = () => socket.off('data:changed', handler);
+        });
+        return () => cleanup?.();
+    }, [activeTab]);
+
     // Reset ke halaman 1 saat mencari atau pindah tab
     useEffect(() => {
         setCurrentPage(1);
