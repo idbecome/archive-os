@@ -1,5 +1,7 @@
 import fs from 'fs';
 import path from 'path';
+import './utils/patch-canvas.js';
+import canvasModule from 'canvas';
 import { createWorker } from 'tesseract.js';
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import { PDFParse } from 'pdf-parse';
@@ -20,6 +22,7 @@ const socket = ioClient(`http://localhost:${process.env.PORT || 5005}`, { reconn
 // PDF.js worker setup
 const pdfjsWorkerPath = path.resolve('node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
 const standardFontDataUrl = path.resolve('node_modules/pdfjs-dist/standard_fonts/');
+pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(pdfjsWorkerPath).href;
 
 if (!fs.existsSync(pdfjsWorkerPath)) {
     console.error("PDF.js Worker not found at:", pdfjsWorkerPath);
@@ -136,9 +139,9 @@ async function processJob(job) {
     }
 
     // Default: OCR Job
-    const { docId, filePath, fileType, originalName, context, forceOcr } = job.data;
+    const { docId, filePath, fileType, originalName, context, forceOcr, isBullMQ } = job.data;
     const isInventory = context && context.type === 'inventory';
-    console.log(`[Worker] Processing OCR Job ${job.id} for ${isInventory ? 'Inventory' : 'Document'}: ${docId}`);
+    console.log(`[Worker] Processing OCR Job ${job.id} for ${isInventory ? 'Inventory' : 'Document'}: ${docId} (BullMQ: ${!!isBullMQ})`);
 
     try {
         if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
@@ -186,11 +189,37 @@ async function processJob(job) {
                     }
                 }
                 extractedText = pdfText.trim();
+
                 // If text is thin, try OCR via canvas rendering
                 if (forceOcr || extractedText.length < 50) {
+                    // HAND-OFF LOGIC: If we are in BullMQ and thin text is detected, hand off to polling
+                    if (isBullMQ && !forceOcr) {
+                        console.log(`[Worker] Thin text detected in BullMQ for ${docId}. Handing off to local polling...`);
+
+                        // Re-queue for MySQL Polling by inserting into job_queue table directly or via a helper
+                        const jobData = {
+                            docId,
+                            filePath,
+                            fileType,
+                            originalName,
+                            context,
+                            forceOcr: true // Ensure polling worker does the heavy OCR
+                        };
+
+                        await knex('job_queue').insert({
+                            name: 'process-ocr',
+                            data: JSON.stringify(jobData),
+                            status: JOB_STATUS.WAITING,
+                            created_at: knex.fn.now()
+                        });
+
+                        console.log(`[Worker] Job for ${docId} successfully handed off to MySQL queue.`);
+                        return; // Exit BullMQ worker; polling worker will pick it up
+                    }
+
                     console.log(`[Worker] Thin text in PDF detected. Rasterizing pages for OCR...`);
                     try {
-                        const { createCanvas } = await import('canvas');
+                        const { createCanvas } = canvasModule;
                         const images = [];
                         const uint8Array = new Uint8Array(dataBuffer);
                         const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: pathToFileURL(standardFontDataUrl).href });
@@ -208,6 +237,10 @@ async function processJob(job) {
 
                             await page.render({ canvasContext: ctx, viewport: viewport }).promise;
                             const buffer = canvas.toBuffer('image/png');
+                            if (i === 1) {
+                                fs.writeFileSync('debug_worker_raster_p1.png', buffer);
+                                console.log(`[Worker] Saved debug_worker_raster_p1.png (${buffer.length} bytes)`);
+                            }
                             images.push(buffer);
                         }
 
@@ -217,6 +250,7 @@ async function processJob(job) {
                             const tess = await createWorker('eng+ind');
                             for (let imgBuf of images) {
                                 const { data: { text } } = await tess.recognize(imgBuf);
+                                console.log(`[Worker] Tesseract page result length: ${text?.length || 0}`);
                                 rasterText += text + "\n";
                             }
                             await tess.terminate();
@@ -381,7 +415,8 @@ async function startWorkerSystem() {
                     filePath: job.data.filename,
                     fileType: job.data.fileType || '',
                     originalName: job.data.originalName || '',
-                    context: context
+                    context: context,
+                    isBullMQ: true // Flag to processJob
                 }
             };
             return await processJob(jobData);
@@ -394,10 +429,10 @@ async function startWorkerSystem() {
         worker.on('failed', (job, err) => {
             console.error(`[Worker] BullMQ Job ${job.id} failed:`, err);
         });
-    } else {
-        console.log("🐌 [Worker] BullMQ Inactive. Starting MySQL Polling Fallback...");
-        startPolling();
     }
+
+    console.log("🐌 [Worker] Checking MySQL Polling...");
+    startPolling();
 }
 
 startWorkerSystem();
