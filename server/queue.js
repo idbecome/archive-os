@@ -107,3 +107,30 @@ export const addOCRJob = async (docId, filePath, fileType, originalName, context
         return null;
     }
 };
+
+export const addAiChatJob = async (message, history, user) => {
+    try {
+        console.log(`[Queue] Adding AI Chat Job for user: ${user}`);
+        return await ocrQueue.add('ai-chat', {
+            message,
+            history,
+            user
+        }, { max_attempts: 1 }); // Chat doesn't usually need retries
+    } catch (err) {
+        console.error("AddAiChatJob Error:", err);
+        return null;
+    }
+};
+
+export const addAiEmbeddingJob = async (text, context = {}) => {
+    try {
+        console.log(`[Queue] Adding AI Embedding Job. Text snippet: ${text.substring(0, 30)}...`);
+        return await ocrQueue.add('ai-embedding', {
+            text,
+            context
+        });
+    } catch (err) {
+        console.error("AddAiEmbeddingJob Error:", err);
+        return null;
+    }
+};

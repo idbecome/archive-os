@@ -240,6 +240,56 @@ export default function AiChatAssistant({
         }
     }, [isOpen]);
 
+    const pollJobStatus = async (jobId) => {
+        const token = localStorage.getItem('archive_token');
+        const poll = async () => {
+            try {
+                const res = await fetch(`${API_URL}/search/job/${jobId}`, {
+                    headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+                });
+                const data = await res.json();
+
+                if (data.status === 'completed') {
+                    const result = data.result;
+                    let mappedResults = [];
+                    if (result.results) {
+                        mappedResults = result.results.map(item => ({
+                            ...item,
+                            title: item.title || item.name || 'Untitled',
+                            uploadDate: item.uploadDate || item.date,
+                            size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
+                            folderName: item.folderName || (item.matchType === 'invoice' ? 'Finance' : 'General'),
+                        }));
+                    }
+
+                    setMessages(prev => [...prev, {
+                        role: 'assistant',
+                        text: result.reply || 'Maaf, tidak ada respons.',
+                        results: mappedResults,
+                        intent: result.intent
+                    }]);
+                    setIsLoading(false);
+                    return;
+                }
+
+                if (data.status === 'failed') {
+                    throw new Error(data.error || 'Job failed');
+                }
+
+                // Continue polling
+                setTimeout(poll, 1500);
+            } catch (err) {
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: `Maaf, terjadi kendala saat memproses: ${err.message}`,
+                    results: []
+                }]);
+                setIsLoading(false);
+            }
+        };
+        poll();
+    };
+
     const handleSend = async (text = input) => {
         const msg = text.trim();
         if (!msg || isLoading) return;
@@ -263,30 +313,25 @@ export default function AiChatAssistant({
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || 'Gagal menghubungi asisten AI');
 
-            let mappedResults = [];
-            if (data.results) {
-                mappedResults = data.results.map(item => ({
-                    ...item,
-                    title: item.title || item.name || 'Untitled',
-                    uploadDate: item.uploadDate || item.date,
-                    size: item.amount ? `Rp ${parseInt(item.amount).toLocaleString('id-ID')}` : (item.size || 'Document'),
-                    folderName: item.folderName || (item.matchType === 'invoice' ? 'Finance' : 'General'),
-                }));
+            if (data.jobId) {
+                // Background job started, start polling
+                pollJobStatus(data.jobId);
+            } else {
+                // Fallback for immediate response (if any)
+                setMessages(prev => [...prev, {
+                    role: 'assistant',
+                    text: data.reply || 'Maaf, tidak ada respons.',
+                    results: [],
+                    intent: data.intent
+                }]);
+                setIsLoading(false);
             }
-
-            setMessages(prev => [...prev, {
-                role: 'assistant',
-                text: data.reply || 'Maaf, tidak ada respons.',
-                results: mappedResults,
-                intent: data.intent
-            }]);
         } catch (err) {
             setMessages(prev => [...prev, {
                 role: 'assistant',
                 text: err.message === 'Failed to fetch' ? 'Maaf, koneksi ke server gagal. Pastikan server berjalan.' : `Maaf, terjadi kendala: ${err.message}`,
                 results: []
             }]);
-        } finally {
             setIsLoading(false);
         }
     };
