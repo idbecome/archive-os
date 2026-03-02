@@ -1,10 +1,21 @@
+console.log('[worker.js] Top of file');
+import 'dotenv/config';
+
+try {
+    const dbHost = process.env.DB_HOST;
+    if (dbHost) {
+        console.log(`[worker.js] dotenv loaded. DB_HOST: ${dbHost}`);
+    } else {
+        console.warn('[worker.js] WARNING: dotenv might not have loaded correctly. DB_HOST is undefined.');
+    }
+} catch (e) { console.error('[worker.js] Error checking env vars:', e); }
+
 import fs from 'fs';
 import path from 'path';
-import './utils/patch-canvas.js';
-import canvasModule from 'canvas';
+import { createRequire } from 'module';
+import sharp from 'sharp';
+
 import { createWorker } from 'tesseract.js';
-import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { PDFParse } from 'pdf-parse';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import * as XLSX from 'xlsx';
@@ -16,12 +27,32 @@ import { Worker } from 'bullmq';
 import { connection, USE_BULLMQ } from './utils/queue.js';
 import { io as ioClient } from 'socket.io-client';
 
+// Load PDF.js dynamically to ensure polyfills are applied first
+const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.mjs');
+
+// Fix for CommonJS module in ESM
+const require = createRequire(import.meta.url);
+let pdf = require('pdf-parse');
+// Handle ESM/CJS interop where default export might be wrapped
+if (typeof pdf !== 'function' && pdf.default) {
+    pdf = pdf.default;
+}
+
 // Connect to the main Node.js process to trigger UI refreshes
 const socket = ioClient(`http://localhost:${process.env.PORT || 5005}`, { reconnection: true });
+
+socket.on('connect', () => {
+    console.log('[Worker] Terhubung ke server utama (IPC).');
+});
+
+socket.on('connect_error', (err) => {
+    console.warn('[Worker] Gagal terhubung ke server utama (ECONNREFUSED). Pastikan server backend di port 5005 sudah jalan.');
+});
 
 // PDF.js worker setup
 const pdfjsWorkerPath = path.resolve('node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs');
 const standardFontDataUrl = path.resolve('node_modules/pdfjs-dist/standard_fonts/');
+const standardFontDataUrlHref = pathToFileURL(standardFontDataUrl).href + '/'; // Ensure trailing slash for PDF.js
 pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(pdfjsWorkerPath).href;
 
 if (!fs.existsSync(pdfjsWorkerPath)) {
@@ -50,44 +81,41 @@ const isImageFile = (filePath) => {
     } catch (e) { return false; }
 };
 
-async function extractImagesFromPDF(dataBuffer, maxImages = Infinity, job = null) {
+async function extractImagesFromPDF(pdfDocument, maxPages = 15) {
     const images = [];
-    try {
-        const uint8Array = new Uint8Array(dataBuffer);
-        const loadingTask = pdfjsLib.getDocument({
-            data: uint8Array,
-            standardFontDataUrl: pathToFileURL(standardFontDataUrl).href
-        });
-        const pdfDocument = await loadingTask.promise;
+    const pagesToProcess = Math.min(pdfDocument.numPages, maxPages);
 
-        for (let i = 1; i <= pdfDocument.numPages; i++) {
-            if (images.length >= maxImages) break;
-            if (job) await job.updateProgress(Math.round((i / pdfDocument.numPages) * 100));
-
+    for (let i = 1; i <= pagesToProcess; i++) {
+        try {
             const page = await pdfDocument.getPage(i);
             const operatorList = await page.getOperatorList();
 
             for (let j = 0; j < operatorList.fnArray.length; j++) {
-                if (images.length >= maxImages) break;
                 const fn = operatorList.fnArray[j];
-
+                // XObject or Inline Image
                 if (fn === pdfjsLib.OPS.paintImageXObject || fn === pdfjsLib.OPS.paintInlineImageXObject) {
                     const objId = operatorList.argsArray[j][0];
                     try {
-                        const image = await page.objs.get(objId);
-                        if (image && image.data) {
-                            const width = image.width;
-                            const height = image.height;
-                            const data = image.data;
-
-                            const canvas = { width, height, data };
-                            images.push(canvas);
+                        const img = await page.objs.get(objId);
+                        if (img && img.data && img.width > 200 && img.height > 200) {
+                            const channels = img.data.length / (img.width * img.height);
+                            // Process only if we have reasonable pixel data (3 for RGB, 4 for RGBA)
+                            if (channels === 3 || channels === 4) {
+                                const buffer = await sharp(img.data, {
+                                    raw: {
+                                        width: img.width,
+                                        height: img.height,
+                                        channels: channels
+                                    }
+                                }).png().toBuffer();
+                                images.push(buffer);
+                            }
                         }
-                    } catch (imgErr) { console.warn("Skip image object:", objId); }
+                    } catch (imgErr) { /* Skip failing image object */ }
                 }
             }
-        }
-    } catch (e) { console.error("PDF Image Extraction Failed:", e); }
+        } catch (pageErr) { console.warn(`Gagal memproses gambar di halaman ${i}:`, pageErr); }
+    }
     return images;
 }
 
@@ -139,12 +167,24 @@ async function processJob(job) {
     }
 
     // Default: OCR Job
-    const { docId, filePath, fileType, originalName, context, forceOcr, isBullMQ } = job.data;
+    const { docId, fileType, originalName, context, forceOcr, isBullMQ } = job.data;
+
+    // Pastikan path file mengarah ke folder 'uploads' jika bukan path absolut
+    let rawPath = job.data.filePath || job.data.filename;
+    const filePath = path.isAbsolute(rawPath)
+        ? rawPath
+        : path.join(process.cwd(), 'uploads', rawPath);
+
     const isInventory = context && context.type === 'inventory';
-    console.log(`[Worker] Processing OCR Job ${job.id} for ${isInventory ? 'Inventory' : 'Document'}: ${docId} (BullMQ: ${!!isBullMQ})`);
+    console.log(`[Worker] Processing OCR Job ${job.id} for ${isInventory ? 'Inventory' : 'Document'}: ${docId}`);
+    console.log(`[Worker] Target File: ${filePath} (Exists: ${fs.existsSync(filePath)})`);
 
     try {
-        if (!fs.existsSync(filePath)) throw new Error(`File not found: ${filePath}`);
+        if (!fs.existsSync(filePath)) {
+            const errorMsg = `File tidak ditemukan di path: ${filePath}`;
+            console.error(`[Worker] ${errorMsg}`);
+            throw new Error(errorMsg);
+        }
 
         let extractedText = "";
         let shouldProcess = true;
@@ -171,7 +211,7 @@ async function processJob(job) {
                 let pdfText = "";
                 try {
                     const uint8Array = new Uint8Array(dataBuffer);
-                    const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: pathToFileURL(standardFontDataUrl).href });
+                    const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: standardFontDataUrlHref });
                     const pdfDocument = await loadingTask.promise;
                     for (let i = 1; i <= Math.min(pdfDocument.numPages, 50); i++) {
                         const page = await pdfDocument.getPage(i);
@@ -180,85 +220,48 @@ async function processJob(job) {
                     }
                 } catch (e) {
                     try {
-                        const parser = new PDFParse({ data: dataBuffer });
-                        const pdfResult = await parser.getText();
-                        pdfText = pdfResult.text || "";
-                        await parser.destroy();
+                        const data = await pdf(dataBuffer);
+                        pdfText = data.text || "";
                     } catch (pdfErr) {
                         console.error("PDF Parsing Fallback Failed:", pdfErr);
                     }
                 }
                 extractedText = pdfText.trim();
 
-                // If text is thin, try OCR via canvas rendering
-                if (forceOcr || extractedText.length < 50) {
-                    // HAND-OFF LOGIC: If we are in BullMQ and thin text is detected, hand off to polling
-                    if (isBullMQ && !forceOcr) {
-                        console.log(`[Worker] Thin text detected in BullMQ for ${docId}. Handing off to local polling...`);
+                // If text is thin, try OCR via direct image extraction
+                // Cek jika baris kurang dari 50 atau dipaksa OCR
+                const lineCount = extractedText.split(/\r\n|\r|\n/).length;
+                if (forceOcr || lineCount < 50) {
+                    console.log(`[Worker] Teks digital minim (${lineCount} baris). Memulai Penarikan Gambar Langsung (No-Canvas)...`);
 
-                        // Re-queue for MySQL Polling by inserting into job_queue table directly or via a helper
-                        const jobData = {
-                            docId,
-                            filePath,
-                            fileType,
-                            originalName,
-                            context,
-                            forceOcr: true // Ensure polling worker does the heavy OCR
-                        };
-
-                        await knex('job_queue').insert({
-                            name: 'process-ocr',
-                            data: JSON.stringify(jobData),
-                            status: JOB_STATUS.WAITING,
-                            created_at: knex.fn.now()
-                        });
-
-                        console.log(`[Worker] Job for ${docId} successfully handed off to MySQL queue.`);
-                        return; // Exit BullMQ worker; polling worker will pick it up
-                    }
-
-                    console.log(`[Worker] Thin text in PDF detected. Rasterizing pages for OCR...`);
                     try {
-                        const { createCanvas } = canvasModule;
-                        const images = [];
                         const uint8Array = new Uint8Array(dataBuffer);
-                        const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: pathToFileURL(standardFontDataUrl).href });
+                        const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: standardFontDataUrlHref });
                         const pdfDocument = await loadingTask.promise;
 
-                        for (let i = 1; i <= Math.min(pdfDocument.numPages, 10); i++) {
-                            const page = await pdfDocument.getPage(i);
-                            const viewport = page.getViewport({ scale: 2.0 }); // High-res scale
-                            const canvas = createCanvas(viewport.width, viewport.height);
-                            const ctx = canvas.getContext('2d');
+                        const images = await extractImagesFromPDF(pdfDocument, 15);
 
-                            // Fix for Tesseract: Force white background since canvas defaults to transparent
-                            ctx.fillStyle = 'white';
-                            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-                            await page.render({ canvasContext: ctx, viewport: viewport }).promise;
-                            const buffer = canvas.toBuffer('image/png');
-                            if (i === 1) {
-                                fs.writeFileSync('debug_worker_raster_p1.png', buffer);
-                                console.log(`[Worker] Saved debug_worker_raster_p1.png (${buffer.length} bytes)`);
-                            }
-                            images.push(buffer);
-                        }
-
-                        // Run Tesseract on each rasterized page
                         if (images.length > 0) {
-                            let rasterText = "";
+                            console.log(`[Worker] Berhasil menarik ${images.length} gambar dari PDF. Memulai Tesseract...`);
                             const tess = await createWorker('eng+ind');
-                            for (let imgBuf of images) {
-                                const { data: { text } } = await tess.recognize(imgBuf);
-                                console.log(`[Worker] Tesseract page result length: ${text?.length || 0}`);
+                            let rasterText = "";
+
+                            for (let i = 0; i < images.length; i++) {
+                                console.log(`[Worker] 🔍 OCR Gambar ${i + 1}/${images.length}...`);
+                                const { data: { text } } = await tess.recognize(images[i]);
                                 rasterText += text + "\n";
                             }
                             await tess.terminate();
-                            extractedText = `[SCAN-DETECTED]\n${rasterText.trim()}`;
+
+                            if (rasterText.trim().length > 10) {
+                                extractedText = `[OCR-DIRECT]\n${rasterText.trim()}`;
+                                console.log(`[Worker] ✅ OCR Selesai. Total karakter: ${extractedText.length}`);
+                            }
+                        } else {
+                            console.log(`[Worker] Tidak ditemukan gambar yang cukup besar untuk OCR langsung.`);
                         }
-                    } catch (canvasErr) {
-                        console.error("[Worker] Canvas Rasterization failed:", canvasErr);
-                        extractedText = `[SCAN-DETECTED]\n${extractedText}`;
+                    } catch (err) {
+                        console.error("[Worker] Direct Extraction/OCR failed:", err);
                     }
                 }
             } else if (fileType.includes('spreadsheet') || fileType.includes('excel')) {
@@ -399,40 +402,14 @@ async function startPolling() {
 }
 
 async function startWorkerSystem() {
-    console.log("[Worker] Initializing Queue System...");
-    // Give Redis a moment to initialize connection
-    await new Promise(resolve => setTimeout(resolve, 2500));
+    console.log("⚙️ [Worker] Memulai Sistem Antrean...");
 
-    if (USE_BULLMQ) {
-        console.log("🚀 [Worker] BullMQ Active. Starting Redis Event-Driven Worker...");
-        const worker = new Worker('ocr-processor', async job => {
-            const context = JSON.parse(job.data.context || '{}');
-            const jobData = {
-                id: job.id,
-                name: 'process-ocr',
-                data: {
-                    docId: job.data.docId,
-                    filePath: job.data.filename,
-                    fileType: job.data.fileType || '',
-                    originalName: job.data.originalName || '',
-                    context: context,
-                    isBullMQ: true // Flag to processJob
-                }
-            };
-            return await processJob(jobData);
-        }, { connection });
+    console.log("⚠️ [Worker] Mode Sederhana: Menggunakan MySQL Polling sebagai worker utama (BullMQ dinonaktifkan).");
 
-        worker.on('completed', job => {
-            console.log(`[Worker] BullMQ Job ${job.id} completed successfully!`);
-        });
-
-        worker.on('failed', (job, err) => {
-            console.error(`[Worker] BullMQ Job ${job.id} failed:`, err);
-        });
-    }
-
-    console.log("🐌 [Worker] Checking MySQL Polling...");
+    // Selalu jalankan polling sebagai fallback atau worker utama
+    console.log("🐌 [Worker] Menjalankan MySQL Polling...");
     startPolling();
 }
 
+console.log('[worker.js] Calling startWorkerSystem()...');
 startWorkerSystem();

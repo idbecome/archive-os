@@ -1,6 +1,8 @@
 import { Queue } from 'bullmq';
 import Redis from 'ioredis';
 import { logger } from './logger.js';
+import { knex } from '../db.js';
+import { JOB_STATUS } from '../constants/status.js';
 
 // Global flag to indicate if Redis is available
 export let USE_BULLMQ = false;
@@ -17,14 +19,6 @@ export const connection = new Redis({
     }
 });
 
-// Create BullMQ Queue Instance
-export const ocrQueue = new Queue('ocr-processor', { connection });
-
-connection.on('ready', () => {
-    logger.info('[Queue] Connected to Redis. BullMQ initialized.');
-    USE_BULLMQ = true;
-});
-
 connection.on('error', (err) => {
     if (err.code === 'ECONNREFUSED') {
         if (USE_BULLMQ) {
@@ -38,6 +32,17 @@ connection.on('error', (err) => {
     }
 });
 
+connection.on('ready', () => {
+    logger.info('[Queue] Connected to Redis. BullMQ initialized.');
+    USE_BULLMQ = true;
+});
+
+// Create BullMQ Queue Instance
+export const ocrQueue = new Queue('ocr-processor', { connection });
+
+// Tangani error pada instance Queue agar tidak muncul stack trace di konsol saat Redis mati
+ocrQueue.on('error', () => { /* Error koneksi sudah ditangani oleh listener 'connection' */ });
+
 /**
  * Universal addJob function.
  * If Redis is active, it adds a BullMQ job.
@@ -45,15 +50,35 @@ connection.on('error', (err) => {
  * from the database 'processing' status.
  */
 export const addOcrJob = async (docId, filename, contextStr, fileType = '', originalName = '') => {
-    if (USE_BULLMQ) {
+    const jobData = {
+        docId,
+        filename,
+        fileType,
+        originalName,
+        context: contextStr
+    };
+
+    const isPdf = fileType === 'application/pdf' || (filename && filename.toLowerCase().endsWith('.pdf'));
+
+    if (USE_BULLMQ && !isPdf) {
         try {
-            await ocrQueue.add(contextStr, { docId, filename, fileType, originalName, context: contextStr });
+            await ocrQueue.add(contextStr, jobData);
             logger.info(`[Queue] Job added to BullMQ: ${docId}`, { contextStr });
         } catch (error) {
             logger.error(`[Queue] Failed to add job to BullMQ: ${error.message}`);
         }
     } else {
-        // Fallback: Just let the MySQL poller pick it up
-        logger.info(`[Queue] Database polling reserved for Job: ${docId}`, { contextStr });
+        try {
+            // MASUKKAN KE DATABASE agar worker bisa mendeteksi job baru
+            await knex('job_queue').insert({
+                name: 'process-ocr',
+                data: JSON.stringify(jobData),
+                status: JOB_STATUS.WAITING,
+                created_at: knex.fn.now()
+            });
+            logger.info(`[Queue] Job berhasil dimasukkan ke MySQL (Polling Mode): ${docId}`);
+        } catch (error) {
+            logger.error(`[Queue] Gagal memasukkan job ke MySQL: ${error.message}`);
+        }
     }
 };

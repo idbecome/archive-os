@@ -1,3 +1,15 @@
+console.log('[index.js] Top of file');
+import 'dotenv/config';
+
+try {
+    const dbHost = process.env.DB_HOST;
+    if (dbHost) {
+        console.log(`[index.js] dotenv loaded. DB_HOST: ${dbHost}`);
+    } else {
+        console.warn('[index.js] WARNING: dotenv might not have loaded correctly. DB_HOST is undefined.');
+    }
+} catch (e) { console.error('[index.js] Error checking env vars:', e); }
+
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
@@ -486,22 +498,50 @@ server.on('error', (err) => {
     process.exit(1);
 });
 
+console.log('[index.js] Imports complete, defining startServer...');
+
 
 
 // Start Server
 // Ensure DB migration or init logic is handled if needed
-try {
-    // initDb sudah menangani migrasi dan seeding awal secara terpadu
-    await initDb();
+const startServer = async () => {
+    try {
+        console.log(`🚀 Memulai inisialisasi server pada port ${PORT}...`);
 
-    // Initialize High-Speed RAM Vector Cache
-    await vectorStore.initialize();
+        // Gunakan 127.0.0.1 agar lebih stabil di Windows dibanding 0.0.0.0
+        server.listen(PORT, '127.0.0.1', () => {
+            console.log(`✅ BACKEND LISTENING: http://127.0.0.1:${PORT}`);
+            console.log(`📁 Folder Upload: ${UPLOADS_DIR}`);
+            
+            // Jalankan inisialisasi database SETELAH port terbuka
+            (async () => {
+                try {
+                    logger.info("📦 Menghubungkan ke Database...");
+                    await initDb();
+                    logger.info("✅ Database & Migrasi Selesai.");
 
-    server.listen(PORT, '0.0.0.0', () => {
-        logger.info(`Server started on http://0.0.0.0:${PORT}`);
-        logger.info(`Uploads Directory: ${UPLOADS_DIR}`);
-    });
-} catch (err) {
-    console.error("CRITICAL: Failed to initialize database:", err);
-    process.exit(1);
-}
+                    logger.info("🧠 Memuat Vector Store ke RAM...");
+                    await vectorStore.initialize();
+                    logger.info("✅ AI Search siap digunakan.");
+                } catch (innerErr) {
+                    logger.error("❌ Gagal inisialisasi layanan latar belakang (DB/AI):", innerErr.message);
+                    console.error("❌ Background Service Error:", innerErr);
+                }
+            })().catch(err => {
+                logger.error("❌ Gagal inisialisasi database/AI:", err.message);
+            });
+        });
+
+    } catch (err) {
+        logger.error("❌ CRITICAL: Server failed to start!");
+        logger.error(err.stack);
+        
+        if (err.code === 'ECONNREFUSED') {
+            logger.error(`Gagal terhubung ke layanan di ${err.address}:${err.port}. Pastikan MySQL/Redis sudah menyala.`);
+        }
+        // Jangan exit di dev mode agar nodemon/watch bisa mencoba lagi
+    }
+};
+
+console.log('[index.js] Calling startServer()...');
+startServer();

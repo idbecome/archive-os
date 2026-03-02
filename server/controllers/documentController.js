@@ -401,7 +401,7 @@ export const restoreVersion = async (req, res) => {
         if (shouldRunOCR && restoredUrl && restoredUrl.startsWith('/uploads/')) {
             const absolutePath = path.join(UPLOADS_DIR, path.basename(restoredUrl));
             try {
-                await addOCRJob(id, absolutePath, restoredType || 'application/octet-stream', versionToRestore.title);
+                await addOcrJob(id, absolutePath, restoredType || 'application/octet-stream', versionToRestore.title);
             } catch (qErr) { console.error("Restore OCR Queue Error:", qErr); }
         }
 
@@ -487,7 +487,7 @@ export const updateDocument = async (req, res) => {
         // Trigger OCR AFTER the DB update so the worker sees cleared ocrContent
         if (req.file && !ocrContent) {
             try {
-                await addOCRJob(id, req.file.path, req.file.mimetype, updateData.title || existingDoc.title);
+                await addOcrJob(id, req.file.path, req.file.mimetype, updateData.title || existingDoc.title);
             } catch (qErr) { console.error("Queue Error:", qErr); }
         }
 
@@ -644,7 +644,7 @@ export const promoteCommentAttachment = async (req, res) => {
         // Trigger OCR
         if (fs.existsSync(absoluteFilePath)) {
             try {
-                await addOCRJob(docId, absoluteFilePath, finalType, doc.title);
+                await addOcrJob(docId, absoluteFilePath, finalType, doc.title);
             } catch (qErr) { console.error("Queue Error:", qErr); }
         }
 
