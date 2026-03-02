@@ -146,7 +146,7 @@ export const uploadDocument = async (req, res) => {
                         specialNote: req.body.specialNote
                     };
                     const contextStr = JSON.stringify(context);
-                    await addOcrJob(existingDoc.id, absoluteFilePath, contextStr, finalType, title);
+                    await addOcrJob(existingDoc.id, absoluteFilePath, contextStr, finalType, title, req.file?.size || 0);
                 } catch (qErr) { console.error("Queue Error:", qErr); }
             }
 
@@ -644,7 +644,8 @@ export const promoteCommentAttachment = async (req, res) => {
         // Trigger OCR
         if (fs.existsSync(absoluteFilePath)) {
             try {
-                await addOcrJob(docId, absoluteFilePath, finalType, doc.title);
+                const stats = fs.statSync(absoluteFilePath);
+                await addOcrJob(docId, absoluteFilePath, '{}', finalType, doc.title, stats.size);
             } catch (qErr) { console.error("Queue Error:", qErr); }
         }
 

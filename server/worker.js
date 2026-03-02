@@ -13,7 +13,7 @@ try {
 import fs from 'fs';
 import path from 'path';
 import { createRequire } from 'module';
-import sharp from 'sharp';
+// sharp renamed to dynamic inside function
 
 import { createWorker } from 'tesseract.js';
 import mammoth from 'mammoth';
@@ -90,31 +90,56 @@ async function extractImagesFromPDF(pdfDocument, maxPages = 15) {
             const page = await pdfDocument.getPage(i);
             const operatorList = await page.getOperatorList();
 
+            console.log(`[Worker] [Page ${i}] Memeriksa ${operatorList.fnArray.length} operator...`);
+
             for (let j = 0; j < operatorList.fnArray.length; j++) {
                 const fn = operatorList.fnArray[j];
-                // XObject or Inline Image
-                if (fn === pdfjsLib.OPS.paintImageXObject || fn === pdfjsLib.OPS.paintInlineImageXObject) {
+
+                // Cek PaintImage, PaintInlineImage, atau PaintImageMask
+                const isImage = fn === pdfjsLib.OPS.paintImageXObject ||
+                    fn === pdfjsLib.OPS.paintInlineImageXObject ||
+                    fn === pdfjsLib.OPS.paintImageMaskXObject;
+
+                if (isImage) {
                     const objId = operatorList.argsArray[j][0];
                     try {
                         const img = await page.objs.get(objId);
-                        if (img && img.data && img.width > 200 && img.height > 200) {
-                            const channels = img.data.length / (img.width * img.height);
-                            // Process only if we have reasonable pixel data (3 for RGB, 4 for RGBA)
-                            if (channels === 3 || channels === 4) {
-                                const buffer = await sharp(img.data, {
-                                    raw: {
-                                        width: img.width,
-                                        height: img.height,
-                                        channels: channels
-                                    }
-                                }).png().toBuffer();
-                                images.push(buffer);
+                        if (img) {
+                            const width = img.width || 0;
+                            const height = img.height || 0;
+                            const data = img.data || img.bitmap; // Fallback ke bitmap jika data tidak ada
+
+                            if (data) {
+                                const channels = Math.floor(data.length / (width * height)) || 1;
+                                console.log(`[Worker] Found Image: Obj=${objId}, Dim=${width}x${height}, Channels=${channels}`);
+
+                                // Filter gambar yang terlalu kecil (ikon, garis, dll)
+                                if (width > 50 && height > 50) {
+                                    const { default: sharp } = await import('sharp');
+                                    const buffer = await sharp(data, {
+                                        raw: {
+                                            width: width,
+                                            height: height,
+                                            channels: channels
+                                        }
+                                    }).png().toBuffer();
+                                    images.push(buffer);
+                                    console.log(`[Worker] Image ${objId} extracted successfully via Sharp.`);
+                                } else {
+                                    console.log(`[Worker] Image ${objId} skipped (too small: ${width}x${height})`);
+                                }
+                            } else {
+                                console.log(`[Worker] Image ${objId} has no raw pixel data.`);
                             }
                         }
-                    } catch (imgErr) { /* Skip failing image object */ }
+                    } catch (imgErr) {
+                        console.warn(`[Worker] Gagal mengambil objek gambar ${objId}:`, imgErr.message);
+                    }
                 }
             }
-        } catch (pageErr) { console.warn(`Gagal memproses gambar di halaman ${i}:`, pageErr); }
+        } catch (pageErr) {
+            console.warn(`[Worker] Gagal memproses gambar di halaman ${i}:`, pageErr.message);
+        }
     }
     return images;
 }
@@ -168,6 +193,7 @@ async function processJob(job) {
 
     // Default: OCR Job
     const { docId, fileType, originalName, context, forceOcr, isBullMQ } = job.data;
+    const source = isBullMQ ? 'BullMQ' : 'MySQL Polling';
 
     // Pastikan path file mengarah ke folder 'uploads' jika bukan path absolut
     let rawPath = job.data.filePath || job.data.filename;
@@ -176,8 +202,8 @@ async function processJob(job) {
         : path.join(process.cwd(), 'uploads', rawPath);
 
     const isInventory = context && context.type === 'inventory';
-    console.log(`[Worker] Processing OCR Job ${job.id} for ${isInventory ? 'Inventory' : 'Document'}: ${docId}`);
-    console.log(`[Worker] Target File: ${filePath} (Exists: ${fs.existsSync(filePath)})`);
+    console.log(`[Worker] [${source}] Processing OCR Job ${job.id} for ${isInventory ? 'Inventory' : 'Document'}: ${docId}`);
+    console.log(`[Worker] [${source}] Target File: ${filePath} (Exists: ${fs.existsSync(filePath)})`);
 
     try {
         if (!fs.existsSync(filePath)) {
@@ -402,13 +428,38 @@ async function startPolling() {
 }
 
 async function startWorkerSystem() {
-    console.log("⚙️ [Worker] Memulai Sistem Antrean...");
+    // Determine mode from environment variable or command line argument
+    const args = process.argv.slice(2);
+    const modeArg = args.find(arg => arg.startsWith('--mode='))?.split('=')[1];
+    const mode = (modeArg || process.env.WORKER_MODE || 'ALL').toUpperCase();
 
-    console.log("⚠️ [Worker] Mode Sederhana: Menggunakan MySQL Polling sebagai worker utama (BullMQ dinonaktifkan).");
+    const tag = `[Worker:${mode}]`;
+    console.log(`⚙️ ${tag} Memulai Sistem Antrean...`);
 
-    // Selalu jalankan polling sebagai fallback atau worker utama
-    console.log("🐌 [Worker] Menjalankan MySQL Polling...");
-    startPolling();
+    const startBullMQ = mode === 'ALL' || mode === 'BULLMQ';
+    const startPollingMode = mode === 'ALL' || mode === 'POLLING';
+
+    if (startBullMQ) {
+        if (USE_BULLMQ) {
+            console.log(`${tag} 🚀 Menjalankan BullMQ Worker (Redis Active)...`);
+            new Worker('ocr-processor', async (job) => {
+                await processJob({
+                    id: job.id,
+                    name: job.name,
+                    data: { ...job.data, isBullMQ: true },
+                    updateProgress: job.updateProgress.bind(job),
+                    tag // Kirim tag ke processJob
+                });
+            }, { connection });
+        } else {
+            console.log(`${tag} ⚠️ Redis tidak terdeteksi. BullMQ Worker tidak dijalankan.`);
+        }
+    }
+
+    if (startPollingMode) {
+        console.log(`${tag} 🐌 Menjalankan MySQL Polling (Sharp/PDF Worker)...`);
+        startPolling(tag);
+    }
 }
 
 console.log('[worker.js] Calling startWorkerSystem()...');

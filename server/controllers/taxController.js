@@ -322,7 +322,8 @@ export const addAuditNote = async (req, res) => {
                     req.file.path,
                     JSON.stringify(context),
                     req.file.mimetype,
-                    req.file.originalname
+                    req.file.originalname,
+                    req.file.size
                 );
             } catch (qErr) {
                 console.error("Queue Error for Tax Note OCR:", qErr);

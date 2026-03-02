@@ -49,34 +49,37 @@ ocrQueue.on('error', () => { /* Error koneksi sudah ditangani oleh listener 'con
  * If not, the function does nothing because legacy Polling will automatically pick it up
  * from the database 'processing' status.
  */
-export const addOcrJob = async (docId, filename, contextStr, fileType = '', originalName = '') => {
+export const addOcrJob = async (docId, filename, contextStr, fileType = '', originalName = '', fileSize = 0) => {
     const jobData = {
         docId,
         filename,
         fileType,
         originalName,
+        fileSize,
         context: contextStr
     };
 
     const isPdf = fileType === 'application/pdf' || (filename && filename.toLowerCase().endsWith('.pdf'));
+    // HEAVY: PDF atau Gambar > 2.5MB
+    const isHeavy = isPdf || fileSize > 2.5 * 1024 * 1024;
+    const lane = isHeavy ? 'HEAVY (MySQL Polling)' : 'FAST (BullMQ)';
 
-    if (USE_BULLMQ && !isPdf) {
+    if (USE_BULLMQ && !isHeavy) {
         try {
             await ocrQueue.add(contextStr, jobData);
-            logger.info(`[Queue] Job added to BullMQ: ${docId}`, { contextStr });
+            logger.info(`[Queue] [${lane}] Job added to BullMQ: ${docId}`, { contextStr });
         } catch (error) {
             logger.error(`[Queue] Failed to add job to BullMQ: ${error.message}`);
         }
     } else {
         try {
-            // MASUKKAN KE DATABASE agar worker bisa mendeteksi job baru
             await knex('job_queue').insert({
                 name: 'process-ocr',
                 data: JSON.stringify(jobData),
                 status: JOB_STATUS.WAITING,
                 created_at: knex.fn.now()
             });
-            logger.info(`[Queue] Job berhasil dimasukkan ke MySQL (Polling Mode): ${docId}`);
+            logger.info(`[Queue] [${lane}] Job registered in MySQL: ${docId}`);
         } catch (error) {
             logger.error(`[Queue] Gagal memasukkan job ke MySQL: ${error.message}`);
         }
