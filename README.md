@@ -21,6 +21,8 @@ Archive-OS dirancang untuk dapat berjalan dengan konfigurasi minimal (*default*)
    ```bash
    git clone <repository-url>
    cd archive-os
+   sudo apt install redis-server -y
+   sudo systemctl start redis
    ```
 
 2. **Install Dependencies**
