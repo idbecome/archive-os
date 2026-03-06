@@ -319,7 +319,6 @@ async function processJob(job) {
                     console.log(`[Worker] Teks digital minim (${lineCount} baris). Memulai Penarikan Gambar Langsung (No-Canvas)...`);
 
                     try {
-<<<<<<< HEAD
                         // Use improved OCR pipeline for scanned PDFs
                         const pipelineRes = await ocrPdf(filePath);
                         if (pipelineRes && pipelineRes.results) {
@@ -333,35 +332,6 @@ async function processJob(job) {
                         }
                     } catch (err) {
                         console.error('[Worker] OCR pipeline failed:', err);
-=======
-                        const uint8Array = new Uint8Array(dataBuffer);
-                        const loadingTask = pdfjsLib.getDocument({ data: uint8Array, standardFontDataUrl: standardFontDataUrlHref });
-                        const pdfDocument = await loadingTask.promise;
-
-                        const images = await extractImagesFromPDF(pdfDocument, 15);
-
-                        if (images.length > 0) {
-                            console.log(`[Worker] Berhasil menarik ${images.length} gambar dari PDF. Memulai Tesseract...`);
-                            const tess = await createWorker('eng+ind');
-                            let rasterText = "";
-
-                            for (let i = 0; i < images.length; i++) {
-                                console.log(`[Worker] 🔍 OCR Gambar ${i + 1}/${images.length}...`);
-                                const { data: { text } } = await tess.recognize(images[i]);
-                                rasterText += text + "\n";
-                            }
-                            await tess.terminate();
-
-                            if (rasterText.trim().length > 10) {
-                                extractedText = `[OCR-DIRECT]\n${rasterText.trim()}`;
-                                console.log(`[Worker] ✅ OCR Selesai. Total karakter: ${extractedText.length}`);
-                            }
-                        } else {
-                            console.log(`[Worker] Tidak ditemukan gambar yang cukup besar untuk OCR langsung.`);
-                        }
-                    } catch (err) {
-                        console.error("[Worker] Direct Extraction/OCR failed:", err);
->>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
                     }
                 }
             } else if (fileType.includes('spreadsheet') || fileType.includes('excel')) {
@@ -567,43 +537,5 @@ async function startWorkerSystem() {
     }
 }
 
-<<<<<<< HEAD
-=======
-async function startWorkerSystem() {
-    // Determine mode from environment variable or command line argument
-    const args = process.argv.slice(2);
-    const modeArg = args.find(arg => arg.startsWith('--mode='))?.split('=')[1];
-    const mode = (modeArg || process.env.WORKER_MODE || 'ALL').toUpperCase();
-
-    const tag = `[Worker:${mode}]`;
-    console.log(`⚙️ ${tag} Memulai Sistem Antrean...`);
-
-    const startBullMQ = mode === 'ALL' || mode === 'BULLMQ';
-    const startPollingMode = mode === 'ALL' || mode === 'POLLING';
-
-    if (startBullMQ) {
-        if (USE_BULLMQ) {
-            console.log(`${tag} 🚀 Menjalankan BullMQ Worker (Redis Active)...`);
-            new Worker('ocr-processor', async (job) => {
-                await processJob({
-                    id: job.id,
-                    name: job.name,
-                    data: { ...job.data, isBullMQ: true },
-                    updateProgress: job.updateProgress.bind(job),
-                    tag // Kirim tag ke processJob
-                });
-            }, { connection });
-        } else {
-            console.log(`${tag} ⚠️ Redis tidak terdeteksi. BullMQ Worker tidak dijalankan.`);
-        }
-    }
-
-    if (startPollingMode) {
-        console.log(`${tag} 🐌 Menjalankan MySQL Polling (Sharp/PDF Worker)...`);
-        startPolling(tag);
-    }
-}
-
->>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
 console.log('[worker.js] Calling startWorkerSystem()...');
 startWorkerSystem();

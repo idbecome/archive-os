@@ -64,7 +64,6 @@ export const addOcrJob = async (docId, filename, contextStr, fileType = '', orig
     const isHeavy = isPdf || fileSize > 2.5 * 1024 * 1024;
     const lane = isHeavy ? 'HEAVY (MySQL Polling)' : 'FAST (BullMQ)';
 
-<<<<<<< HEAD
     // Lane settings for MySQL-based polling
     const OCR_LANES = parseInt(process.env.OCR_LANES || '3', 10);
     const LANE_CAPACITY = parseInt(process.env.OCR_LANE_CAPACITY || '2', 10);
@@ -89,8 +88,6 @@ export const addOcrJob = async (docId, filename, contextStr, fileType = '', orig
         return counts;
     }
 
-=======
->>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
     if (USE_BULLMQ && !isHeavy) {
         try {
             await ocrQueue.add(contextStr, jobData);
@@ -100,7 +97,6 @@ export const addOcrJob = async (docId, filename, contextStr, fileType = '', orig
         }
     } else {
         try {
-<<<<<<< HEAD
             // choose lane for MySQL polling jobs
             const counts = await getLaneCounts();
             // pick first lane below capacity, otherwise the least loaded
@@ -119,19 +115,11 @@ export const addOcrJob = async (docId, filename, contextStr, fileType = '', orig
 
             await knex('job_queue').insert({
                 name: laneName,
-=======
-            await knex('job_queue').insert({
-                name: 'process-ocr',
->>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
                 data: JSON.stringify(jobData),
                 status: JOB_STATUS.WAITING,
                 created_at: knex.fn.now()
             });
-<<<<<<< HEAD
             logger.info(`[Queue] [${lane}] Job registered in MySQL -> ${laneName}: ${docId}`);
-=======
-            logger.info(`[Queue] [${lane}] Job registered in MySQL: ${docId}`);
->>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
         } catch (error) {
             logger.error(`[Queue] Gagal memasukkan job ke MySQL: ${error.message}`);
         }
