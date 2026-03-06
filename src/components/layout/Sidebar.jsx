@@ -19,7 +19,8 @@ import {
     X,
     FileCheck,
     BookOpen,
-    GitBranch
+    GitBranch,
+    ClipboardCheck
 } from 'lucide-react';
 
 import { useAuthStore } from '../../store/useAuthStore';
@@ -115,8 +116,9 @@ const Sidebar = ({
                         category: 'GENERAL',
                         items: [
                             { id: 'dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-                            { id: 'pustaka', icon: BookOpen, label: 'Pustaka' },
-                            { id: 'flow', icon: GitBranch, label: 'Flow' },
+                            { id: 'job-due-date', icon: ClipboardCheck, label: 'My Job' },
+                            { id: 'pustaka', icon: BookOpen, label: 'Manual Book' },
+                            { id: 'flow', icon: GitBranch, label: 'SOP' },
                         ]
                     },
                     {
@@ -138,7 +140,7 @@ const Sidebar = ({
                     {
                         category: 'SYSTEM',
                         items: [
-                            { id: 'master', icon: Settings, label: 'User Management' },
+                            { id: 'master', icon: Settings, label: 'Master Data' },
                         ]
                     }
                 ].map((section, sectionIdx) => (

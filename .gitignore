@@ -49,3 +49,4 @@ uploads/*
 
 # Jangan ignore file placeholder
 !uploads/.gitkeep
+package-lock.json

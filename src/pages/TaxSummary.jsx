@@ -1247,9 +1247,6 @@ export default function TaxSummary({ taxSummaries, hasPermission, setTaxForm, se
                         </div>
                     </div>
                 </Card>
-
- 
-
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {/* PPh Comparison */}
                     <Card>

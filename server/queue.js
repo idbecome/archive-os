@@ -72,6 +72,31 @@ class DbQueue {
 
 export const ocrQueue = new DbQueue('OCR_QUEUE');
 
+// Lane configuration: number of logical upload lanes and per-lane capacity
+const OCR_LANES = parseInt(process.env.OCR_LANES || '3', 10);
+const LANE_CAPACITY = parseInt(process.env.OCR_LANE_CAPACITY || '2', 10);
+
+async function getLaneCounts() {
+    // returns array of counts for lane indices 1..OCR_LANES
+    const counts = new Array(OCR_LANES).fill(0);
+    try {
+        const rows = await knex('job_queue')
+            .select('name')
+            .count('* as count')
+            .whereIn('status', [JOB_STATUS.WAITING, JOB_STATUS.ACTIVE])
+            .groupBy('name');
+        rows.forEach(r => {
+            for (let i = 1; i <= OCR_LANES; i++) {
+                const laneName = `process-ocr-lane-${i}`;
+                if (r.name === laneName) counts[i-1] = parseInt(r.count, 10) || 0;
+            }
+        });
+    } catch (e) {
+        console.error('getLaneCounts error', e.message);
+    }
+    return counts;
+}
+
 // Helper to add jobs (with deduplication)
 export const addOCRJob = async (docId, filePath, fileType, originalName, context = {}) => {
     try {
@@ -131,6 +156,59 @@ export const addAiEmbeddingJob = async (text, context = {}) => {
         });
     } catch (err) {
         console.error("AddAiEmbeddingJob Error:", err);
+        return null;
+    }
+};
+
+// Add OCR job with lane routing (3 lanes by default)
+export const addOCRJobRouted = async (docId, filePath, fileType, originalName, context = {}) => {
+    try {
+        // Dedup check: skip if same doc/file already waiting/active
+        const existing = await knex('job_queue')
+            .whereIn('status', [JOB_STATUS.WAITING, JOB_STATUS.ACTIVE])
+            .where('data', 'like', `%"docId":"${docId}"%`)
+            .where('data', 'like', `%"filePath":"${filePath.replace(/\\/g, '\\\\')}"%`)
+            .first();
+
+        if (existing) {
+            console.log(`[Queue] DEDUP: Job for DocID ${docId} with same file path already in queue (Job #${existing.id}). Skipping.`);
+            return {
+                id: existing.id,
+                name: existing.name,
+                data: typeof existing.data === 'string' ? JSON.parse(existing.data) : existing.data,
+                deduplicated: true
+            };
+        }
+
+        // Choose lane based on current load
+        const counts = await getLaneCounts();
+        let chosen = 0;
+        // Prefer any lane below capacity
+        for (let i = 0; i < counts.length; i++) {
+            if (counts[i] < LANE_CAPACITY) { chosen = i; break; }
+        }
+        // If all lanes full, pick the least loaded
+        if (chosen === 0 && counts.length > 0 && counts[0] >= LANE_CAPACITY) {
+            let min = counts[0]; chosen = 0;
+            for (let i = 1; i < counts.length; i++) {
+                if (counts[i] < min) { min = counts[i]; chosen = i; }
+            }
+        }
+        const laneIndex = (chosen === 0 && counts.length > 0 && counts[0] < LANE_CAPACITY) ? chosen : chosen;
+        const laneNumber = Math.min(Math.max(laneIndex + 1, 1), OCR_LANES);
+        const jobName = `process-ocr-lane-${laneNumber}`;
+
+        console.log(`[Queue] Routing OCR Job to ${jobName}. Lane counts: ${counts.join(',')}`);
+
+        return await ocrQueue.add(jobName, {
+            docId,
+            filePath,
+            fileType,
+            originalName,
+            context
+        });
+    } catch (err) {
+        console.error('AddOCRJobRouted Error:', err.message);
         return null;
     }
 };

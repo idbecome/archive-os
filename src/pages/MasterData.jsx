@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { Plus, Edit3, Trash2, Building2, GitCommit, ShieldCheck, ChevronRight, ChevronLeft, Users, User, Shield, History, Search, Clock, ChevronDown, ChevronUp, AlertCircle, FileText, Activity } from 'lucide-react';
 import { Card } from '../components/ui/Card';
+import { APP_MODULES } from '../utils/permissions';
 
 export default function MasterData({
     users, roles, departments, flows = [], logs = [],
@@ -215,10 +216,15 @@ export default function MasterData({
                                     <div className="flex flex-wrap gap-2">
                                         {Object.entries(perms).map(([mod, actions]) => (
                                             <div key={mod} className="px-2 py-1 bg-white dark:bg-slate-900 border border-gray-200 dark:border-slate-700 rounded text-[10px] flex flex-col">
-                                                <span className="font-bold text-indigo-500 uppercase">{mod}</span>
+                                                <span className="font-bold text-indigo-500 uppercase">
+                                                    {APP_MODULES[mod]?.label || mod}
+                                                </span>
                                                 <span className="text-gray-400">{Array.isArray(actions) ? actions.join(', ') : ''}</span>
                                             </div>
                                         ))}
+                                        {Object.keys(perms).length === 0 && (
+                                            <span className="text-[10px] text-slate-400 italic">Belum ada hak akses yang diatur.</span>
+                                        )}
                                     </div>
                                 </div>
                             )
@@ -483,4 +489,3 @@ export default function MasterData({
         </div >
     );
 }
-

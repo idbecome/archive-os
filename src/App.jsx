@@ -105,14 +105,17 @@ import DocumentApproval from './pages/DocumentApproval';
 import Pustaka from './pages/Pustaka';
 import SystemLogs from './pages/SystemLogs';
 import SopFlow from './pages/SopFlow';
+import JobDueDate from './pages/JobDueDate';
 import { getFullUrl } from './utils/urlHelper';
 import { useToast, ToastContainer } from './components/ui/Toast';
 import PdfViewer from './components/ui/PdfViewer';
 import AiChatAssistant from './components/AiChatAssistant';
+import OcrLanes from './components/OcrLanes';
+import NotificationBell from './components/NotificationBell';
 
 
 // --- API URL (Keep for local explicit use if needed, but db uses it internally) ---
-console.log("App.jsx: API_URL imported as:", API_URL);
+console.log(`[System] API_URL initialized as: ${API_URL || '(relative)'}`);
 const API_BASE = API_URL;
 
 // Database adapter imported from ./services/database
@@ -268,7 +271,6 @@ export default function App() {
   const lastOcrFailedRef = useRef(0);
   const lastOcrWaitingRef = useRef(0);
   const lastOcrActiveRef = useRef(0);
-  const activeOcrToastsRef = useRef({}); // { jobId: toastId }
 
   useEffect(() => {
     if (!currentUser) return;
@@ -287,6 +289,9 @@ export default function App() {
         const newFailed = data?.counts?.failed || 0;
         const newWaiting = data?.counts?.waiting || 0;
         const newActive = data?.counts?.active || 0;
+
+        // Debug Heartbeat: Muncul setiap 5 detik untuk memastikan polling jalan
+        // console.debug(`[OCR Poll] Active: ${newActive}, Completed: ${newCompleted} (Last: ${lastOcrCompletedRef.current})`);
 
         // Refresh logic: Dipicu saat jumlah selesai/gagal bertambah OR saat antrean baru saja selesai (transisi sibuk -> kosong)
         const isQueueEmpty = newActive === 0 && newWaiting === 0;
@@ -308,42 +313,6 @@ export default function App() {
           const failedCount = newFailed - lastOcrFailedRef.current;
           toast.error(`OCR Gagal: ${failedCount} dokumen gagal diproses.`);
         }
-
-        // New Job Notification (Waiting or Active increased)
-        // Granular Progress Toasts
-        const activeJobs = data?.activeJobs || [];
-        const currentActiveIds = activeJobs.map(j => j.id.toString());
-
-        // Cleanup toasts for jobs no longer in the active/waiting list
-        Object.keys(activeOcrToastsRef.current).forEach(jobId => {
-          if (!currentActiveIds.includes(jobId)) {
-            removeToast(activeOcrToastsRef.current[jobId]);
-            delete activeOcrToastsRef.current[jobId];
-          }
-        });
-
-        // Create or update toasts for each job
-        activeJobs.forEach(job => {
-          const jobIdStr = job.id.toString();
-          const fileName = job.data?.originalName || 'Dokumen';
-          const progress = job.progress || 0;
-          const statusText = job.status === 'active'
-            ? `Memproses OCR: ${fileName} (${progress}%)`
-            : `Antrean #${job.queuePosition || ''}: ${fileName} (Menunggu)`;
-          const type = job.status === 'active' ? 'loading' : 'info';
-
-          if (activeOcrToastsRef.current[jobIdStr]) {
-            updateToast(activeOcrToastsRef.current[jobIdStr], {
-              message: statusText,
-              progress: progress,
-              type: type
-            });
-          } else {
-            const tId = toast[type](statusText);
-            updateToast(tId, { progress });
-            activeOcrToastsRef.current[jobIdStr] = tId;
-          }
-        });
 
         lastOcrCompletedRef.current = newCompleted;
         lastOcrFailedRef.current = newFailed;
@@ -728,8 +697,12 @@ export default function App() {
           newName = `[TAX] ${auditTitle} - ${status} (${dateStr}_${Date.now().toString().slice(-4)})`;
         }
 
-        if (newName !== folder.name) {
-          await api.updateFolder(folder.id, { name: newName });
+        const currentParentId = folder.parentId || folder.parent_id;
+        if (newName !== folder.name || String(currentParentId) !== String(taxAuditParentId)) {
+          await api.updateFolder(folder.id, { 
+            name: newName,
+            parentId: taxAuditParentId 
+          });
           await fetchFolders();
         }
       }
@@ -1540,156 +1513,124 @@ export default function App() {
 
 
 
-  const handleExcelImport = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
+  const handleExcelImport = async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const data = new Uint8Array(event.target.result);
-        const workbook = XLSX.read(data, { type: 'array' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const jsonData = XLSX.utils.sheet_to_json(worksheet);
+    let totalImported = 0;
+    let totalSkipped = 0;
+    const tid = toast.loading(`Menyiapkan import ${files.length} file...`);
 
-        let importedCount = 0;
-        let skippedLogs = [];
+    for (const file of files) {
+      await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const data = new Uint8Array(event.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheetName = workbook.SheetNames[0];
+            const worksheet = workbook.Sheets[sheetName];
+            const jsonData = XLSX.utils.sheet_to_json(worksheet);
 
-        // 1. Grouping logic: Gabungkan invoice yang memiliki Slot & Box ID yang sama
-        const groupedBySlot = {};
-        jsonData.forEach((row, rowIndex) => {
-          // Flexible mapping untuk berbagai casing/spasi header
-          const findVal = (keys) => {
-            const rowKeys = Object.keys(row);
-            const foundKey = rowKeys.find(rk => {
-              const cleanedRk = rk.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-              const cleanedKeys = keys.map(k => k.toLowerCase().replace(/[^a-z0-9]/g, ''));
-              return cleanedKeys.includes(cleanedRk);
+            // 1. Grouping logic: Gabungkan invoice yang memiliki Slot & Box ID yang sama
+            const groupedBySlot = {};
+            jsonData.forEach((row, rowIndex) => {
+              const findVal = (keys) => {
+                const rowKeys = Object.keys(row);
+                const foundKey = rowKeys.find(rk => {
+                  const cleanedRk = rk.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+                  const cleanedKeys = keys.map(k => k.toLowerCase().replace(/[^a-z0-9]/g, ''));
+                  return cleanedKeys.includes(cleanedRk);
+                });
+                return foundKey ? row[foundKey] : null;
+              };
+
+              const sIdVal = findVal(['No Slot', 'Slot', 'No. Slot', 'slot_no', 'No_Slot', 'SlotID']);
+              const bIdVal = findVal(['No Kardus', 'Box ID', 'No. Kardus', 'box_id', 'No_Kardus', 'Kardus ID', 'BoxID']);
+
+              const sId = parseInt(sIdVal);
+              const bId = bIdVal;
+
+              if (!sId || !bId) return;
+
+              if (!groupedBySlot[sId]) {
+                groupedBySlot[sId] = { boxId: bId, ordnerMap: {} };
+              }
+
+              const oNo = findVal(['No Ordner', 'Ordner', 'No. Ordner']) || 'Imported';
+              const oPer = findVal(['Periode', 'Period', 'Tahun']) || 'Imported';
+
+              if (!groupedBySlot[sId].ordnerMap[oNo]) {
+                groupedBySlot[sId].ordnerMap[oNo] = { noOrdner: oNo, period: oPer, invoices: [] };
+              }
+
+              const invNo = findVal(['No Invoice', 'Invoice', 'No. Invoice']);
+              if (invNo) {
+                groupedBySlot[sId].ordnerMap[oNo].invoices.push({
+                  id: Date.now() + Math.random(),
+                  invoiceNo: invNo,
+                  vendor: findVal(['Vendor', 'Supplier', 'Nama Vendor']) || '-',
+                  paymentDate: findVal(['Tgl Pembayaran', 'Tanggal', 'Date']) || '',
+                  taxInvoiceNo: findVal(['No Faktur Pajak', 'No Faktur', 'Faktur', 'Tax Invoice No']) || '',
+                  specialNote: findVal(['Keterangan Kusus', 'Keterangan', 'Note', 'Special Note']) || ''
+                });
+              }
             });
-            return foundKey ? row[foundKey] : null;
-          };
+            const groupedEntries = Object.entries(groupedBySlot);
+            if (groupedEntries.length === 0) {
+              totalSkipped++;
+              resolve();
+              return;
+            }
 
-          const sIdVal = findVal(['No Slot', 'Slot', 'No. Slot', 'slot_no', 'No_Slot', 'SlotID']);
-          const bIdVal = findVal(['No Kardus', 'Box ID', 'No. Kardus', 'box_id', 'No_Kardus', 'Kardus ID', 'BoxID']);
+            let actualFolders = await api.getFolders();
+            let importedCount = 0;
+            let skippedLogs = [];
 
-          const sId = parseInt(sIdVal);
-          const bId = bIdVal;
+            for (let i = 0; i < groupedEntries.length; i++) {
+              const [sIdStr, data] = groupedEntries[i];
+              const currentProcessingSlot = parseInt(sIdStr);
 
-          // Debug log untuk row
-          if (!sId || !bId) {
-            console.log(`Row Skip #${rowIndex + 1}: Missing Slot (${sIdVal}) or Box (${bIdVal})`);
-            return;
+              if (i % 5 === 0 || i === groupedEntries.length - 1) {
+                updateToast(tid, { message: `File: ${file.name} - Mengimport ${i + 1}/${groupedEntries.length} box...` });
+              }
+
+              const currentSlot = inventory.find(s => Number(s.id) === currentProcessingSlot);
+              if (!currentSlot || (currentSlot.status !== 'EMPTY' && currentSlot.boxData !== null)) {
+                skippedLogs.push(`Slot #${currentProcessingSlot} dilewati.`);
+                continue;
+              }
+
+              const ordners = Object.values(data.ordnerMap).map(o => ({ ...o, id: Math.floor(Date.now() + Math.random() * 1000000) }));
+              const boxData = { id: data.boxId, ordners };
+
+              await syncBoxFolder(data.boxId, 'IMPORTED', null, actualFolders);
+              const updatedSlot = {
+                ...currentSlot,
+                status: 'IMPORTED',
+                box_id: data.boxId,
+                box_data: boxData,
+                lastUpdated: new Date().toISOString(),
+                history: [...(Array.isArray(currentSlot.history) ? currentSlot.history : []), createHistoryItem('IMPORTED', `Import: ${data.boxId}`)]
+              };
+
+              await api.updateInventory(currentProcessingSlot, updatedSlot);
+              importedCount++;
+            }
+            totalImported += importedCount;
+            resolve();
+          } catch (error) {
+            console.error(error);
+            resolve();
           }
+        };
+        reader.readAsArrayBuffer(file);
+      });
+    }
 
-          if (!groupedBySlot[sId]) {
-            groupedBySlot[sId] = { boxId: bId, ordnerMap: {} };
-          }
-
-          const oNo = findVal(['No Ordner', 'Ordner', 'No. Ordner']) || 'Imported';
-          const oPer = findVal(['Periode', 'Period', 'Tahun']) || 'Imported';
-
-          if (!groupedBySlot[sId].ordnerMap[oNo]) {
-            groupedBySlot[sId].ordnerMap[oNo] = { noOrdner: oNo, period: oPer, invoices: [] };
-          }
-
-          const invNo = findVal(['No Invoice', 'Invoice', 'No. Invoice']);
-          if (invNo) {
-            groupedBySlot[sId].ordnerMap[oNo].invoices.push({
-              id: Date.now() + Math.random(),
-              invoiceNo: invNo,
-              vendor: findVal(['Vendor', 'Supplier', 'Nama Vendor']) || '-',
-              paymentDate: findVal(['Tgl Pembayaran', 'Tanggal', 'Date']) || '',
-              taxInvoiceNo: findVal(['No Faktur Pajak', 'No Faktur', 'Faktur', 'Tax Invoice No']) || '',
-              specialNote: findVal(['Keterangan Kusus', 'Keterangan', 'Note', 'Special Note']) || ''
-            });
-          }
-        });
-
-        const groupedEntries = Object.entries(groupedBySlot);
-        if (groupedEntries.length === 0) {
-          toast.error("Format Excel tidak dikenal atau data kosong. Pastikan ada kolom 'No Slot' dan 'No Kardus'.");
-          e.target.value = '';
-          return;
-        }
-
-        let tid = null;
-        tid = toast.loading(`Mengimport 0/${groupedEntries.length} box...`);
-        let actualFolders = await api.getFolders(); // Prefetch for optimization
-
-        // 2. Iterasi hasil grouping untuk update database
-        for (let i = 0; i < groupedEntries.length; i++) {
-          const [sIdStr, data] = groupedEntries[i];
-          const currentProcessingSlot = parseInt(sIdStr);
-
-          // Update progress toast periodically
-          if (i % 5 === 0 || i === groupedEntries.length - 1) {
-            updateToast(tid, { message: `Mengimport ${i + 1}/${groupedEntries.length} box...` });
-          }
-
-          if (currentProcessingSlot > TOTAL_SLOTS) {
-            skippedLogs.push(`Slot #${currentProcessingSlot}: Nomor slot melebihi kapasitas (${TOTAL_SLOTS})`);
-            continue;
-          }
-
-          // VALIDASI: Pastikan slot ada di database (mencegah 404)
-          const currentSlot = inventory.find(s => Number(s.id) === currentProcessingSlot);
-
-          if (!currentSlot) {
-            skippedLogs.push(`Slot #${currentProcessingSlot} Gagal: Slot tidak terdaftar di sistem.`);
-            continue;
-          } else if (currentSlot.status !== 'EMPTY' && currentSlot.boxData !== null) {
-            // Hanya skip jika slot terisi DAN datanya valid. 
-            // Jika status terisi tapi boxData null (rusak), maka izinkan untuk ditimpa.
-            const errorMsg = `Slot #${currentProcessingSlot} Gagal: Slot sudah terisi Box ${currentSlot.boxData?.id || 'Unknown'}`;
-            skippedLogs.push(errorMsg);
-            // toast.error(errorMsg); // Don't spam toasts in a loop, rely on summary toast
-            continue;
-          }
-
-          // Siapkan struktur data box
-          const ordners = Object.values(data.ordnerMap).map(o => ({
-            ...o,
-            id: Math.floor(Date.now() + Math.random() * 1000000)
-          }));
-
-          const boxData = { id: data.boxId, ordners };
-
-          // Sinkronisasi Folder Digital (optimized with local list)
-          await syncBoxFolder(data.boxId, 'IMPORTED', null, actualFolders);
-
-          const updatedSlot = {
-            ...currentSlot,
-            status: 'IMPORTED',
-            box_id: data.boxId, // FIX: Gunakan snake_case agar sesuai kolom DB
-            box_data: boxData,  // FIX: Gunakan snake_case agar sesuai kolom DB
-            lastUpdated: new Date().toISOString(),
-            history: [...(Array.isArray(currentSlot.history) ? currentSlot.history : []), createHistoryItem('IMPORTED', `Import: ${data.boxId}`)]
-          };
-
-          await api.updateInventory(currentProcessingSlot, updatedSlot);
-          importedCount++;
-        }
-
-        updateToast(tid, { type: 'success', message: `Import Selesai: ${importedCount} box berhasil.` });
-        await fetchInventory();
-        if (skippedLogs.length > 0) {
-          if (importedCount === 0) {
-            toast.error(`Gagal: ${skippedLogs.length} slot bermasalah (tidak terdaftar/penuh).`);
-          } else {
-            toast.warning(`${importedCount} Berhasil, ${skippedLogs.length} Gagal/Dilewati.`);
-          }
-          console.log("Detail Skip Import:", skippedLogs);
-        }
-
-        addLog(currentUser?.name, 'Import Excel', `Import ${importedCount}, Skip ${skippedLogs.length}`);
-      } catch (error) {
-        console.error("Excel import error:", error);
-        if (tid) updateToast(tid, { type: 'error', message: `Gagal Import: ${error.message}` });
-        else toast.error(`Gagal Import Excel: ${error.message}`);
-      }
-    };
-    reader.readAsArrayBuffer(file);
+    updateToast(tid, { type: 'success', message: `Import Selesai: ${totalImported} box berhasil dari ${files.length} file.` });
+    await fetchInventory();
+    addLog(currentUser?.name, 'Import Excel Multiple', `Import ${totalImported} box dari ${files.length} file`);
   };
 
   const handleInvoiceFileSelect = async (e) => {
@@ -2163,6 +2104,42 @@ export default function App() {
 
 
   // --- DOC HANDLERS (API INTEGRATED) ---
+
+  const handleMultipleDocUpload = async (e) => {
+    const files = Array.from(e.target.files);
+    if (files.length === 0) return;
+
+    const tid = toast.loading(`Menyiapkan upload ${files.length} dokumen...`);
+    let successCount = 0;
+
+    for (const file of files) {
+      const fileSize = (file.size / 1024 / 1024).toFixed(2) + ' MB';
+      const docPayload = {
+        title: file.name,
+        type: file.type || 'application/octet-stream',
+        size: fileSize,
+        uploadDate: new Date().toISOString(),
+        folderId: currentFolderId,
+        owner: currentUser?.name || 'Admin',
+        status: 'waiting',
+        file: file,
+        forceOcr: true
+      };
+
+      try {
+        await createDocument(docPayload);
+        successCount++;
+        updateToast(tid, { message: `Mengupload ${successCount}/${files.length} dokumen...` });
+      } catch (err) {
+        console.error("Bulk upload error:", err);
+      }
+    }
+
+    updateToast(tid, { type: 'success', message: `Berhasil mengupload ${successCount} dokumen.` });
+    fetchDocs();
+    fetchLogs();
+    e.target.value = '';
+  };
 
   const handleFileSelect = async (e) => {
     const file = e.target.files[0];
@@ -3015,7 +2992,8 @@ export default function App() {
                             activeTab === 'master' ? 'Master Data' :
                               activeTab === 'approvals' ? 'Document Approval' :
                                 activeTab === 'pustaka' ? 'Pustaka Pengetahuan' :
-                                  activeTab === 'flow' ? 'SOP List Menu' : 'Digital Vault'}
+                                  activeTab === 'flow' ? 'SOP List Menu' : 
+                                    activeTab === 'job-due-date' ? 'Job Due Date Monitoring' : 'Digital Vault'}
               </h1>
               <p className="text-gray-500 dark:text-slate-400">
                 {activeTab === 'dashboard' ? 'Dashboard' :
@@ -3027,7 +3005,8 @@ export default function App() {
                             activeTab === 'master' ? 'Pengaturan Sistem' :
                               activeTab === 'approvals' ? 'Sistem Persetujuan Dokumen Berjenjang' :
                                 activeTab === 'pustaka' ? 'Pusat Edukasi & Panduan Kerja' :
-                                  activeTab === 'flow' ? 'Standar Operasional Prosedur' : 'Gudang Arsip Utama'}
+                                  activeTab === 'flow' ? 'Standar Operasional Prosedur' : 
+                                    activeTab === 'job-due-date' ? 'Pemantauan Tenggat Waktu & Issue Kerja' : 'Gudang Arsip Utama'}
               </p>
             </div>
 
@@ -3125,6 +3104,7 @@ export default function App() {
                 handleDownload={handleDownload}
                 ocrStats={ocrStats}
                 syncPustakaFolder={syncPustakaFolder}
+                handleMultipleDocUpload={handleMultipleDocUpload}
               />
             )}
             {activeTab === 'tax-monitoring' && (
@@ -3225,6 +3205,16 @@ export default function App() {
                 users={users}
                 departments={departments}
                 syncSopFolder={syncSopFolder}
+              />
+            )}
+            {activeTab === 'job-due-date' && (
+              <JobDueDate 
+                currentUser={currentUser}
+                users={users}
+                departments={departments}
+                hasPermission={hasPermission}
+                isDarkMode={isDarkMode}
+                onCopy={handleCopyToClipboard}
               />
             )}
           </div>
@@ -3620,6 +3610,8 @@ export default function App() {
 
       {/* Toast Notification System */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      <NotificationBell />
+      <OcrLanes />
 
       {/* Floating AI Chat Assistant */}
       {currentUser && activeTab !== 'pustaka' && (
@@ -3630,6 +3622,8 @@ export default function App() {
           handleNavigateToFolder={handleNavigateToFolder}
           setActiveTab={setActiveTab}
           setActiveInvTab={setActiveInvTab}
+          taxSummaries={taxSummaries}
+          taxConfig={taxConfig}
         />
       )}
     </div>

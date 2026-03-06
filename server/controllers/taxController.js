@@ -3,7 +3,7 @@ import { knex } from '../db.js';
 import { systemLog } from '../utils/logger.js';
 import XLSX from 'xlsx';
 import fs from 'fs';
-import { addOCRJob } from '../queue.js';
+import { addOcrJob } from '../utils/queue.js';
 
 // --- TAX OBJECTS ---
 export const getTaxObjects = async (req, res) => {
@@ -162,6 +162,203 @@ export const getTaxSummaries = async (req, res) => {
     }
 };
 
+// GET /api/tax/compare?metrics=pph,ppn&start=YYYY-MM&end=YYYY-MM&limit=12&pembetulan=all
+export const compareTaxSummaries = async (req, res) => {
+    try {
+        const { metrics = 'pph,ppn', start, end, limit = 12, pembetulan = 'all' } = req.query;
+        // Validate inputs
+        const validMetrics = ['pph', 'ppn'];
+        const requested = metrics.split(',').map(m => m.trim().toLowerCase()).filter(Boolean);
+        if (requested.some(m => !validMetrics.includes(m))) return res.status(400).json({ error: 'Invalid metrics parameter' });
+        if (pembetulan !== 'all' && Number.isNaN(Number(pembetulan))) return res.status(400).json({ error: 'Invalid pembetulan param' });
+        if (Number(limit) <= 0 || Number(limit) > 120) return res.status(400).json({ error: 'limit must be between 1 and 120' });
+        const metricList = metrics.split(',').map(m => m.trim().toLowerCase()).filter(Boolean);
+
+        // Determine date range
+        const now = new Date();
+        const defaultEnd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const endMonth = end || defaultEnd;
+
+        // compute start as either provided or (limit months before end)
+        let startMonth = start;
+        if (!startMonth) {
+            const [ey, em] = endMonth.split('-').map(Number);
+            const endDate = new Date(ey, em - 1, 1);
+            const sDate = new Date(endDate);
+            sDate.setMonth(sDate.getMonth() - (Number(limit) - 1));
+            startMonth = `${sDate.getFullYear()}-${String(sDate.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        // helper to format period key and month name mapping
+        const monthNames = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+        const monthNameToNum = m => {
+            const idx = monthNames.findIndex(x => x.toLowerCase() === String(m).toLowerCase());
+            return idx >= 0 ? idx + 1 : null;
+        };
+
+        // Fetch relevant summaries between startMonth..endMonth inclusive
+        // We'll load PPH and PPN rows and then aggregate in JS
+        const rows = await knex('tax_summaries')
+            .select('*');
+
+        // Filter rows to period range and pembetulan
+        const parsePeriod = (r) => {
+            // r.month is expected as month name (e.g., "Januari")
+            const mnum = monthNameToNum(r.month) || (Number(r.month) || null);
+            if (!mnum) return null;
+            return `${r.year}-${String(mnum).padStart(2, '0')}`;
+        };
+
+        const startKey = startMonth;
+        const endKey = endMonth;
+
+        // Build map period -> aggregated values
+        const seriesMap = new Map();
+
+        for (const r of rows) {
+            const period = parsePeriod(r);
+            if (!period) continue;
+            if (period < startKey || period > endKey) continue;
+            if (pembetulan !== 'all' && String(r.pembetulan || 0) !== String(pembetulan)) continue;
+
+            const data = typeof r.data === 'string' ? JSON.parse(r.data) : (r.data || {});
+
+            // compute sums
+            const pph_total = Object.values(data.pph || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+            const ppn_in = Object.values(data.ppnIn || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+            const ppn_out = Object.values(data.ppnOut || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+            const ppn_net = ppn_out - ppn_in;
+
+            const prev = seriesMap.get(period) || { period, pph_total: 0, ppn_in: 0, ppn_out: 0, ppn_net: 0, rows: [] };
+            prev.pph_total += pph_total;
+            prev.ppn_in += ppn_in;
+            prev.ppn_out += ppn_out;
+            prev.ppn_net += ppn_net;
+            prev.rows.push(r.id || null);
+            seriesMap.set(period, prev);
+        }
+
+        // Ensure continuous series from startKey to endKey
+        const startParts = startKey.split('-').map(Number);
+        const endParts = endKey.split('-').map(Number);
+        let cursor = new Date(startParts[0], startParts[1] - 1, 1);
+        const endDate = new Date(endParts[0], endParts[1] - 1, 1);
+        const series = [];
+        while (cursor <= endDate) {
+            const key = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+            const val = seriesMap.get(key) || { period: key, pph_total: 0, ppn_in: 0, ppn_out: 0, ppn_net: 0, rows: [] };
+            series.push(val);
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+
+        // Aggregates
+        const aggregates = series.reduce((acc, s) => {
+            acc.total_pph += s.pph_total;
+            acc.total_ppn_in += s.ppn_in;
+            acc.total_ppn_out += s.ppn_out;
+            acc.total_ppn_net += s.ppn_net;
+            return acc;
+        }, { total_pph: 0, total_ppn_in: 0, total_ppn_out: 0, total_ppn_net: 0 });
+
+        // last under/overpayment for ppn
+        let lastUnder = null;
+        let lastOver = null;
+        for (let i = series.length - 1; i >= 0; i--) {
+            const s = series[i];
+            if (!lastUnder && s.ppn_net < 0) lastUnder = { period: s.period, amount: Math.abs(s.ppn_net) };
+            if (!lastOver && s.ppn_net > 0) lastOver = { period: s.period, amount: s.ppn_net };
+            if (lastUnder && lastOver) break;
+        }
+
+        res.json({
+            meta: { metrics: metricList, start: startKey, end: endKey },
+            series,
+            aggregates,
+            lastUnderpayment: lastUnder,
+            lastOverpayment: lastOver
+        });
+    } catch (e) {
+        console.error('Compare Tax Summaries Error', e);
+        handleError(res, e, 'Tax Compare Error');
+    }
+};
+
+// GET /api/tax/overunder?metric=ppn|pph&start=YYYY-MM&end=YYYY-MM&limit=20&type=over|under|both
+export const getOverUnderHistory = async (req, res) => {
+    try {
+        const { metric = 'ppn', start, end, limit = 20, type = 'both', pembetulan = 'all' } = req.query;
+        // Validation
+        if (!['ppn','pph'].includes(metric)) return res.status(400).json({ error: 'metric must be ppn or pph' });
+        if (!['both','over','under'].includes(type)) return res.status(400).json({ error: 'type must be one of both, over, under' });
+        if (pembetulan !== 'all' && Number.isNaN(Number(pembetulan))) return res.status(400).json({ error: 'Invalid pembetulan param' });
+        if (Number(limit) <= 0 || Number(limit) > 240) return res.status(400).json({ error: 'limit must be between 1 and 240' });
+
+        const monthNames = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+        const monthNameToNum = m => {
+            const idx = monthNames.findIndex(x => x.toLowerCase() === String(m).toLowerCase());
+            return idx >= 0 ? idx + 1 : null;
+        };
+
+        // fetch all summaries (we'll filter in JS)
+        const rows = await knex('tax_summaries').select('*');
+
+        const parsePeriod = (r) => {
+            const mnum = monthNameToNum(r.month) || (Number(r.month) || null);
+            if (!mnum) return null;
+            return `${r.year}-${String(mnum).padStart(2, '0')}`;
+        };
+
+        // default range: last 24 months
+        const now = new Date();
+        const defaultEnd = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const endKey = end || defaultEnd;
+
+        let startKey = start;
+        if (!startKey) {
+            const [ey, em] = endKey.split('-').map(Number);
+            const ed = new Date(ey, em - 1, 1);
+            ed.setMonth(ed.getMonth() - (Number(limit) - 1));
+            startKey = `${ed.getFullYear()}-${String(ed.getMonth() + 1).padStart(2, '0')}`;
+        }
+
+        const items = [];
+        for (const r of rows) {
+            const period = parsePeriod(r);
+            if (!period) continue;
+            if (period < startKey || period > endKey) continue;
+            if (pembetulan !== 'all' && String(r.pembetulan || 0) !== String(pembetulan)) continue;
+
+            const data = typeof r.data === 'string' ? JSON.parse(r.data) : (r.data || {});
+
+            if (metric === 'ppn') {
+                const ppn_in = Object.values(data.ppnIn || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+                const ppn_out = Object.values(data.ppnOut || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+                const net = ppn_out - ppn_in;
+                const kind = net > 0 ? 'over' : (net < 0 ? 'under' : 'neutral');
+                if (type === 'both' || (type === 'over' && kind === 'over') || (type === 'under' && kind === 'under')) {
+                    items.push({ period, metric: 'ppn', amount: Math.abs(net), net, kind, id: r.id });
+                }
+            } else {
+                // PPH: treat pph_total as positive amounts; define 'over'/'under' may be domain specific — we'll mark only totals
+                const pph_total = Object.values(data.pph || {}).reduce((a, b) => a + (Number(b) || 0), 0);
+                // For PPH, over/under semantics not standardized here; include as neutral with total
+                items.push({ period, metric: 'pph', amount: pph_total, net: pph_total, kind: 'total', id: r.id });
+            }
+        }
+
+        // sort desc by period
+        items.sort((a, b) => (a.period < b.period ? 1 : -1));
+
+        // apply limit
+        const limited = items.slice(0, Number(limit));
+
+        res.json({ meta: { metric, start: startKey, end: endKey, limit: Number(limit), type }, items: limited });
+    } catch (e) {
+        console.error('Over/Under History Error', e);
+        handleError(res, e, 'OverUnder Error');
+    }
+};
+
 export const upsertTaxSummary = async (req, res) => {
     try {
         const { id, type, month, year, pembetulan, data } = req.body;
@@ -316,12 +513,14 @@ export const addAuditNote = async (req, res) => {
         // Trigger OCR if there's an attachment
         if (req.file) {
             try {
-                await addOCRJob(
+                const context = { type: 'tax_note', noteId };
+                await addOcrJob(
                     `note-${noteId}`,
                     req.file.path,
+                    JSON.stringify(context),
                     req.file.mimetype,
                     req.file.originalname,
-                    { type: 'tax_note', noteId }
+                    req.file.size
                 );
             } catch (qErr) {
                 console.error("Queue Error for Tax Note OCR:", qErr);

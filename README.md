@@ -26,6 +26,11 @@ Archive-OS dirancang untuk dapat berjalan dengan konfigurasi minimal (*default*)
 2. **Install Dependencies**
    ```bash
    npm install
+   npm install cookie-parser
+   npm install pdf-parse
+   npm install sharp
+   npm install date-fns
+   npm install canvas
    ```
 
 3. **Persiapan Database**

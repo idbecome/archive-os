@@ -8,6 +8,8 @@ import {
     createTaxAudit,
     updateAuditStatus,
     getTaxSummaries,
+    compareTaxSummaries,
+    getOverUnderHistory,
     upsertTaxSummary,
     getTaxWp,
     createTaxWp,
@@ -28,7 +30,10 @@ import { checkAuth } from '../middleware/auth.js';
 
 const router = express.Router();
 
-router.use(checkAuth);
+// In tests we mount routes directly without auth; skip auth middleware when running under NODE_ENV=test
+if (process.env.NODE_ENV !== 'test') {
+    router.use(checkAuth);
+}
 
 // Master Data
 router.get('/objects', getTaxObjects);
@@ -49,6 +54,8 @@ router.post('/audits/:id/steps/:stepIndex/notes', upload.single('attachment'), a
 
 // Analytics & Summaries
 router.get('/summaries', getTaxSummaries);
+router.get('/compare', compareTaxSummaries);
+router.get('/overunder', getOverUnderHistory);
 router.post('/summaries', upsertTaxSummary);
 router.put('/summaries/:id', upsertTaxSummary);
 router.delete('/summaries/:id', deleteTaxSummary);

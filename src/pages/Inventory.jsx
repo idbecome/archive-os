@@ -310,6 +310,7 @@ export default function Inventory({
                                     ref={excelInputRef}
                                     onChange={handleExcelImport}
                                     accept=".xlsx, .xls, .csv"
+                                    multiple
                                     className="hidden"
                                 />
                                 <button

@@ -130,25 +130,27 @@ export default function SopFlow({ currentUser, hasPermission, users = [], depart
                         onChange={e => setSearchQuery(e.target.value)}
                     />
                 </div>
-                <button
-                    onClick={() => {
-                        setEditingFlow(null);
-                        setForm({
-                            title: '',
-                            description: '',
-                            category: 'Operasional',
-                            privacy_type: 'public',
-                            allowed_departments: [],
-                            allowed_users: [],
-                            steps: [],
-                            visual_config: null
-                        });
-                        setIsModalOpen(true);
-                    }}
-                    className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
-                >
-                    <Plus size={18} /> Buat Flow SOP
-                </button>
+                {hasPermission('flow', 'create') && (
+                    <button
+                        onClick={() => {
+                            setEditingFlow(null);
+                            setForm({
+                                title: '',
+                                description: '',
+                                category: 'Operasional',
+                                privacy_type: 'public',
+                                allowed_departments: [],
+                                allowed_users: [],
+                                steps: [],
+                                visual_config: null
+                            });
+                            setIsModalOpen(true);
+                        }}
+                        className="px-6 py-2.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-500 transition-all shadow-lg shadow-indigo-500/20"
+                    >
+                        <Plus size={18} /> Buat Flow SOP
+                    </button>
+                )}
             </div>
 
             {/* SUMMARY CARDS */}
@@ -210,21 +212,25 @@ export default function SopFlow({ currentUser, hasPermission, users = [], depart
 
                         {/* AREA TOMBOL AKSI (BAWAH) - TERISOLASI */}
                         <div className="mt-auto pt-4 border-t border-slate-50 dark:border-slate-800 flex gap-2" onClick={(e) => e.stopPropagation()}>
-                            <button
-                                type="button"
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingFlow(flow); setForm(flow); setIsModalOpen(true); }}
-                                className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 active:scale-95"
-                            >
-                                <Edit3 size={16} /> Edit Flow
-                            </button>
-                            <button
-                                type="button"
-                                onClick={(e) => handleDelete(e, flow.id)}
-                                className="px-4 py-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-100 transition-all border border-red-100 dark:border-red-900/30 active:scale-95"
-                                title="Hapus SOP"
-                            >
-                                <Trash2 size={18} />
-                            </button>
+                            {hasPermission('flow', 'edit') && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEditingFlow(flow); setForm(flow); setIsModalOpen(true); }}
+                                    className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-black text-[10px] uppercase tracking-widest hover:bg-indigo-500 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-500/20 active:scale-95"
+                                >
+                                    <Edit3 size={16} /> Edit Flow
+                                </button>
+                            )}
+                            {hasPermission('flow', 'delete') && (
+                                <button
+                                    type="button"
+                                    onClick={(e) => handleDelete(e, flow.id)}
+                                    className="px-4 py-3 bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 rounded-xl hover:bg-red-100 transition-all border border-red-100 dark:border-red-900/30 active:scale-95"
+                                    title="Hapus SOP"
+                                >
+                                    <Trash2 size={18} />
+                                </button>
+                            )}
                         </div>
                     </Card>
                 ))}

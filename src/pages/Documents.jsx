@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx';
 import {
     HardDrive, ChevronRight, ChevronLeft, Search, Plus, UploadCloud, FolderOpen,
     Trash2, Edit3, FileDigit, FileText, Highlighter, History, PenLine, User, Clock, Paperclip,
-    Copy, Move, RefreshCw, X, Lock, Users, Building, Shield, Download, Eye, File, Image, MoreVertical, Sparkles, AlertCircle, TrendingUp, ShieldCheck, Truck, ArrowLeftRight,
+    Copy, Move, RefreshCw, X, Lock, Users, Building, Shield, Download, Eye, File, Image, MoreVertical, Sparkles, AlertCircle, TrendingUp, ShieldCheck, Truck, ArrowLeftRight, FileStack,
     LayoutGrid, List, Check
 } from 'lucide-react';
 import { SummaryCard } from '../components/ui/Card';
@@ -24,7 +24,8 @@ export default function Documents({
     hasPermission, docStats,
     getSearchSnippet, logs,
     navigateFolder, navigateBack, navigateForward, folderHistory, historyIndex,
-    onRefresh, users, departments, currentUser, handleEditFolder, handleDownload, ocrStats
+    onRefresh, users, departments, currentUser, handleEditFolder, handleDownload, ocrStats,
+    handleMultipleDocUpload
 }) {
     const {
         deleteDocument, copyDocument, moveDocument, restoreDocumentVersion,
@@ -71,6 +72,8 @@ export default function Documents({
     const [isRevisionModalOpen, setIsRevisionModalOpen] = useState(false);
     const [selectedDocForRevision, setSelectedDocForRevision] = useState(null);
     const [isRestoring, setIsRestoring] = useState(false);
+
+    const bulkInputRef = useRef(null);
 
     const dataBoxFolder = (folders || []).find(f => f.name === 'DataBox');
     const isViewingDataBox = currentFolderId && dataBoxFolder && String(currentFolderId) === String(dataBoxFolder.id);
@@ -651,6 +654,20 @@ export default function Documents({
                         </button>
                         {hasPermission('documents', 'create') && (
                             <>
+                                <input
+                                    type="file"
+                                    ref={bulkInputRef}
+                                    onChange={handleMultipleDocUpload}
+                                    multiple
+                                    className="hidden"
+                                />
+                                <button
+                                    onClick={() => bulkInputRef.current.click()}
+                                    className="group px-4 py-2 bg-indigo-100 text-indigo-700 hover:bg-indigo-200 rounded-lg font-medium flex items-center justify-center gap-2 transition-all"
+                                    title="Upload Banyak File Sekaligus"
+                                >
+                                    <FileStack size={18} className="group-hover:scale-110 transition-transform" /> Bulk
+                                </button>
                                 <button
                                     onClick={() => {
                                         setFolderForm({ id: '', name: '', privacy: 'public', allowedDepts: [], allowedUsers: [], owner: '' });

@@ -68,6 +68,43 @@ export const getOCRQueue = async (req, res) => {
     }
 };
 
+export const getLaneLoad = async (req, res) => {
+    try {
+        const OCR_LANES = parseInt(process.env.OCR_LANES || '3', 10);
+        const LANE_CAPACITY = parseInt(process.env.OCR_LANE_CAPACITY || '2', 10);
+
+        // build lane names
+        const laneNames = [];
+        for (let i = 1; i <= OCR_LANES; i++) laneNames.push(`process-ocr-lane-${i}`);
+
+        // query counts grouped by name
+        const rows = await knex('job_queue')
+            .select('name')
+            .count('id as count')
+            .whereIn('status', [JOB_STATUS.WAITING, JOB_STATUS.ACTIVE])
+            .whereIn('name', laneNames)
+            .groupBy('name');
+
+        const counts = {};
+        laneNames.forEach(n => counts[n] = 0);
+        rows.forEach(r => { counts[r.name] = parseInt(r.count, 10) || 0; });
+
+        // assemble response
+        const lanes = laneNames.map((n, idx) => ({
+            name: n,
+            index: idx + 1,
+            count: counts[n] || 0,
+            capacity: LANE_CAPACITY,
+            loadPct: Math.round(((counts[n] || 0) / Math.max(LANE_CAPACITY, 1)) * 100)
+        }));
+
+        res.json({ lanes, totalWaitingActive: Object.values(counts).reduce((a,b)=>a+b,0) });
+    } catch (err) {
+        console.error('[getLaneLoad] Error:', err);
+        handleError(res, err, 'OCR Error');
+    }
+};
+
 export const retryOCRJob = async (req, res) => {
     try {
         const { id } = req.params;

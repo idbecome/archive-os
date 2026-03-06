@@ -4,7 +4,7 @@ import fs from 'fs';
 import { knex } from '../db.js';
 import { DOC_STATUS } from '../constants/status.js';
 import { systemLog } from '../utils/logger.js';
-import { addOCRJob } from '../queue.js';
+import { addOcrJob } from '../utils/queue.js';
 import { UPLOADS_DIR } from '../config/upload.js';
 import { vectorStore } from '../ai_search.js';
 
@@ -145,7 +145,8 @@ export const uploadDocument = async (req, res) => {
                         taxInvoiceNo: req.body.taxInvoiceNo,
                         specialNote: req.body.specialNote
                     };
-                    await addOCRJob(existingDoc.id, absoluteFilePath, finalType || 'application/octet-stream', title, context);
+                    const contextStr = JSON.stringify(context);
+                    await addOcrJob(existingDoc.id, absoluteFilePath, contextStr, finalType, title, req.file?.size || 0);
                 } catch (qErr) { console.error("Queue Error:", qErr); }
             }
 
@@ -193,8 +194,6 @@ export const uploadDocument = async (req, res) => {
             console.error("Data that failed:", newDocData);
             throw dbError; // Re-throw to be caught by the main catch block
         }
-
-
         if (absoluteFilePath && !initialOcr) {
             try {
                 const context = {
@@ -204,7 +203,8 @@ export const uploadDocument = async (req, res) => {
                     taxInvoiceNo: req.body.taxInvoiceNo,
                     specialNote: req.body.specialNote
                 };
-                await addOCRJob(newDocId, absoluteFilePath, finalType || 'application/octet-stream', title, context);
+                const contextStr = JSON.stringify(context);
+                await addOcrJob(newDocId, absoluteFilePath, contextStr, finalType, title);
             } catch (qErr) {
                 console.error("Queue Error:", qErr);
             }
@@ -401,7 +401,7 @@ export const restoreVersion = async (req, res) => {
         if (shouldRunOCR && restoredUrl && restoredUrl.startsWith('/uploads/')) {
             const absolutePath = path.join(UPLOADS_DIR, path.basename(restoredUrl));
             try {
-                await addOCRJob(id, absolutePath, restoredType || 'application/octet-stream', versionToRestore.title);
+                await addOcrJob(id, absolutePath, restoredType || 'application/octet-stream', versionToRestore.title);
             } catch (qErr) { console.error("Restore OCR Queue Error:", qErr); }
         }
 
@@ -487,7 +487,7 @@ export const updateDocument = async (req, res) => {
         // Trigger OCR AFTER the DB update so the worker sees cleared ocrContent
         if (req.file && !ocrContent) {
             try {
-                await addOCRJob(id, req.file.path, req.file.mimetype, updateData.title || existingDoc.title);
+                await addOcrJob(id, req.file.path, req.file.mimetype, updateData.title || existingDoc.title);
             } catch (qErr) { console.error("Queue Error:", qErr); }
         }
 
@@ -644,7 +644,8 @@ export const promoteCommentAttachment = async (req, res) => {
         // Trigger OCR
         if (fs.existsSync(absoluteFilePath)) {
             try {
-                await addOCRJob(docId, absoluteFilePath, finalType, doc.title);
+                const stats = fs.statSync(absoluteFilePath);
+                await addOcrJob(docId, absoluteFilePath, '{}', finalType, doc.title, stats.size);
             } catch (qErr) { console.error("Queue Error:", qErr); }
         }
 

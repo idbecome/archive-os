@@ -3,6 +3,8 @@ import { knex } from '../db.js';
 import { JOB_STATUS } from '../constants/status.js';
 import { addAiChatJob } from '../queue.js';
 import { generateEmbedding, vectorStore } from '../ai_search.js';
+import path from 'path';
+import { UPLOADS_DIR } from '../config/upload.js';
 
 export const getJobStatus = async (req, res) => {
     try {
@@ -101,8 +103,36 @@ export const semanticSearch = async (req, res) => {
             resultsMap.set(`tax_object-${t.id}`, { id: t.id, name: t.name, date: t.created_at, matchType: 'tax_object', score: 1.0, data: t });
         });
 
-        const finalResults = Array.from(resultsMap.values()).sort((a, b) => b.score - a.score).slice(0, 15);
-        res.json({ results: finalResults });
+        // enrich results with preview and download/file location when available
+        const enriched = [];
+        for (const r of Array.from(resultsMap.values()).sort((a,b)=>b.score-a.score).slice(0, 50)) {
+            const out = { id: r.id, name: r.name, matchType: r.matchType, score: r.score || 0 };
+            // for documents, try to include url and preview
+            if (r.matchType === 'document' || r.matchType === 'Doc') {
+                try {
+                    const doc = r.data || await knex('documents').where('id', r.id).first();
+                    if (doc) {
+                        out.preview = (doc.ocrContent || '').substring(0, 600);
+                        out.downloadUrl = doc.url || (doc.file_url || null);
+                        if (out.downloadUrl && out.downloadUrl.startsWith('/uploads/')) {
+                            out.filePath = path.join(UPLOADS_DIR, path.basename(out.downloadUrl));
+                        } else {
+                            out.filePath = null;
+                        }
+                    }
+                } catch (e) { /* ignore */ }
+            } else if (r.data && r.data.ocrContent) {
+                out.preview = (r.data.ocrContent || '').substring(0, 600);
+                if (r.data.url) {
+                    out.downloadUrl = r.data.url;
+                    out.filePath = path.join(UPLOADS_DIR, path.basename(r.data.url));
+                }
+            }
+            enriched.push(out);
+            if (enriched.length >= 15) break;
+        }
+
+        res.json({ results: enriched });
 
     } catch (err) {
         console.error("Hybrid Search Error:", err);

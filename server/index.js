@@ -1,3 +1,15 @@
+console.log('[index.js] Top of file');
+import 'dotenv/config';
+
+try {
+    const dbHost = process.env.DB_HOST;
+    if (dbHost) {
+        console.log(`[index.js] dotenv loaded. DB_HOST: ${dbHost}`);
+    } else {
+        console.warn('[index.js] WARNING: dotenv might not have loaded correctly. DB_HOST is undefined.');
+    }
+} catch (e) { console.error('[index.js] Error checking env vars:', e); }
+
 import express from 'express';
 import cors from 'cors';
 import fs from 'fs';
@@ -289,6 +301,199 @@ app.delete('/api/approvals/:id', checkAuth, async (req, res) => {
     }
 });
 
+// --- JOB MONITORING ROUTES ---
+app.get('/api/jobs', checkAuth, async (req, res) => {
+    try {
+        const jobs = await knex('job_due_dates').select('*').orderBy('created_at', 'desc');
+        const parsed = jobs.map(j => ({
+            ...j,
+            allowedUsers: JSON.parse(j.allowed_users || '[]'),
+            allowedDepts: JSON.parse(j.allowed_depts || '[]'),
+            issues: JSON.parse(j.issues || '[]'),
+            assignedTo: j.assigned_to,
+            dueDate: j.due_date,
+            targetDept: j.target_dept,
+            completedAt: j.completed_at
+        }));
+        res.json(parsed);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/jobs', checkAuth, async (req, res) => {
+    try {
+        const data = req.body;
+        const [id] = await knex('job_due_dates').insert({
+            title: data.title,
+            due_date: data.dueDate,
+            assigned_to: data.assignedTo,
+            privacy: data.privacy || 'public',
+            allowed_users: JSON.stringify(data.allowedUsers || []),
+            allowed_depts: JSON.stringify(data.allowedDepts || []),
+            type: data.type || 'special',
+            target_dept: data.targetDept,
+            owner: data.owner,
+            status: data.status || 'pending',
+            issues: JSON.stringify(data.issues || []),
+            kendala: data.kendala,
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+        io.emit('data:changed', { channel: 'jobs' });
+        res.json({ id, message: 'Jadwal berhasil dibuat' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/jobs/:id', checkAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const data = req.body;
+        await knex('job_due_dates').where({ id }).update({
+            title: data.title,
+            due_date: data.dueDate,
+            assigned_to: data.assignedTo,
+            privacy: data.privacy,
+            allowed_users: JSON.stringify(data.allowedUsers || []),
+            allowed_depts: JSON.stringify(data.allowedDepts || []),
+            type: data.type,
+            target_dept: data.targetDept,
+            status: data.status,
+            completed_at: data.completedAt,
+            issues: JSON.stringify(data.issues || []),
+            kendala: data.kendala,
+            updated_at: new Date()
+        });
+        io.emit('data:changed', { channel: 'jobs' });
+        res.json({ message: 'Jadwal berhasil diperbarui' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/jobs/:id', checkAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        await knex('job_due_dates').where({ id }).delete();
+        io.emit('data:changed', { channel: 'jobs' });
+        res.json({ message: 'Jadwal berhasil dihapus' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/monitored-pics', checkAuth, async (req, res) => {
+    try {
+        const pics = await knex('monitored_pics').select('*');
+        const parsed = pics.map(p => ({
+            ...p,
+            allowedUsers: JSON.parse(p.allowed_users || '[]'),
+            allowedDepts: JSON.parse(p.allowed_depts || '[]')
+        }));
+        res.json(parsed);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/monitored-pics', checkAuth, async (req, res) => {
+    try {
+        const data = req.body;
+        await knex('monitored_pics').insert({
+            username: data.username,
+            privacy: data.privacy || 'public',
+            allowed_users: JSON.stringify(data.allowedUsers || []),
+            allowed_depts: JSON.stringify(data.allowedDepts || []),
+            created_at: new Date(),
+            updated_at: new Date()
+        }).onConflict('username').merge();
+        io.emit('data:changed', { channel: 'monitored-pics' });
+        res.json({ message: 'PIC Monitoring berhasil diperbarui' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/monitored-pics/:username', checkAuth, async (req, res) => {
+    try {
+        const { username } = req.params;
+        await knex('monitored_pics').where({ username }).delete();
+        io.emit('data:changed', { channel: 'monitored-pics' });
+        res.json({ message: 'PIC Monitoring berhasil dihapus' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/independent-issues', checkAuth, async (req, res) => {
+    try {
+        const issues = await knex('independent_issues').select('*').orderBy('created_at', 'desc');
+        const parsed = issues.map(i => ({
+            ...i,
+            history: JSON.parse(i.history || '[]'),
+            assignedTo: i.assigned_to,
+            resolvedAt: i.resolved_at
+        }));
+        res.json(parsed);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/independent-issues', checkAuth, async (req, res) => {
+    try {
+        const data = req.body;
+        const [id] = await knex('independent_issues').insert({
+            note: data.note,
+            detail: data.detail,
+            status: data.status || 'pending',
+            progress: data.progress || 0,
+            history: JSON.stringify(data.history || []),
+            assigned_to: data.assignedTo,
+            created_at: new Date(),
+            updated_at: new Date()
+        });
+        io.emit('data:changed', { channel: 'independent-issues' });
+        res.json({ id, message: 'Issue berhasil dibuat' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/independent-issues/:id', checkAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const data = req.body;
+        await knex('independent_issues').where({ id }).update({
+            note: data.note,
+            detail: data.detail,
+            status: data.status,
+            progress: data.progress,
+            history: JSON.stringify(data.history || []),
+            assigned_to: data.assignedTo,
+            resolved_at: data.resolvedAt,
+            updated_at: new Date()
+        });
+        io.emit('data:changed', { channel: 'independent-issues' });
+        res.json({ message: 'Issue berhasil diperbarui' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/independent-issues/:id', checkAuth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        await knex('independent_issues').where({ id }).delete();
+        io.emit('data:changed', { channel: 'independent-issues' });
+        res.json({ message: 'Issue berhasil dihapus' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Gunakan legacyRoutes hanya untuk fitur yang belum di-override.
 // Pastikan rute /approvals di dalam legacyRoutes.js sudah dinonaktifkan.
 app.use('/api', legacyRoutes);
@@ -461,6 +666,12 @@ app.get('/api/system/logs-file/:type', checkAuth, (req, res) => {
 // Socket.io
 io.on('connection', (socket) => {
     logger.info(`Client connected: ${socket.id}`);
+
+    // Relay updates from the background worker to UI clients
+    socket.on('worker:update', (data) => {
+        io.emit('data:changed', data);
+    });
+
     socket.on('disconnect', () => logger.info(`Client disconnected: ${socket.id}`));
 });
 
@@ -480,22 +691,50 @@ server.on('error', (err) => {
     process.exit(1);
 });
 
+console.log('[index.js] Imports complete, defining startServer...');
+
 
 
 // Start Server
 // Ensure DB migration or init logic is handled if needed
-try {
-    // initDb sudah menangani migrasi dan seeding awal secara terpadu
-    await initDb();
+const startServer = async () => {
+    try {
+        console.log(`🚀 Memulai inisialisasi server pada port ${PORT}...`);
 
-    // Initialize High-Speed RAM Vector Cache
-    await vectorStore.initialize();
+        // Gunakan 127.0.0.1 agar lebih stabil di Windows dibanding 0.0.0.0
+        server.listen(PORT, '127.0.0.1', () => {
+            console.log(`✅ BACKEND LISTENING: http://127.0.0.1:${PORT}`);
+            console.log(`📁 Folder Upload: ${UPLOADS_DIR}`);
+            
+            // Jalankan inisialisasi database SETELAH port terbuka
+            (async () => {
+                try {
+                    logger.info("📦 Menghubungkan ke Database...");
+                    await initDb();
+                    logger.info("✅ Database & Migrasi Selesai.");
 
-    server.listen(PORT, '0.0.0.0', () => {
-        logger.info(`Server started on http://0.0.0.0:${PORT}`);
-        logger.info(`Uploads Directory: ${UPLOADS_DIR}`);
-    });
-} catch (err) {
-    console.error("CRITICAL: Failed to initialize database:", err);
-    process.exit(1);
-}
+                    logger.info("🧠 Memuat Vector Store ke RAM...");
+                    await vectorStore.initialize();
+                    logger.info("✅ AI Search siap digunakan.");
+                } catch (innerErr) {
+                    logger.error("❌ Gagal inisialisasi layanan latar belakang (DB/AI):", innerErr.message);
+                    console.error("❌ Background Service Error:", innerErr);
+                }
+            })().catch(err => {
+                logger.error("❌ Gagal inisialisasi database/AI:", err.message);
+            });
+        });
+
+    } catch (err) {
+        logger.error("❌ CRITICAL: Server failed to start!");
+        logger.error(err.stack);
+        
+        if (err.code === 'ECONNREFUSED') {
+            logger.error(`Gagal terhubung ke layanan di ${err.address}:${err.port}. Pastikan MySQL/Redis sudah menyala.`);
+        }
+        // Jangan exit di dev mode agar nodemon/watch bisa mencoba lagi
+    }
+};
+
+console.log('[index.js] Calling startServer()...');
+startServer();

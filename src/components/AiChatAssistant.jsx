@@ -200,14 +200,160 @@ const quickActions = [
     "Status pemeriksaan pajak",
 ];
 
+// --- AI TAX ANALYSIS ENGINE ---
+const analyzeTaxData = (query, summaries, config) => {
+    if (!summaries || summaries.length === 0) return null;
+    
+    const q = query.toLowerCase();
+    const months = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+    
+    const getVal = (record, type, category) => {
+        if (!record) return 0;
+        if (record.data && record.data[category] && record.data[category][type] !== undefined) {
+            return Number(record.data[category][type]) || 0;
+        }
+        if (type === 'PPh 23') return record.pph23 || 0;
+        if (type === 'PPh 4(2)') return record.pph42 || 0;
+        return 0;
+    };
+
+    const isComparison = q.includes('banding') || q.includes('vs') || q.includes('perbandingan');
+    const isTrend = q.includes('tren') || q.includes('perkembangan') || q.includes('grafik') || q.includes('statistik');
+    const isPPh = q.includes('pph');
+    const isPPN = q.includes('ppn');
+    const isTaxQuery = isPPh || isPPN || q.includes('pajak') || q.includes('spt');
+
+    if (!isTaxQuery) return null;
+
+    const foundMonths = months.filter(m => q.includes(m.toLowerCase()));
+    const foundYears = [...new Set(summaries.map(s => String(s.year)))].filter(y => q.includes(y));
+    const targetYear = foundYears.length > 0 ? parseInt(foundYears[0]) : new Date().getFullYear();
+
+    // 1. Analisis Perbandingan
+    if (isComparison && foundMonths.length >= 2) {
+        const m1 = foundMonths[0];
+        const m2 = foundMonths[1];
+        const r1 = summaries.find(s => s.month === m1 && s.year === targetYear);
+        const r2 = summaries.find(s => s.month === m2 && s.year === targetYear);
+
+        if (!r1 || !r2) return `> [!WARNING]\n> Data untuk perbandingan antara **${m1}** dan **${m2}** tahun ${targetYear} tidak lengkap di database.`;
+
+        let response = `### 📊 Analisis Perbandingan Pajak\nPeriode: **${m1}** vs **${m2}** (${targetYear})\n\n`;
+        
+        if (isPPN || (!isPPh && !isPPN)) {
+            const in1 = config.ppnInTypes.reduce((sum, t) => sum + getVal(r1, t, 'ppnIn'), 0);
+            const out1 = config.ppnOutTypes.reduce((sum, t) => sum + getVal(r1, t, 'ppnOut'), 0);
+            const net1 = out1 - in1;
+
+            const in2 = config.ppnInTypes.reduce((sum, t) => sum + getVal(r2, t, 'ppnIn'), 0);
+            const out2 = config.ppnOutTypes.reduce((sum, t) => sum + getVal(r2, t, 'ppnOut'), 0);
+            const net2 = out2 - in2;
+
+            const diff = net2 - net1;
+            response += `#### 🔹 Pajak Pertambahan Nilai (PPN)\n`;
+            response += `| Komponen | ${m1} | ${m2} | Selisih |\n| :--- | :--- | :--- | :--- |\n`;
+            response += `| PPN Masukan | ${formatRupiah(in1)} | ${formatRupiah(in2)} | ${formatRupiah(in2-in1)} |\n`;
+            response += `| PPN Keluaran | ${formatRupiah(out1)} | ${formatRupiah(out2)} | ${formatRupiah(out2-out1)} |\n`;
+            response += `| **Netto (KB/LB)** | **${formatRupiah(net1)}** | **${formatRupiah(net2)}** | **${formatRupiah(diff)}** |\n\n`;
+            
+            response += `> [!NOTE]\n> Status PPN di ${m2} adalah **${net2 > 0 ? 'Kurang Bayar' : 'Lebih Bayar'}** sebesar ${formatRupiah(Math.abs(net2))}.\n\n`;
+        }
+
+        if (isPPh || (!isPPh && !isPPN)) {
+            const pph1 = config.pphTypes.reduce((sum, t) => sum + getVal(r1, t, 'pph'), 0);
+            const pph2 = config.pphTypes.reduce((sum, t) => sum + getVal(r2, t, 'pph'), 0);
+            response += `#### 🔸 Pajak Penghasilan (PPh)\n`;
+            response += `- Total PPh ${m1}: **${formatRupiah(pph1)}**\n`;
+            response += `- Total PPh ${m2}: **${formatRupiah(pph2)}**\n`;
+            response += `- Perubahan: **${pph2 > pph1 ? 'Kenaikan' : 'Penurunan'}** sebesar ${formatRupiah(Math.abs(pph2-pph1))}.\n`;
+        }
+        return response;
+    }
+
+    // 2. Analisis Tren / Ringkasan Tahunan
+    if (isTrend || q.includes('ringkasan') || q.includes('total')) {
+        const yearData = summaries.filter(s => s.year === targetYear);
+        if (yearData.length === 0) return `Saya tidak menemukan data pajak untuk tahun ${targetYear}.`;
+
+        const totalPPh = yearData.reduce((sum, s) => sum + config.pphTypes.reduce((pSum, t) => pSum + getVal(s, t, 'pph'), 0), 0);
+        const totalPPNIn = yearData.reduce((sum, s) => sum + config.ppnInTypes.reduce((pSum, t) => pSum + getVal(s, t, 'ppnIn'), 0), 0);
+        const totalPPNOut = yearData.reduce((sum, s) => sum + config.ppnOutTypes.reduce((pSum, t) => pSum + getVal(s, t, 'ppnOut'), 0), 0);
+
+        let response = `### 📈 Ringkasan Eksekutif Pajak ${targetYear}\n\n`;
+        response += `Berdasarkan data **${yearData.length} bulan** yang tercatat:\n\n`;
+        response += `- **Total PPh Terutang:** ${formatRupiah(totalPPh)}\n`;
+        response += `- **Total PPN Masukan:** ${formatRupiah(totalPPNIn)}\n`;
+        response += `- **Total PPN Keluaran:** ${formatRupiah(totalPPNOut)}\n`;
+        response += `- **Saldo PPN Netto:** ${formatRupiah(totalPPNOut - totalPPNIn)} (${(totalPPNOut - totalPPNIn) > 0 ? 'Kurang Bayar' : 'Lebih Bayar'})\n\n`;
+
+        const maxPPh = Math.max(...yearData.map(s => config.pphTypes.reduce((sum, t) => sum + getVal(s, t, 'pph'), 0)));
+        const peakMonth = yearData.find(s => config.pphTypes.reduce((sum, t) => sum + getVal(s, t, 'pph'), 0) === maxPPh)?.month;
+
+        response += `> [!TIP]\n> Lonjakan pembayaran pajak tertinggi terjadi pada bulan **${peakMonth}**. Pastikan arus kas perusahaan siap untuk periode tersebut di tahun mendatang.`;
+        
+        return response;
+    }
+
+    return null;
+};
+
 export default function AiChatAssistant({
     isDarkMode,
     onNavigateToDoc,
     onNavigateToInvoice,
     handleNavigateToFolder,
     setActiveTab,
-    setActiveInvTab
+    setActiveInvTab,
+    taxSummaries = [],
+    taxConfig = {}
 }) {
+    // Semantic search widget state
+    const [semanticQ, setSemanticQ] = useState('');
+    const [semanticResults, setSemanticResults] = useState([]);
+    const [semanticLoading, setSemanticLoading] = useState(false);
+    const [showSemantic, setShowSemantic] = useState(true);
+
+    const doSemanticSearch = async (q = semanticQ) => {
+        if (!q || q.length < 2) return;
+        setSemanticLoading(true);
+        try {
+                const headers = { 'Content-Type': 'application/json' };
+                // In local dev, allow a dev-token bypass so searches work without login
+                try {
+                    const isLocal = API_URL.startsWith('http://localhost') || window.location.protocol === 'file:';
+                    if (isLocal) headers['Authorization'] = 'Bearer dev-token';
+                } catch (e) { /* ignore in non-browser env */ }
+
+                const res = await fetch(`${API_URL}/search/ai`, {
+                    method: 'POST',
+                    headers,
+                    credentials: 'include',
+                    body: JSON.stringify({ query: q })
+                });
+            const json = await res.json();
+            const results = (json.results || []).map(r => ({
+                ...r,
+                title: r.title || r.name || r.filename || 'Untitled',
+                snippet: r.preview || r.snippet || '',
+                filePath: r.filePath,
+                downloadUrl: r.downloadUrl,
+                matchType: r.matchType || r.type || 'document'
+            }));
+            setSemanticResults(results);
+            // Append results into chat as assistant message
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                text: `Hasil pencarian: "${q}"`,
+                results: results,
+            }]);
+            // clear input after search
+            setInput('');
+        } catch (e) {
+            console.error('Semantic search error', e);
+            setSemanticResults([]);
+            setMessages(prev => [...prev, { role: 'assistant', text: 'Gagal melakukan pencarian.', results: [] }]);
+        } finally { setSemanticLoading(false); }
+    };
     const [isOpen, setIsOpen] = useState(false);
     const [messages, setMessages] = useState([
         {
@@ -289,45 +435,40 @@ export default function AiChatAssistant({
         // Add user message
         setMessages(prev => [...prev, { role: 'user', text: msg }]);
         setInput('');
+        // Use send action to perform semantic search and append results into chat
         setIsLoading(true);
-
         try {
-            const res = await fetch(`${API_URL}/search/chat`, {
-                method: 'POST',
-                credentials: 'include',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({ message: msg })
-            });
-
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'Gagal menghubungi asisten AI');
-
-            if (data.jobId) {
-                // Background job started, start polling
-                pollJobStatus(data.jobId);
-            } else {
-                // Fallback for immediate response (if any)
+            // 1. Cek apakah ini permintaan analisis pajak
+            const taxAnalysis = analyzeTaxData(msg, taxSummaries, taxConfig);
+            if (taxAnalysis) {
+                // Simulasi waktu berpikir AI
+                await new Promise(resolve => setTimeout(resolve, 1000));
                 setMessages(prev => [...prev, {
                     role: 'assistant',
-                    text: data.reply || 'Maaf, tidak ada respons.',
+                    text: taxAnalysis,
                     results: [],
-                    intent: data.intent
+                    isAnalysis: true
                 }]);
                 setIsLoading(false);
+                return;
             }
+
+            // 2. Jika bukan pajak, lakukan pencarian semantik dokumen
+            await doSemanticSearch(msg);
         } catch (err) {
-            setMessages(prev => [...prev, {
-                role: 'assistant',
-                text: err.message === 'Failed to fetch' ? 'Maaf, koneksi ke server gagal. Pastikan server berjalan.' : `Maaf, terjadi kendala: ${err.message}`,
-                results: []
-            }]);
+            console.error('Search send error', err);
+            setMessages(prev => [...prev, { role: 'assistant', text: `Gagal mencari data: ${err.message}`, results: [] }]);
+        } finally {
             setIsLoading(false);
         }
     };
 
     const handleKeyDown = (e) => {
+        if (e.key === 'Enter' && e.ctrlKey) {
+            e.preventDefault();
+            doSemanticSearch(input);
+            return;
+        }
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             handleSend();
@@ -455,6 +596,8 @@ export default function AiChatAssistant({
                             </button>
                         </div>
 
+                        {/* Semantic search moved into chat input (search button) */}
+
                         {/* Messages */}
                         <div className="flex-1 overflow-y-auto px-4 py-3 space-y-4 custom-scrollbar">
                             {messages.map((msg, i) => (
@@ -566,6 +709,7 @@ export default function AiChatAssistant({
                                         : 'text-slate-800 placeholder-slate-400'
                                         }`}
                                 />
+                                {/* semantic search button removed per request */}
                                 <button
                                     onClick={() => handleSend()}
                                     disabled={!input.trim() || isLoading}

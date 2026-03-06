@@ -85,8 +85,8 @@ export default function TaxAnalytics({ taxSummaries = [], taxAudits = [] }) {
                         <p className="text-xs text-gray-500">PPh Terutang vs PPN Netto (KB/LB)</p>
                     </div>
                 </div>
-                <div className="h-[300px]">
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className="h-[300px] w-full relative">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                         <AreaChart data={chartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                             <defs>
                                 <linearGradient id="colorPPh" x1="0" y1="0" x2="0" y2="1">
@@ -124,9 +124,9 @@ export default function TaxAnalytics({ taxSummaries = [], taxAudits = [] }) {
                         <p className="text-xs text-gray-500">Distribusi status audit pajak berjalan</p>
                     </div>
                 </div>
-                <div className="h-[300px] flex items-center justify-center">
+                <div className="h-[300px] w-full flex items-center justify-center relative">
                     {auditStatusData.length > 0 ? (
-                        <ResponsiveContainer width="100%" height="100%">
+                        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                             <PieChart>
                                 <Pie
                                     data={auditStatusData}
@@ -164,8 +164,8 @@ export default function TaxAnalytics({ taxSummaries = [], taxAudits = [] }) {
                         <p className="text-xs text-gray-500">Perbandingan PPN Masukan (Input) vs Keluaran (Output)</p>
                     </div>
                 </div>
-                <div className="h-[250px]">
-                    <ResponsiveContainer width="100%" height="100%">
+                <div className="h-[250px] w-full relative">
+                    <ResponsiveContainer width="100%" height="100%" minWidth={0}>
                         <BarChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e5e5" />
                             <XAxis dataKey="name" fontSize={12} tickLine={false} axisLine={false} dy={10} />

@@ -2,6 +2,7 @@ import express from 'express';
 import {
     getOCRStatus,
     getOCRQueue,
+    getLaneLoad,
     retryOCRJob,
     clearCompletedJobs
 } from '../controllers/ocrController.js';
@@ -14,6 +15,7 @@ router.use(checkAuth);
 
 router.get('/status', getOCRStatus);
 router.get('/queue', getOCRQueue);
+router.get('/lanes', getLaneLoad);
 router.post('/retry/:id', retryOCRJob);
 router.delete('/completed', clearCompletedJobs);
 
