@@ -74,9 +74,10 @@ Jika Anda ingin menjalankan modul secara terpisah tanpa *concurrently*:
 Jika Anda perlu mengubah port atau kredensial database, buat file `.env` di root direktori:
 ```env
 DB_HOST=127.0.0.1
-DB_USER=root
-DB_PASS=password_anda
-DB_NAME=archive_os
+DB_USER=pustaka_user
+DB_PASS=123456
+DB_NAME=pustaka
+DB_PORT=3306
 PORT=5005
 VITE_API_URL=http://localhost:5005
 ```
