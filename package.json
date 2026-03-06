@@ -3,13 +3,31 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+<<<<<<< HEAD
+=======
+  "scripts": {
+    "dev": "npx knex migrate:latest && concurrently \"vite --host\" \"node --watch server/index.js\" \"npm run worker:bullmq\" \"npm run worker:polling\"",
+    "db:reset": "npx knex migrate:rollback --all && npx knex migrate:latest",
+    "db:wipe": "node server/wipeDb.js",
+    "server": "node --watch server/index.js",
+    "worker": "node --watch server/worker.js",
+    "worker:bullmq": "set VIPS_WARNING=0&& set G_MESSAGES_DEBUG=none&& node --watch server/worker.js --mode=bullmq",
+    "worker:polling": "set VIPS_WARNING=0&& set G_MESSAGES_DEBUG=none&& node --watch server/worker.js --mode=polling",
+    "build": "vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+>>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
   "dependencies": {
     "@xenova/transformers": "^2.17.2",
     "@xyflow/react": "^12.10.0",
     "bcrypt": "^6.0.0",
     "body-parser": "^2.2.2",
     "bullmq": "^5.70.1",
+<<<<<<< HEAD
     "canvas": "^3.2.1",
+=======
+>>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "date-fns": "^4.1.0",

@@ -21,6 +21,8 @@ Archive-OS dirancang untuk dapat berjalan dengan konfigurasi minimal (*default*)
    ```bash
    git clone <repository-url>
    cd archive-os
+   sudo apt install redis-server -y
+   sudo systemctl start redis
    ```
 
 2. **Install Dependencies**
@@ -29,7 +31,10 @@ Archive-OS dirancang untuk dapat berjalan dengan konfigurasi minimal (*default*)
    npm install cookie-parser
    npm install pdf-parse
    npm install sharp
+<<<<<<< HEAD
    npm install date-fns
+=======
+>>>>>>> 134470555da48c1c8ad3c8bd05d34379ceb9e146
    npm install canvas
    ```
 
@@ -75,9 +80,10 @@ Jika Anda ingin menjalankan modul secara terpisah tanpa *concurrently*:
 Jika Anda perlu mengubah port atau kredensial database, buat file `.env` di root direktori:
 ```env
 DB_HOST=127.0.0.1
-DB_USER=root
-DB_PASS=password_anda
-DB_NAME=archive_os
+DB_USER=pustaka_user
+DB_PASS=123456
+DB_NAME=pustaka
+DB_PORT=3306
 PORT=5005
 VITE_API_URL=http://localhost:5005
 ```
